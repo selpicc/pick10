@@ -1257,6 +1257,7 @@ if len(filtered) > 0:
                     st.markdown(
                         f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
                         f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
+                        f"<b style='color: #374151;'>분석:</b> "
                         f"{sel_full.get('발견 카테고리', '')} · "
                         f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
                         f"규모 {sel_full.get(size_col, '-')}"
