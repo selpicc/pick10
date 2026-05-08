@@ -733,12 +733,20 @@ if len(filtered) > 0:
         gb.configure_column("마케팅 등급 (자동)", headerName="등급", width=100)
 
     # 스토어 링크 컬럼 — "열기" 버튼처럼 렌더 (새 탭으로 열기)
+    # ⚠️ AG Grid는 HTML 문자열을 텍스트로 표시함 → DOM 엘리먼트 객체로 반환해야 함
     if "스마트스토어 주소" in display_df.columns:
         link_renderer = JsCode("""
         function(params) {
             if (!params.value) return '';
-            return '<a href="' + params.value + '" target="_blank" rel="noopener" '
-                 + 'style="color:#2563eb;text-decoration:underline;">열기</a>';
+            var a = document.createElement('a');
+            a.href = params.value;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            a.innerText = '열기';
+            a.style.color = '#2563eb';
+            a.style.textDecoration = 'underline';
+            a.style.fontWeight = '500';
+            return a;
         }
         """)
         gb.configure_column(
