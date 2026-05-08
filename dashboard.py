@@ -1077,8 +1077,11 @@ if len(filtered) > 0:
             .fillna("")
         )
 
-    # 순번 열 추가 (Selpic 점수 정렬 후 1부터) — 브랜드명 앞에 위치
-    display_df.insert(0, "No.", range(1, len(display_df) + 1))
+    # 순번 열 추가 (역순) — 최근 수집이 큰 숫자
+    # 표는 수집일 desc로 정렬됨 → 위쪽이 최신 → 위쪽 행에 N, 아래로 갈수록 1
+    # 신규 수집 시 가장 큰 번호 부여 → 누적 흐름 한눈에
+    n_rows = len(display_df)
+    display_df.insert(0, "No.", range(n_rows, 0, -1))
 
     # ─────────────────────────────────────────────────────────
     # AgGrid 설정 — 가운데 정렬 + 행 클릭 선택 + 깔끔한 헤더
