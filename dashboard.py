@@ -694,23 +694,20 @@ if collect_clicked:
                 timeout=300,
                 cwd=script_dir,
             )
+            # 결과를 session_state에 저장 → 새로고침 후에도 로그 유지
+            st.session_state["last_collect_result"] = {
+                "success": result.returncode == 0,
+                "cleanup_msg": cleanup_msg,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "mode": collect_mode,
+                "n": collect_n,
+            }
             if result.returncode == 0:
-                # 캐시 무효화 → 새 데이터 로드되도록
                 st.cache_data.clear()
-                st.success(f"{cleanup_msg}\n\n✅ 수집 완료! 새 셀러가 아래 테이블에 추가됐어요.")
-                # 로그 일부 보여주기 (선택)
-                with st.expander("실행 로그 보기", expanded=False):
-                    st.code(result.stdout[-3000:], language="text")
-                # 자동 새로고침
                 st.rerun()
-            else:
-                st.error(f"{cleanup_msg}\n\n❌ 수집 실패")
-                st.code(
-                    f"종료 코드: {result.returncode}\n\n"
-                    f"--- stderr ---\n{result.stderr[-1500:]}\n\n"
-                    f"--- stdout (마지막 부분) ---\n{result.stdout[-1500:]}",
-                    language="text",
-                )
         except subprocess.TimeoutExpired:
             st.error("시간 초과 (5분). 네트워크 또는 API 응답이 늦을 수 있어요. 잠시 후 다시 시도하세요.")
         except FileNotFoundError:
@@ -719,6 +716,40 @@ if collect_clicked:
             st.error(f"실행 중 오류: {e}")
 
 # fix_clicked 핸들러는 표 상단 버튼 정의 이후로 이동 (이 위치 X)
+
+
+# ─────────────────────────────────────────────────────────────────
+# 마지막 수집 결과 표시 (session_state 기반 — rerun 후에도 유지)
+# ─────────────────────────────────────────────────────────────────
+if "last_collect_result" in st.session_state:
+    res = st.session_state["last_collect_result"]
+    res_col1, res_col2 = st.columns([5, 1])
+    with res_col1:
+        if res["success"]:
+            st.success(
+                f"[{res['timestamp']}] {res['cleanup_msg']}  ·  "
+                f"✅ 수집 완료 ({res['mode']}, {res['n']}건 시도)"
+            )
+        else:
+            st.error(
+                f"[{res['timestamp']}] {res['cleanup_msg']}  ·  "
+                f"❌ 수집 실패 (종료 코드 {res['returncode']})"
+            )
+    with res_col2:
+        if st.button("로그 닫기", key="close_log_btn", use_container_width=True):
+            del st.session_state["last_collect_result"]
+            st.rerun()
+
+    # 로그 항상 펼친 상태로 표시 (실패 시 자동 펼침)
+    with st.expander(
+        "실행 로그 보기 (디버그용)",
+        expanded=not res["success"],   # 실패 시 자동 펼침
+    ):
+        if res["stderr"].strip():
+            st.markdown("**stderr:**")
+            st.code(res["stderr"][-2000:], language="text")
+        st.markdown("**stdout:**")
+        st.code(res["stdout"][-3000:], language="text")
 
 
 st.markdown("---")
