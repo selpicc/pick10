@@ -557,7 +557,7 @@ collect_category = ""
 collect_keywords = ""
 
 if collect_mode == "자동 (전체)":
-    a_col1, a_col2, a_col3, a_col4 = st.columns([0.7, 1.5, 1.4, 2.4])
+    a_col1, a_col2, a_col3 = st.columns([0.7, 1.5, 3.8])
     with a_col1:
         collect_n = st.selectbox(
             "건수", [1, 2, 3, 4, 5], index=4,
@@ -572,18 +572,13 @@ if collect_mode == "자동 (전체)":
             key="collect_btn_auto",
         )
     with a_col3:
-        fix_clicked = st.button(
-            "빈 스토어 주소 채우기", use_container_width=True,
-            key="fix_btn_auto",
-            help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
-        )
-    with a_col4:
         st.markdown(
             "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
             f"12개 카테고리에서 점수 상위 {collect_n}건 · 약 {30 + collect_n * 8}초"
             "</div>",
             unsafe_allow_html=True,
         )
+    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
 
 elif collect_mode == "카테고리 지정":
     c_col1, c_col2, c_col3, c_col4 = st.columns([1.4, 0.7, 1.5, 2.4])
@@ -613,7 +608,7 @@ elif collect_mode == "카테고리 지정":
             "</div>",
             unsafe_allow_html=True,
         )
-    fix_clicked = False   # 이 모드에선 채우기 버튼 X
+    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
 
 else:   # 키워드 입력
     k_col1, k_col2, k_col3 = st.columns([3.5, 0.7, 1.5])
@@ -638,7 +633,7 @@ else:   # 키워드 입력
             key="collect_btn_kw",
             disabled=not collect_keywords.strip(),
         )
-    fix_clicked = False   # 이 모드에선 채우기 버튼 X
+    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
     st.markdown(
         "<div style='color: #6b7280; font-size: 12px; margin-top: 6px;'>"
         "쉼표(,)로 여러 키워드 가능 · 각 키워드별 검색 후 점수 상위 통합 추출"
@@ -723,24 +718,7 @@ if collect_clicked:
         except Exception as e:
             st.error(f"실행 중 오류: {e}")
 
-if fix_clicked:
-    with st.spinner("빈 스토어 주소 검색 + CSV 갱신 중..."):
-        try:
-            result = fill_empty_urls_in_all_csvs()
-            st.cache_data.clear()
-            if result["fixed"] > 0:
-                st.success(
-                    f"{result['fixed']}건 스마트스토어 URL로 갱신 완료. "
-                    f"({result['files']}개 파일 검사)"
-                )
-            else:
-                st.info("빈 행이 없거나 모두 정상이에요.")
-            if result["not_found"]:
-                with st.expander(f"검색 API에서 못 찾은 셀러 {len(result['not_found'])}건", expanded=False):
-                    st.write(", ".join(result["not_found"]))
-            st.rerun()
-        except Exception as e:
-            st.error(f"오류: {e}")
+# fix_clicked 핸들러는 표 상단 버튼 정의 이후로 이동 (이 위치 X)
 
 
 st.markdown("---")
@@ -867,8 +845,39 @@ else:
 
 # ─────────────────────────────────────────────────────────────────
 # 영업 후보 셀러 테이블 (메인)
+# 제목 + 빈 스토어 주소 채우기 (우측 상단 작은 버튼)
 # ─────────────────────────────────────────────────────────────────
-st.markdown(f"## 영업 후보 — {len(filtered)}건")
+title_col, fix_btn_col = st.columns([5, 1.3])
+with title_col:
+    st.markdown(f"## 영업 후보 — {len(filtered)}건")
+with fix_btn_col:
+    st.markdown("<div style='padding-top: 18px;'></div>", unsafe_allow_html=True)
+    fix_clicked_table = st.button(
+        "빈 스토어 채우기",
+        use_container_width=True,
+        key="fix_btn_table",
+        help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
+    )
+
+# 빈 스토어 채우기 클릭 처리 (표 상단 버튼)
+if fix_clicked_table:
+    with st.spinner("빈 스토어 주소 검색 + CSV 갱신 중..."):
+        try:
+            result = fill_empty_urls_in_all_csvs()
+            st.cache_data.clear()
+            if result["fixed"] > 0:
+                st.success(
+                    f"{result['fixed']}건 스마트스토어 URL로 갱신 완료. "
+                    f"({result['files']}개 파일 검사)"
+                )
+            else:
+                st.info("빈 행이 없거나 모두 정상이에요.")
+            if result["not_found"]:
+                with st.expander(f"검색 API에서 못 찾은 셀러 {len(result['not_found'])}건", expanded=False):
+                    st.write(", ".join(result["not_found"]))
+            st.rerun()
+        except Exception as e:
+            st.error(f"오류: {e}")
 
 def save_one_brand(brand: str, new_values: dict) -> bool:
     """한 셀러의 수기 컬럼 값을 Supabase에 update.
