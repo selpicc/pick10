@@ -700,9 +700,13 @@ if len(filtered) > 0:
             .fillna("")
         )
 
+    # 순번 열 추가 (Selpic 점수 정렬 후 1부터) — 브랜드명 앞에 위치
+    display_df.insert(0, "No.", range(1, len(display_df) + 1))
+
     styled = display_df
 
     main_column_config = {
+        "No.": st.column_config.NumberColumn("No.", width="small", format="%d"),
         "브랜드명": st.column_config.TextColumn("브랜드명", width="medium"),
         "영업 상태 (수기)": st.column_config.TextColumn("영업 상태", width="small"),
         "이메일 (수기)": st.column_config.TextColumn("이메일", width="medium"),
