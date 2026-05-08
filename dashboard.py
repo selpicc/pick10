@@ -27,8 +27,8 @@ from supabase_client import (
     TABLE_NAME,
 )
 
-# 시장 타깃 크로스체크 (A+B+C 필터)
-from market_filter import market_fit_check
+# 시장 타깃 크로스체크 (A+B+C 필터) + 자동 카테고리 분류
+from market_filter import market_fit_check, classify_category
 
 load_dotenv()
 CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
@@ -502,6 +502,13 @@ def load_all_data() -> pd.DataFrame:
                 df["Selpic 점수"], errors="coerce"
             ).fillna(0).astype(int)
 
+        # 자동 카테고리 분류 (주력상품명 기준 → 10개 카테고리)
+        # 모든 브랜드(기존+신규)에 매번 적용 — 분류 규칙 변경 시 즉시 반영
+        if "주력상품명" in df.columns:
+            df["카테고리"] = df["주력상품명"].fillna("").astype(str).apply(classify_category)
+        else:
+            df["카테고리"] = "기타"
+
         return df
     except Exception as e:
         st.error(f"Supabase 데이터 로드 실패: {e}")
@@ -804,6 +811,7 @@ if len(filtered) > 0:
     main_cols = [
         "브랜드명",
         "스마트스토어 주소",   # 브랜드명 바로 옆 — 빠르게 셀러 페이지 확인
+        "카테고리",            # 스토어 옆 — 주력상품 기반 자동 분류
         "영업 상태 (수기)",
         "전화 (수기)",         # 영업 상태 다음 — 통화 우선 워크플로우
         "이메일 (수기)",
@@ -859,7 +867,9 @@ if len(filtered) > 0:
 
     # 컬럼별 너비/표시 이름
     gb.configure_column("No.", width=70, pinned="left")
-    gb.configure_column("브랜드명", width=200)
+    gb.configure_column("브랜드명", width=180)
+    if "카테고리" in display_df.columns:
+        gb.configure_column("카테고리", headerName="카테고리", width=130)
     if "영업 상태 (수기)" in display_df.columns:
         gb.configure_column("영업 상태 (수기)", headerName="영업 상태", width=130)
     if "이메일 (수기)" in display_df.columns:
