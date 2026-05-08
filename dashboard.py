@@ -886,21 +886,21 @@ if search_brand:
 
 
 # ─────────────────────────────────────────────────────────────────
-# KPI 4개
+# KPI 4개 (누적/필터/평균/등급) — 비노출 처리
+# 필요 시 아래 블록 주석 해제하면 다시 표시됨
 # ─────────────────────────────────────────────────────────────────
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("누적 셀러", f"{len(df):,}")
-col2.metric("필터 결과", f"{len(filtered):,}")
-
-if len(filtered) > 0:
-    col3.metric("평균 점수", f"{filtered['Selpic 점수'].mean():.1f}")
-    if "마케팅 등급 (자동)" in filtered.columns:
-        top_grade = filtered["마케팅 등급 (자동)"].mode().values[0]
-        grade_count = (filtered["마케팅 등급 (자동)"] == top_grade).sum()
-        col4.metric("최다 등급", f"{top_grade} · {grade_count}건")
-else:
-    col3.metric("평균 점수", "—")
-    col4.metric("최다 등급", "—")
+# col1, col2, col3, col4 = st.columns(4)
+# col1.metric("누적 셀러", f"{len(df):,}")
+# col2.metric("필터 결과", f"{len(filtered):,}")
+# if len(filtered) > 0:
+#     col3.metric("평균 점수", f"{filtered['Selpic 점수'].mean():.1f}")
+#     if "마케팅 등급 (자동)" in filtered.columns:
+#         top_grade = filtered["마케팅 등급 (자동)"].mode().values[0]
+#         grade_count = (filtered["마케팅 등급 (자동)"] == top_grade).sum()
+#         col4.metric("최다 등급", f"{top_grade} · {grade_count}건")
+# else:
+#     col3.metric("평균 점수", "—")
+#     col4.metric("최다 등급", "—")
 
 
 # ─────────────────────────────────────────────────────────────────
