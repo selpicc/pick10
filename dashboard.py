@@ -528,35 +528,120 @@ st.markdown(
 )
 
 # ─────────────────────────────────────────────────────────────────
-# 액션 — 수집 건수 선택 + 수집 버튼
-# selectbox 레이블 숨기고 format_func로 "N건" 표시 → 한 줄 깔끔 정렬
+# 액션 — 수집 모드 전환 + 옵션 + 버튼 (3가지 모드)
+# 모드 1: 자동 (전체 12개 카테고리)
+# 모드 2: 카테고리 지정 (단일 카테고리)
+# 모드 3: 키워드 입력 (사용자 직접)
 # ─────────────────────────────────────────────────────────────────
-action_col1, action_col2, action_col3, action_col4 = st.columns([0.7, 1.6, 1.4, 2.3])
-with action_col1:
-    collect_n = st.selectbox(
-        "수집 건수",
-        options=[1, 2, 3, 4, 5],
-        index=4,   # 기본값 5
-        key="collect_count",
+
+# 카테고리 프리셋 (collect_5.py CATEGORY_PRESETS와 동기화)
+COLLECT_CATEGORIES = [
+    "분유·유아식", "신생아 케어", "임산부·산모 뷰티", "산모 서비스",
+    "유모차·카시트", "모유수유용품", "출산 준비물", "베이비 사진",
+    "유아 의류", "임산부 영양제", "베이비 식기", "유아 교육",
+]
+
+mode_col, _spacer = st.columns([2, 3])
+with mode_col:
+    collect_mode = st.radio(
+        "수집 모드",
+        options=["자동 (전체)", "카테고리 지정", "키워드 입력"],
+        horizontal=True,
+        key="collect_mode",
         label_visibility="collapsed",
-        format_func=lambda x: f"{x}건",
     )
-with action_col2:
-    collect_clicked = st.button(
-        f"+ {collect_n}건 새로 수집",
-        type="primary",
-        use_container_width=True,
-    )
-with action_col3:
-    fix_clicked = st.button(
-        "빈 스토어 주소 채우기",
-        use_container_width=True,
-        help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
-    )
-with action_col4:
+
+# 모드별 입력 영역 (한 줄, 동적 변경)
+collect_n = 5
+collect_category = ""
+collect_keywords = ""
+
+if collect_mode == "자동 (전체)":
+    a_col1, a_col2, a_col3, a_col4 = st.columns([0.7, 1.5, 1.4, 2.4])
+    with a_col1:
+        collect_n = st.selectbox(
+            "건수", [1, 2, 3, 4, 5], index=4,
+            key="collect_count_auto",
+            label_visibility="collapsed",
+            format_func=lambda x: f"{x}건",
+        )
+    with a_col2:
+        collect_clicked = st.button(
+            f"+ {collect_n}건 자동 수집",
+            type="primary", use_container_width=True,
+            key="collect_btn_auto",
+        )
+    with a_col3:
+        fix_clicked = st.button(
+            "빈 스토어 주소 채우기", use_container_width=True,
+            key="fix_btn_auto",
+            help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
+        )
+    with a_col4:
+        st.markdown(
+            "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
+            f"12개 카테고리에서 점수 상위 {collect_n}건 · 약 {30 + collect_n * 8}초"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+elif collect_mode == "카테고리 지정":
+    c_col1, c_col2, c_col3, c_col4 = st.columns([1.4, 0.7, 1.5, 2.4])
+    with c_col1:
+        collect_category = st.selectbox(
+            "카테고리", COLLECT_CATEGORIES,
+            key="collect_cat_sel",
+            label_visibility="collapsed",
+        )
+    with c_col2:
+        collect_n = st.selectbox(
+            "건수", [1, 2, 3, 4, 5], index=4,
+            key="collect_count_cat",
+            label_visibility="collapsed",
+            format_func=lambda x: f"{x}건",
+        )
+    with c_col3:
+        collect_clicked = st.button(
+            f"+ {collect_n}건 수집",
+            type="primary", use_container_width=True,
+            key="collect_btn_cat",
+        )
+    with c_col4:
+        st.markdown(
+            "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
+            f"<b>{collect_category}</b> 카테고리에서만 {collect_n}건"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    fix_clicked = False   # 이 모드에선 채우기 버튼 X
+
+else:   # 키워드 입력
+    k_col1, k_col2, k_col3 = st.columns([3.5, 0.7, 1.5])
+    with k_col1:
+        collect_keywords = st.text_input(
+            "키워드", value="",
+            placeholder="예: 산양분유, 유기농 기저귀, 임산부 엽산  (쉼표로 여러 개)",
+            key="collect_kw",
+            label_visibility="collapsed",
+        )
+    with k_col2:
+        collect_n = st.selectbox(
+            "건수", [1, 2, 3, 4, 5], index=4,
+            key="collect_count_kw",
+            label_visibility="collapsed",
+            format_func=lambda x: f"{x}건",
+        )
+    with k_col3:
+        collect_clicked = st.button(
+            f"+ {collect_n}건 수집",
+            type="primary", use_container_width=True,
+            key="collect_btn_kw",
+            disabled=not collect_keywords.strip(),
+        )
+    fix_clicked = False   # 이 모드에선 채우기 버튼 X
     st.markdown(
-        "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
-        f"수집: 약 {15 + collect_n * 8}초 · 채우기: 빈 행 N건 × 약 0.3초"
+        "<div style='color: #6b7280; font-size: 12px; margin-top: 6px;'>"
+        "쉼표(,)로 여러 키워드 가능 · 각 키워드별 검색 후 점수 상위 통합 추출"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -589,13 +674,24 @@ if collect_clicked:
         cleanup_msg = f"🧹 정리 단계 오류 (수집은 진행): {e}"
 
     # ────────────────────────────────────────────────
-    # 2단계: 수집 (collect_5.py에 [3.5/6] A+B+C 필터 내장)
+    # 2단계: 수집 (모드별 인자 전달 — collect_5.py에 [3.5/6] A+B+C 필터 내장)
     # ────────────────────────────────────────────────
-    with st.spinner(f"수집 중... 네이버 검색 + 분석 진행 중 ({collect_n}건, 약 {15 + collect_n * 8}초 소요)"):
+    # 모드별 명령줄 인자 구성
+    cmd_args = [sys.executable, "collect_5.py", "--count", str(collect_n)]
+    if collect_mode == "카테고리 지정" and collect_category:
+        cmd_args += ["--category", collect_category]
+        mode_label = f"'{collect_category}' 카테고리"
+    elif collect_mode == "키워드 입력" and collect_keywords:
+        cmd_args += ["--keywords", collect_keywords]
+        mode_label = f"키워드 '{collect_keywords[:30]}'"
+    else:
+        mode_label = "전체 카테고리"
+
+    with st.spinner(f"수집 중... {mode_label} → {collect_n}건 (약 {15 + collect_n * 8}초)"):
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             result = subprocess.run(
-                [sys.executable, "collect_5.py", str(collect_n)],
+                cmd_args,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",

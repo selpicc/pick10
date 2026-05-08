@@ -26,6 +26,7 @@ v3 → v4 변경:
 =================================================================
 """
 
+import argparse
 import math
 import os
 import re
@@ -49,22 +50,56 @@ sys.stdout.reconfigure(encoding="utf-8")
 # ─────────────────────────────────────────────────────────────────
 # 설정 (수정 가능)
 # ─────────────────────────────────────────────────────────────────
-SCORE_THRESHOLD = 70   # Selpic Fit Score 임계치
+SCORE_THRESHOLD = 70   # Selpic Fit Score 임계치 (기본값)
 TARGET_COUNT = 5       # 일일 선별 건수 (기본값)
 
-# 커맨드라인 인자로 덮어쓰기 가능
-# 사용법: python collect_5.py [건수]   예: python collect_5.py 3 → 3건만 수집
-# 안전 제한: 1~10건
-if len(sys.argv) > 1:
-    try:
-        _n = int(sys.argv[1])
-        if 1 <= _n <= 10:
-            TARGET_COUNT = _n
-            print(f"   📌 수집 건수: {TARGET_COUNT}건 (커맨드라인 인자 적용)")
-        else:
-            print(f"   ⚠️  인자 {_n} 무시 (허용 범위 1~10) → 기본 {TARGET_COUNT}건")
-    except ValueError:
-        print(f"   ⚠️  인자 '{sys.argv[1]}' 무시 (숫자 X) → 기본 {TARGET_COUNT}건")
+# ─────────────────────────────────────────────────────────────────
+# 커맨드라인 인자 처리 (3가지 수집 모드)
+# ─────────────────────────────────────────────────────────────────
+# 사용법:
+#   1. 자동 (전체):    python collect_5.py --count 5
+#   2. 카테고리 지정:  python collect_5.py --count 3 --category "분유·유아식"
+#   3. 키워드 입력:    python collect_5.py --count 5 --keywords "산양분유,유기농 기저귀"
+#
+# (역호환) 첫 위치 인자가 숫자면 --count로 처리:
+#   python collect_5.py 3   == python collect_5.py --count 3
+# ─────────────────────────────────────────────────────────────────
+_parser = argparse.ArgumentParser(description="PICK10 신규 셀러 자동 큐레이션")
+_parser.add_argument("--count", type=int, default=5, help="수집 건수 (1~10)")
+_parser.add_argument("--category", type=str, default="", help="검색 카테고리 한정")
+_parser.add_argument("--keywords", type=str, default="", help="사용자 키워드 (쉼표 구분)")
+# 역호환: positional (선택)
+_parser.add_argument("count_legacy", nargs="?", type=int, default=None,
+                     help="(역호환) 위치 인자 = count")
+_args, _unknown = _parser.parse_known_args()
+
+# 역호환: 위치 인자가 있으면 --count로 사용
+if _args.count_legacy is not None:
+    _args.count = _args.count_legacy
+
+# count 안전 제한 1~10
+TARGET_COUNT = max(1, min(10, _args.count))
+TARGET_CATEGORY = (_args.category or "").strip()
+USER_KEYWORDS = [k.strip() for k in (_args.keywords or "").split(",") if k.strip()]
+
+# 모드 결정
+if USER_KEYWORDS:
+    COLLECT_MODE = "keywords"
+    SCORE_THRESHOLD = 30   # 사용자 키워드는 카테고리 점수 없을 수 있어 임계치 낮춤
+elif TARGET_CATEGORY:
+    COLLECT_MODE = "category"
+    SCORE_THRESHOLD = 50   # 단일 카테고리 — 후보 풀 작아서 임계치 약간 낮춤
+else:
+    COLLECT_MODE = "auto"
+    SCORE_THRESHOLD = 70   # 전체 카테고리 기본값
+
+print(f"   📌 수집 모드: {COLLECT_MODE}")
+print(f"   📌 수집 건수: {TARGET_COUNT}건")
+if COLLECT_MODE == "category":
+    print(f"   📌 카테고리: {TARGET_CATEGORY}")
+elif COLLECT_MODE == "keywords":
+    print(f"   📌 사용자 키워드: {', '.join(USER_KEYWORDS)}")
+print(f"   📌 점수 임계치: {SCORE_THRESHOLD}점+")
 
 # 12개 카테고리 프리셋 (영유아·산모 특화)
 # 카테고리당 첫 키워드를 메인으로 사용 (다른 키워드는 보조)
@@ -89,13 +124,14 @@ TARGET_KEYWORDS = [
     "유아", "베이비", "출산", "임신", "분유"
 ]
 
-# 시장 타깃 크로스체크 (A+B+C) — market_filter.py 모듈에서 import
+# 시장 타깃 크로스체크 (A+B+C) + 자동 카테고리 분류 — market_filter.py
 # 키워드 명단 수정은 market_filter.py 한 곳에서만!
 from market_filter import (
     MARKET_FIT_KEYWORDS,
     BIG_COMPANY_BLOCKLIST,
     NEGATIVE_KEYWORDS,
     market_fit_check,
+    classify_category,
 )
 
 
@@ -423,34 +459,75 @@ def calculate_fit_score(item: dict, preset_category: str) -> tuple:
 
 
 # ─────────────────────────────────────────────────────────────────
-# 메인 흐름
+# 메인 흐름 — 모드별 검색 분기 (auto / category / keywords)
 # ─────────────────────────────────────────────────────────────────
 print("\n" + "=" * 60)
-print("  📦 PICK10 v3 - 일 5건 셀러 자동 큐레이션")
-print(f"  카테고리 {len(CATEGORY_PRESETS)}개 · 임계치 {SCORE_THRESHOLD}점 · 목표 {TARGET_COUNT}건")
+print(f"  📦 PICK10 - 신규 셀러 자동 큐레이션 ({COLLECT_MODE} 모드)")
+print(f"  임계치 {SCORE_THRESHOLD}점 · 목표 {TARGET_COUNT}건")
 print("=" * 60 + "\n")
 
 
-# ── [1/6] 12개 카테고리 × 2개 키워드 검색 (후보 풀 2배 확장) ──
-print(f"🔍 [1/6] {len(CATEGORY_PRESETS)}개 카테고리 × 2개 키워드로 검색 → 후보 풀 모음...")
+# ── [1/6] 모드별 검색 → 후보 풀 ──
 candidates = []
-for cat_name, keywords in CATEGORY_PRESETS.items():
-    cat_total = 0
-    # 카테고리당 최대 2개 키워드 사용
-    for keyword in keywords[:2]:
-        items = search_shop(keyword, display=10)
+
+if COLLECT_MODE == "keywords":
+    # 모드 3: 사용자 키워드 직접 입력
+    print(f"🔍 [1/6] 사용자 키워드 {len(USER_KEYWORDS)}개로 검색 → 후보 풀 모음...")
+    for keyword in USER_KEYWORDS:
+        items = search_shop(keyword, display=15)   # 키워드당 더 많이
         ss_items = [
             it for it in items
             if "smartstore.naver.com" in it.get("link", "")
         ]
         for rank, item in enumerate(ss_items, 1):
             item["_keyword"] = keyword
-            item["_category_preset"] = cat_name
+            item["_category_preset"] = "사용자 키워드"
             item["_rank"] = rank
             candidates.append(item)
-        cat_total += len(ss_items)
-        time.sleep(0.15)   # API 부담 줄이기
-    print(f"   ✓ {cat_name:18s} → 키워드 {len(keywords[:2])}개 → 스마트스토어 {cat_total}건")
+        time.sleep(0.15)
+        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {len(ss_items)}건")
+
+elif COLLECT_MODE == "category":
+    # 모드 2: 단일 카테고리 한정
+    if TARGET_CATEGORY not in CATEGORY_PRESETS:
+        print(f"   ❌ 알 수 없는 카테고리: '{TARGET_CATEGORY}'")
+        print(f"      허용 카테고리: {', '.join(CATEGORY_PRESETS.keys())}")
+        sys.exit(1)
+    keywords = CATEGORY_PRESETS[TARGET_CATEGORY]
+    print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 키워드 {len(keywords)}개로 검색...")
+    for keyword in keywords:
+        items = search_shop(keyword, display=15)
+        ss_items = [
+            it for it in items
+            if "smartstore.naver.com" in it.get("link", "")
+        ]
+        for rank, item in enumerate(ss_items, 1):
+            item["_keyword"] = keyword
+            item["_category_preset"] = TARGET_CATEGORY
+            item["_rank"] = rank
+            candidates.append(item)
+        time.sleep(0.15)
+        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {len(ss_items)}건")
+
+else:
+    # 모드 1 (기본): 12개 카테고리 전체
+    print(f"🔍 [1/6] {len(CATEGORY_PRESETS)}개 카테고리 × 2개 키워드로 검색 → 후보 풀 모음...")
+    for cat_name, keywords in CATEGORY_PRESETS.items():
+        cat_total = 0
+        for keyword in keywords[:2]:
+            items = search_shop(keyword, display=10)
+            ss_items = [
+                it for it in items
+                if "smartstore.naver.com" in it.get("link", "")
+            ]
+            for rank, item in enumerate(ss_items, 1):
+                item["_keyword"] = keyword
+                item["_category_preset"] = cat_name
+                item["_rank"] = rank
+                candidates.append(item)
+            cat_total += len(ss_items)
+            time.sleep(0.15)
+        print(f"   ✓ {cat_name:18s} → 키워드 {len(keywords[:2])}개 → 스마트스토어 {cat_total}건")
 
 print(f"\n   ✅ 총 후보 풀: {len(candidates)}건\n")
 
@@ -603,7 +680,10 @@ for sel in passed:
 
     # 5-4) 마케팅 등급 + 규모 추정 (주력 상품 키워드로 4채널 검색)
     mgrade = calculate_marketing_grade(product_keyword)
+    # 자동 카테고리 분류 (주력상품명 기준)
+    auto_cat = classify_category(flagship_title)
     print(f"        주력: {flagship_title[:50]}")
+    print(f"        카테고리: {auto_cat}  (자동 분류)")
     print(f"        검색 키워드: '{product_keyword}'")
     print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/뉴{mgrade['news']}/지{mgrade['kin']})")
     print(f"        규모 추정: {mgrade['size']} ({mgrade['size_note']})")
