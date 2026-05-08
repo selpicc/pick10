@@ -683,35 +683,23 @@ if len(filtered) > 0:
     main_df = filtered[safe_main_cols + extra_cols + (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])]
     main_df = main_df.sort_values([sort_col], ascending=[False]).reset_index(drop=True)
 
-    # 등급 배지 — 옵션 B: 연한 파스텔 배경 + 진한 텍스트 (둥근 모서리)
-    def style_grade(val):
-        if val == "상":
-            # 연한 그린 배경 + 진한 그린 텍스트
-            return ("background-color: #dcfce7; color: #166534; font-weight: 600; "
-                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
-        elif val == "중":
-            # 연한 앰버 배경 + 진한 앰버 텍스트
-            return ("background-color: #fef3c7; color: #92400e; font-weight: 600; "
-                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
-        elif val == "하":
-            # 연한 회색 배경 + 진한 회색 텍스트
-            return ("background-color: #f3f4f6; color: #6b7280; font-weight: 600; "
-                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
-        return ""
+    # 등급 표시값 — 컬러 도트 + 텍스트 (Linear/Notion 스타일 미니멀)
+    # 셀 자체는 흰색 유지, 도트만 색상 → 가장 깔끔한 간소화
+    GRADE_DISPLAY = {
+        "상": "🟢  상",
+        "중": "🟡  중",
+        "하": "⚪  하",
+    }
 
-    display_df = main_df[safe_main_cols]
+    display_df = main_df[safe_main_cols].copy()
     if "마케팅 등급 (자동)" in display_df.columns:
-        # ⚠️ pandas 2.1.0+에서 Styler.applymap()은 제거됨 → Styler.map() 사용
-        styled = (
-            display_df.style
-            .map(style_grade, subset=["마케팅 등급 (자동)"])
-            .set_properties(
-                subset=["마케팅 등급 (자동)"],
-                **{"text-align": "center"},
-            )
+        display_df["마케팅 등급 (자동)"] = (
+            display_df["마케팅 등급 (자동)"]
+            .map(GRADE_DISPLAY)
+            .fillna("")
         )
-    else:
-        styled = display_df
+
+    styled = display_df
 
     main_column_config = {
         "브랜드명": st.column_config.TextColumn("브랜드명", width="medium"),
