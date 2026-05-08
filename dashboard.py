@@ -1255,8 +1255,8 @@ if len(filtered) > 0:
                 header_col1, header_col2 = st.columns([5, 1])
                 with header_col1:
                     st.markdown(
-                        f"<div style='font-size: 20px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
-                        f"<div style='font-size: 12px; color: #6b7280; margin-top: 2px;'>"
+                        f"<div style='font-size: 22px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
+                        f"<div style='font-size: 14px; color: #4b5563; margin-top: 4px; line-height: 1.5;'>"
                         f"{sel_full.get('발견 카테고리', '')} · "
                         f"Selpic {sel_full.get('Selpic 점수', '-')}점 · "
                         f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
