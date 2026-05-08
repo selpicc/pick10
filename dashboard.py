@@ -905,19 +905,8 @@ if search_brand:
 
 # ─────────────────────────────────────────────────────────────────
 # 영업 후보 셀러 테이블 (메인)
-# 제목 + 빈 스토어 주소 채우기 (우측 상단 작은 버튼)
 # ─────────────────────────────────────────────────────────────────
-title_col, fix_btn_col = st.columns([5, 1.3])
-with title_col:
-    st.markdown(f"## 영업 후보")
-with fix_btn_col:
-    st.markdown("<div style='padding-top: 18px;'></div>", unsafe_allow_html=True)
-    fix_clicked_table = st.button(
-        "빈 스토어 채우기",
-        use_container_width=True,
-        key="fix_btn_table",
-        help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
-    )
+st.markdown(f"## 영업 후보")
 
 # ─────────────────────────────────────────────────────────────────
 # 테이블 상단 필터 (브랜드 검색 / 카테고리 / 영업 상태 / 마케팅 활동)
@@ -1006,18 +995,8 @@ with ft_col5:
     )
 
 # 빈 스토어 채우기 클릭 처리 (표 상단 버튼)
-if fix_clicked_table:
-    with st.spinner("빈 스토어 주소 갱신 중..."):
-        try:
-            result = fill_empty_urls_in_all_csvs()
-            st.cache_data.clear()
-            if result["fixed"] > 0:
-                st.toast(f"✅ {result['fixed']}건 갱신 완료", icon="✅")
-            else:
-                st.toast("이미 모두 정상입니다", icon="ℹ️")
-            st.rerun()
-        except Exception:
-            st.toast("갱신 중 오류 발생", icon="⚠️")
+# fix_clicked_table 핸들러는 버튼 정의(CSV 옆) 이후로 이동
+
 
 def save_one_brand(brand: str, new_values: dict) -> bool:
     """한 셀러의 수기 컬럼 값을 Supabase에 update.
@@ -1213,8 +1192,8 @@ if len(filtered) > 0:
         key="main_aggrid",
     )
 
-    # CSV 다운로드 (테이블 위 액션 영역)
-    download_col1, download_col2 = st.columns([1, 5])
+    # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
+    download_col1, download_col2, download_col3 = st.columns([1, 1, 4])
     with download_col1:
         csv_export = filtered.to_csv(index=False, encoding="utf-8-sig")
         today_label = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -1225,6 +1204,27 @@ if len(filtered) > 0:
             mime="text/csv",
             use_container_width=True,
         )
+    with download_col2:
+        fix_clicked_table = st.button(
+            "빈 스토어 채우기",
+            use_container_width=True,
+            key="fix_btn_table",
+            help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
+        )
+
+    # 빈 스토어 채우기 클릭 처리 (버튼 정의 직후)
+    if fix_clicked_table:
+        with st.spinner("빈 스토어 주소 갱신 중..."):
+            try:
+                result = fill_empty_urls_in_all_csvs()
+                st.cache_data.clear()
+                if result["fixed"] > 0:
+                    st.toast(f"✅ {result['fixed']}건 갱신 완료", icon="✅")
+                else:
+                    st.toast("이미 모두 정상입니다", icon="ℹ️")
+                st.rerun()
+            except Exception:
+                st.toast("갱신 중 오류 발생", icon="⚠️")
 
     # ─────────────────────────────────────────────────────────
     # 디테일 패널 — 선택된 행이 있을 때만
