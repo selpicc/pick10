@@ -687,20 +687,89 @@ if collect_clicked:
                 timeout=300,
                 cwd=script_dir,
             )
+            # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
+            import re
+            stdout = result.stdout or ""
+
+            def _grab(pattern: str, default: int = 0) -> int:
+                m = re.search(pattern, stdout)
+                return int(m.group(1)) if m else default
+
+            saved_n = _grab(r"저장 완료:\s*(\d+)\s*/\s*\d+건")
+            big_n = _grab(r"대기업 자동 제외:\s*(\d+)건")
+            a_fail = _grab(r"A 탈락.*?:\s*(\d+)건")
+            b_fail = _grab(r"B 탈락.*?:\s*(\d+)건")
+            c_fail = _grab(r"C 탈락.*?:\s*(\d+)건")
+            flagship_fail = stdout.count("주력상품 재검사 탈락")
+
+            # session_state에 결과 저장 (rerun 후에도 표시 유지)
+            st.session_state["last_collect_summary"] = {
+                "success": result.returncode == 0,
+                "saved": saved_n,
+                "target": collect_n,
+                "big": big_n,
+                "a": a_fail,
+                "b": b_fail,
+                "c": c_fail,
+                "flagship": flagship_fail,
+                "mode": collect_mode,
+            }
+
             if result.returncode == 0:
-                # 캐시 클리어 후 자동 새로고침 → 새 데이터 즉시 반영
                 st.cache_data.clear()
-                st.toast(f"✅ {collect_n}건 수집 완료", icon="✅")
                 st.rerun()
-            else:
-                # 실패 시에만 간단한 에러 메시지 (자동 사라짐)
-                st.toast("수집 실패. 잠시 후 다시 시도해주세요.", icon="⚠️")
         except subprocess.TimeoutExpired:
             st.error("시간 초과 (5분). 네트워크 또는 API 응답이 늦을 수 있어요. 잠시 후 다시 시도하세요.")
         except FileNotFoundError:
             st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
         except Exception as e:
             st.error(f"실행 중 오류: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 수집 결과 요약 (깔끔한 메시지 — 닫기 버튼으로 닫기 가능)
+# ─────────────────────────────────────────────────────────────────
+if "last_collect_summary" in st.session_state:
+    s = st.session_state["last_collect_summary"]
+    saved = s.get("saved", 0)
+    big = s.get("big", 0)
+    a, b, c = s.get("a", 0), s.get("b", 0), s.get("c", 0)
+    flagship = s.get("flagship", 0)
+    excluded_total = big + a + b + c + flagship
+
+    # 제외 사유 간략 (0건은 표시 X)
+    reasons = []
+    if a:
+        reasons.append(f"영유아 시장 외 {a}건")
+    if b:
+        reasons.append(f"대기업 {b}건")
+    if c:
+        reasons.append(f"다른 시장 {c}건")
+    if flagship:
+        reasons.append(f"주력상품 부적합 {flagship}건")
+    if big:
+        reasons.append(f"카페 노출 50만+ {big}건")
+    reasons_text = " · ".join(reasons) if reasons else ""
+
+    res_col1, res_col2 = st.columns([6, 1])
+    with res_col1:
+        if s["success"] and saved > 0:
+            msg = f"✅ {saved}건 수집 완료"
+            if excluded_total > 0:
+                msg += f"  /  🚫 {excluded_total}건 제외 ({reasons_text})"
+            st.success(msg)
+        elif s["success"] and saved == 0:
+            info_msg = "수집 0건. 모든 후보가 필터에서 제외됨"
+            if reasons_text:
+                info_msg += f" ({reasons_text})"
+            st.info(info_msg)
+        else:
+            st.error("❌ 수집 실패")
+    with res_col2:
+        if st.button("닫기", key="close_summary_btn", use_container_width=True):
+            del st.session_state["last_collect_summary"]
+            st.rerun()
+
 
 st.markdown("---")
 
