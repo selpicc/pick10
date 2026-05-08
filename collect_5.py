@@ -474,6 +474,12 @@ if COLLECT_MODE == "keywords":
     print(f"\n🔍 [1/6] 사용자 키워드 {len(USER_KEYWORDS)}개 → 확장 {len(expanded_keywords)}개로 검색...")
 
     for keyword in expanded_keywords:
+        # 키워드 기반 자동 카테고리 추정 (예: "아기 로션" → "베이비 스킨케어")
+        # 매칭 안 되면 키워드 자체를 fallback (예: "강아지 사료" → "강아지 사료")
+        kw_cat = classify_category(keyword)
+        if kw_cat == "기타":
+            kw_cat = keyword   # 분류 실패 시 키워드 그대로 사용
+
         keyword_total = 0
         # 페이지네이션: start=1 (1~30위), start=31 (31~60위)
         for start_offset in [1, 31]:
@@ -486,12 +492,12 @@ if COLLECT_MODE == "keywords":
             ]
             for rank, item in enumerate(ss_items, start_offset):
                 item["_keyword"] = keyword
-                item["_category_preset"] = "사용자 키워드"
+                item["_category_preset"] = kw_cat   # 의미있는 카테고리 값
                 item["_rank"] = rank
                 candidates.append(item)
             keyword_total += len(ss_items)
             time.sleep(0.15)
-        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건")
+        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건  (카테고리: {kw_cat})")
 
 elif COLLECT_MODE == "category":
     # 모드 2: 단일 카테고리 한정
