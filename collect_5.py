@@ -7,13 +7,15 @@ v3 → v4 변경:
   - Selpic 점수 변별력 보강 (단계 세분화)
 
 흐름:
-  [1/6] 12개 카테고리 × 2개 키워드 검색 → 후보 풀
-  [2/6] Selpic Fit Score 산정 (100점 만점, 변별력 강화)
-        카테고리(50) + 타깃(30) + 검색노출(20)
-  [3/6] 중복 제거 + 누적 DB 자동 제외
-  [4/6] 70점+ 필터 → 점수순 정렬
-  [5/6] 디테일 수집 + 대기업 자동 제외 → 5건 채울 때까지
-  [6/6] CSV 저장
+  [1/6]    12개 카테고리 × 2개 키워드 검색 → 후보 풀
+  [2/6]    Selpic Fit Score 산정 (100점 만점, 변별력 강화)
+           카테고리(50) + 타깃(30) + 검색노출(20)
+  [3/6]    중복 제거 + 누적 DB 자동 제외
+  [3.5/6]  시장 타깃 크로스체크 (A+B+C 3중 필터)
+           A. 영유아 키워드 1개+ 필수 / B. 대기업 컷 / C. 부정 키워드 차단
+  [4/6]    70점+ 필터 → 점수순 정렬
+  [5/6]    디테일 수집 + 대기업 자동 제외 (카페 50만+) → 5건 채울 때까지
+  [6/6]    CSV 저장
 
 실행:
   python collect_5.py
@@ -72,6 +74,78 @@ TARGET_KEYWORDS = [
     "임산부", "산모", "신생아", "영유아", "아기",
     "유아", "베이비", "출산", "임신", "분유"
 ]
+
+# ─────────────────────────────────────────────────────────────────
+# 시장 타깃 크로스체크 (A+B+C 자동 필터)
+# 5건 저장 전에 무조건 통과해야 하는 3중 필터
+# ─────────────────────────────────────────────────────────────────
+
+# A. 영유아·산모 시장 키워드 (1개 이상 필수 포함)
+# 어린이/키즈는 제외 — 유아까지가 셀픽 타깃
+MARKET_FIT_KEYWORDS = {
+    "영유아", "신생아", "영아", "유아",
+    "베이비", "baby", "아기", "아이",
+    "출산", "임산부", "임신",
+    "수유", "모유", "분유",
+    "산모", "산후", "유모",
+    "젖병", "기저귀", "이유식",
+    "맘", "mom", "mommy",
+}
+
+# B. 대기업 명단 (자동 제외)
+# 영유아 시장 주요 대기업/대형 브랜드
+BIG_COMPANY_BLOCKLIST = {
+    "유한킴벌리", "하기스", "마미포코", "봉봉",
+    "LG생활건강", "깨끗한나라", "보솜이",
+    "매일유업", "남양유업", "일동후디스",
+    "한국야쿠르트", "매일홀딩스",
+    "앱솔루트", "임페리얼XO", "아이엠마더", "산양",
+    "풀무원", "베베쿡", "CJ제일제당", "농심",
+    "보령제약", "동국제약", "닥터아토",
+    "아가방앤컴퍼니", "한솔교육",
+}
+
+# C. 부정 키워드 (다른 시장 자동 차단)
+# 영유아 외 시장 신호
+NEGATIVE_KEYWORDS = {
+    "시니어", "노인", "어르신", "노년", "실버",
+    "반려", "펫", "강아지", "고양이", "댕댕이", "냥이",
+    "다이어트", "헬스", "스포츠", "골프", "운동복",
+    "자동차", "게임", "IT", "컴퓨터", "문구",
+    "산업재", "도매", "B2B",
+    "주류", "술", "와인", "맥주", "담배", "성인용",
+}
+
+
+def market_fit_check(brand_name: str, product_title: str) -> tuple:
+    """3중 크로스체크 (A+B+C).
+    매칭 범위: 브랜드명 + 상품명 (소문자 비교)
+
+    반환: (통과 여부, 탈락 사유)
+        ("ok", "")            — 통과
+        ("a", reason)         — A 탈락 (영유아 키워드 X)
+        ("b", reason)         — B 탈락 (대기업)
+        ("c", reason)         — C 탈락 (다른 시장)
+    """
+    text = f"{brand_name} {product_title}".lower()
+
+    # B. 대기업 명단 검사 (가장 강한 컷 — 먼저)
+    for big in BIG_COMPANY_BLOCKLIST:
+        if big.lower() in text:
+            return "b", f"대기업: {big}"
+
+    # C. 부정 키워드 검사 (다른 시장)
+    for neg in NEGATIVE_KEYWORDS:
+        if neg.lower() in text:
+            return "c", f"다른 시장: {neg}"
+
+    # A. 영유아 키워드 1개 이상 필수
+    for tk in MARKET_FIT_KEYWORDS:
+        if tk.lower() in text:
+            return "ok", ""
+
+    return "a", "영유아 시장 키워드 X"
+
 
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -465,6 +539,39 @@ for c in candidates:
 dup_removed = len(candidates) - len(unique_candidates) - already_collected_skipped
 print(f"   ✅ {len(candidates)}건 → {len(unique_candidates)}건")
 print(f"      (이번 실행 중복 {dup_removed}건 + 이전 수집 {already_collected_skipped}건 제외)\n")
+
+
+# ── [3.5/6] 시장 타깃 크로스체크 (A+B+C 자동 필터) ──
+# 5건 저장 전 무조건 통과해야 하는 3중 필터
+print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (A 영유아 필수 / B 대기업 컷 / C 다른시장 차단)...")
+fit_candidates = []
+fail_log = {"a": [], "b": [], "c": []}
+
+for c in unique_candidates:
+    brand = c.get("mallName", "").strip()
+    title = clean_html_tags(c.get("title", ""))
+    result, reason = market_fit_check(brand, title)
+    if result == "ok":
+        fit_candidates.append(c)
+    else:
+        fail_log[result].append(f"{brand} ({reason})")
+
+print(f"   ✅ 시장 타깃 통과: {len(fit_candidates)}건")
+print(f"      ❌ A 탈락 (영유아 시장 X): {len(fail_log['a'])}건")
+print(f"      ❌ B 탈락 (대기업): {len(fail_log['b'])}건")
+print(f"      ❌ C 탈락 (다른 시장): {len(fail_log['c'])}건")
+
+# 디버그 출력 (각 카테고리 최대 3개씩만)
+for tag, label in [("a", "A 영유아 시장 X"), ("b", "B 대기업"), ("c", "C 다른 시장")]:
+    if fail_log[tag]:
+        print(f"\n   [{label} 샘플]")
+        for item in fail_log[tag][:3]:
+            print(f"      - {item}")
+        if len(fail_log[tag]) > 3:
+            print(f"      ... 그 외 {len(fail_log[tag]) - 3}건")
+print()
+
+unique_candidates = fit_candidates
 
 
 # ── [4/6] 임계치 + 정렬 (5건 선별은 [5/6]에서 대기업 컷 후) ──
