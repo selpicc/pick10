@@ -522,14 +522,17 @@ st.markdown(
 
 # ─────────────────────────────────────────────────────────────────
 # 액션 — 수집 건수 선택 + 수집 버튼
+# selectbox 레이블 숨기고 format_func로 "N건" 표시 → 한 줄 깔끔 정렬
 # ─────────────────────────────────────────────────────────────────
-action_col1, action_col2, action_col3, action_col4 = st.columns([1, 1.3, 1, 2])
+action_col1, action_col2, action_col3, action_col4 = st.columns([0.7, 1.6, 1.4, 2.3])
 with action_col1:
     collect_n = st.selectbox(
         "수집 건수",
         options=[1, 2, 3, 4, 5],
         index=4,   # 기본값 5
         key="collect_count",
+        label_visibility="collapsed",
+        format_func=lambda x: f"{x}건",
     )
 with action_col2:
     collect_clicked = st.button(
@@ -545,8 +548,8 @@ with action_col3:
     )
 with action_col4:
     st.markdown(
-        "<div style='padding-top: 32px; color: #6b7280; font-size: 13px;'>"
-        "수집: 30~60초 · 채우기: 빈 행 N건 × 약 0.3초"
+        "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
+        f"수집: 약 {15 + collect_n * 8}초 · 채우기: 빈 행 N건 × 약 0.3초"
         "</div>",
         unsafe_allow_html=True,
     )
