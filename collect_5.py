@@ -637,6 +637,15 @@ for sel in passed:
     flagship_category = " > ".join(
         filter(None, [flagship.get(f"category{i}", "") for i in range(1, 5)])
     )
+
+    # 5-1.5) 주력상품 발견 후 A+B+C 재검사 (대기업/부정 키워드 누락 방지)
+    # 이유: [3.5/6]은 검색 결과 제목 기반 → 주력상품 ≠ 검색 결과일 수 있음
+    # 예: "베이비 오일" 검색 결과로 들어왔지만 주력상품이 "LG생활건강 비누"인 경우
+    flagship_check, flagship_reason = market_fit_check(brand_name, flagship_title)
+    if flagship_check != "ok":
+        print(f"        🚫 주력상품 재검사 탈락: {flagship_reason} → 다음 후보로")
+        time.sleep(0.3)
+        continue   # 5건에 안 포함
     flagship_price = int(flagship.get("lprice", 0))
 
     # 5-2) 진짜 스토어 URL — 3중 fallback 전략 (검색 페이지로는 절대 안 보냄)
