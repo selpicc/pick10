@@ -17,6 +17,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode
 
 from supabase_client import (
     get_supabase_client,
@@ -42,33 +43,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────────────────────────
-# 메인 테이블 가운데 정렬 (CSS 강제 주입)
-# Streamlit st.dataframe은 셀 정렬 옵션 미제공 → CSS로 처리
-# ─────────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <style>
-    /* dataframe 셀과 헤더 모두 가운데 정렬 */
-    div[data-testid="stDataFrame"] [role="gridcell"],
-    div[data-testid="stDataFrame"] [role="columnheader"],
-    div[data-testid="stDataFrame"] [role="gridcell"] > div,
-    div[data-testid="stDataFrame"] [role="columnheader"] > div {
-        text-align: center !important;
-        justify-content: center !important;
-        align-items: center !important;
-        display: flex !important;
-    }
-    /* link 컬럼 (스토어 열기) 텍스트 가운데 */
-    div[data-testid="stDataFrame"] a {
-        text-align: center !important;
-        width: 100% !important;
-        display: block !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 # ─────────────────────────────────────────────────────────────────
 # 비밀번호 보호 (배포 환경에서만 활성화)
@@ -731,36 +705,71 @@ if len(filtered) > 0:
     # 순번 열 추가 (Selpic 점수 정렬 후 1부터) — 브랜드명 앞에 위치
     display_df.insert(0, "No.", range(1, len(display_df) + 1))
 
-    # 모든 셀 가운데 정렬 (헤더 + 본문)
-    styled = (
-        display_df.style
-        .set_properties(**{"text-align": "center"})
-        .set_table_styles([
-            {"selector": "th", "props": [("text-align", "center")]},
-        ])
+    # ─────────────────────────────────────────────────────────
+    # AgGrid 설정 — 가운데 정렬 + 행 클릭 선택 + 깔끔한 헤더
+    # ─────────────────────────────────────────────────────────
+    gb = GridOptionsBuilder.from_dataframe(display_df)
+
+    # 모든 셀 가운데 정렬 (default)
+    gb.configure_default_column(
+        cellStyle={"text-align": "center"},
+        sortable=True,
+        filter=False,
+        resizable=True,
+        suppressMenu=True,
+        wrapText=False,
     )
 
-    main_column_config = {
-        "No.": st.column_config.NumberColumn("No.", width="small", format="%d"),
-        "브랜드명": st.column_config.TextColumn("브랜드명", width="medium"),
-        "영업 상태 (수기)": st.column_config.TextColumn("영업 상태", width="small"),
-        "이메일 (수기)": st.column_config.TextColumn("이메일", width="medium"),
-        "전화 (수기)": st.column_config.TextColumn("연락처", width="medium"),
-        "마케팅 등급 (자동)": st.column_config.TextColumn("등급", width="small"),
-        "스마트스토어 주소": st.column_config.LinkColumn(
-            "스토어", width="small", display_text="열기",
-        ),
+    # 컬럼별 너비/표시 이름
+    gb.configure_column("No.", width=70, pinned="left")
+    gb.configure_column("브랜드명", width=200)
+    if "영업 상태 (수기)" in display_df.columns:
+        gb.configure_column("영업 상태 (수기)", headerName="영업 상태", width=130)
+    if "이메일 (수기)" in display_df.columns:
+        gb.configure_column("이메일 (수기)", headerName="이메일", width=200)
+    if "전화 (수기)" in display_df.columns:
+        gb.configure_column("전화 (수기)", headerName="연락처", width=140)
+    if "마케팅 등급 (자동)" in display_df.columns:
+        gb.configure_column("마케팅 등급 (자동)", headerName="등급", width=100)
+
+    # 스토어 링크 컬럼 — "열기" 버튼처럼 렌더 (새 탭으로 열기)
+    if "스마트스토어 주소" in display_df.columns:
+        link_renderer = JsCode("""
+        function(params) {
+            if (!params.value) return '';
+            return '<a href="' + params.value + '" target="_blank" rel="noopener" '
+                 + 'style="color:#2563eb;text-decoration:underline;">열기</a>';
+        }
+        """)
+        gb.configure_column(
+            "스마트스토어 주소",
+            headerName="스토어",
+            width=90,
+            cellRenderer=link_renderer,
+        )
+
+    # 단일 행 선택 (체크박스 X, 행 클릭 O)
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
+
+    # 헤더 가운데 정렬 CSS
+    custom_css = {
+        ".ag-header-cell-label": {"justify-content": "center"},
+        ".ag-header-cell-text": {"font-weight": "600"},
     }
 
-    event = st.dataframe(
-        styled,
-        use_container_width=True,
-        hide_index=True,
+    grid_options = gb.build()
+
+    response = AgGrid(
+        display_df,
+        gridOptions=grid_options,
         height=420,
-        column_config=main_column_config,
-        on_select="rerun",
-        selection_mode="single-row",
-        key="main_table",
+        width="100%",
+        allow_unsafe_jscode=True,
+        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        fit_columns_on_grid_load=False,
+        theme="streamlit",
+        custom_css=custom_css,
+        key="main_aggrid",
     )
 
     # CSV 다운로드 (테이블 위 액션 영역)
@@ -779,12 +788,16 @@ if len(filtered) > 0:
     # ─────────────────────────────────────────────────────────
     # 디테일 패널 — 선택된 행이 있을 때만
     # ─────────────────────────────────────────────────────────
-    selected_rows = event.selection.rows if event.selection else []
-    if selected_rows:
-        sel_idx = selected_rows[0]
-        sel_brand = str(main_df.iloc[sel_idx].get("브랜드명", "")).strip()
-        sel_source = str(main_df.iloc[sel_idx].get("_source_file", "")).strip()
+    # AgGrid 응답에서 선택된 행 추출 (DataFrame 또는 list 형식 둘 다 지원)
+    selected = response.get("selected_rows") if isinstance(response, dict) else response["selected_rows"]
+    sel_brand = ""
+    if selected is not None:
+        if isinstance(selected, pd.DataFrame) and len(selected) > 0:
+            sel_brand = str(selected.iloc[0].get("브랜드명", "")).strip()
+        elif isinstance(selected, list) and len(selected) > 0:
+            sel_brand = str(selected[0].get("브랜드명", "")).strip()
 
+    if sel_brand:
         # 원본에서 전체 정보 가져오기
         sel_full = filtered[filtered["브랜드명"] == sel_brand]
         if len(sel_full) > 0:
