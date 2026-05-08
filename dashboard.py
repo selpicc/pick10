@@ -1195,7 +1195,9 @@ if len(filtered) > 0:
     # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
     download_col1, download_col2, download_col3 = st.columns([1, 1, 4])
     with download_col1:
-        csv_export = filtered.to_csv(index=False, encoding="utf-8-sig")
+        # to_csv()는 string 반환 시 encoding 무시 → 직접 BOM 포함 bytes로 변환
+        # BOM(Byte Order Mark) 있어야 Excel이 UTF-8 인식 → 한글 깨짐 방지
+        csv_export = filtered.to_csv(index=False).encode("utf-8-sig")
         today_label = datetime.now().strftime("%Y-%m-%d_%H%M")
         st.download_button(
             label="CSV 다운로드",
