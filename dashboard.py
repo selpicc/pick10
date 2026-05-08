@@ -486,7 +486,14 @@ def load_all_data() -> pd.DataFrame:
         return pd.DataFrame()
 
     try:
-        result = sb.table(TABLE_NAME).select("*").execute()
+        # id 내림차순 정렬 → 가장 최근 INSERT가 위로 오게 함
+        # (id는 Supabase가 자동 증가시키는 PK → 신규 추가 시 큰 값)
+        result = (
+            sb.table(TABLE_NAME)
+            .select("*")
+            .order("id", desc=True)
+            .execute()
+        )
         if not result.data:
             return pd.DataFrame()
 
@@ -1029,17 +1036,14 @@ if len(filtered) > 0:
     extra_cols = ["_source_file"] if "_source_file" in filtered.columns else []
     main_df = filtered[safe_main_cols + extra_cols + (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])]
 
-    # 정렬: 1순위 수집일 desc (최신 우선) → 2순위 Selpic 점수 desc (점수 높음 우선)
-    sort_keys = []
+    # 정렬: 수집일 desc만 적용 (안정 정렬)
+    # 내부 동일 날짜는 load_all_data의 id desc 순서 그대로 유지 → 방금 INSERT한 게 위로
     if "수집일" in main_df.columns:
-        sort_keys.append("수집일")
-    if "Selpic 점수" in main_df.columns:
-        sort_keys.append("Selpic 점수")
-    if not sort_keys:
-        sort_keys = [safe_main_cols[0]]   # 안전 fallback
-    main_df = main_df.sort_values(
-        sort_keys, ascending=[False] * len(sort_keys)
-    ).reset_index(drop=True)
+        main_df = main_df.sort_values(
+            "수집일", ascending=False, kind="stable"
+        ).reset_index(drop=True)
+    else:
+        main_df = main_df.reset_index(drop=True)
 
     # 등급 표시값 — 컬러 도트 + 텍스트 (Linear/Notion 스타일 미니멀)
     # 셀 자체는 흰색 유지, 도트만 색상 → 가장 깔끔한 간소화
