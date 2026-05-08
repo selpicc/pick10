@@ -732,28 +732,33 @@ if len(filtered) > 0:
     if "마케팅 등급 (자동)" in display_df.columns:
         gb.configure_column("마케팅 등급 (자동)", headerName="등급", width=100)
 
-    # 스토어 링크 컬럼 — "열기" 버튼처럼 렌더 (새 탭으로 열기)
-    # ⚠️ AG Grid는 HTML 문자열을 텍스트로 표시함 → DOM 엘리먼트 객체로 반환해야 함
+    # 스토어 링크 컬럼 — "열기" 텍스트 + 클릭 시 새 탭으로 이동
+    # ⚠️ AG Grid는 React 래핑이라 DOM 엘리먼트 직접 반환 불가
+    # → valueFormatter로 표시 텍스트를 "열기"로 바꾸고, onCellClicked로 링크 열기
     if "스마트스토어 주소" in display_df.columns:
-        link_renderer = JsCode("""
-        function(params) {
-            if (!params.value) return '';
-            var a = document.createElement('a');
-            a.href = params.value;
-            a.target = '_blank';
-            a.rel = 'noopener';
-            a.innerText = '열기';
-            a.style.color = '#2563eb';
-            a.style.textDecoration = 'underline';
-            a.style.fontWeight = '500';
-            return a;
-        }
-        """)
         gb.configure_column(
             "스마트스토어 주소",
             headerName="스토어",
             width=90,
-            cellRenderer=link_renderer,
+            valueFormatter=JsCode("""
+            function(params) {
+                return params.value ? '열기' : '';
+            }
+            """),
+            cellStyle={
+                "color": "#2563eb",
+                "text-decoration": "underline",
+                "cursor": "pointer",
+                "text-align": "center",
+                "font-weight": "500",
+            },
+            onCellClicked=JsCode("""
+            function(params) {
+                if (params.value) {
+                    window.open(params.value, '_blank', 'noopener');
+                }
+            }
+            """),
         )
 
     # 단일 행 선택 (체크박스 X, 행 클릭 O)
