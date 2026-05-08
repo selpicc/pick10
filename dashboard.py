@@ -27,6 +27,9 @@ from supabase_client import (
     TABLE_NAME,
 )
 
+# 시장 타깃 크로스체크 (A+B+C 필터)
+from market_filter import market_fit_check
+
 load_dotenv()
 CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
@@ -288,6 +291,83 @@ def fill_empty_urls_in_all_csvs() -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────
+# 시장 미적합 브랜드 검사 + 삭제 (A+B+C 필터 기반)
+# 영업 진행 중인 브랜드는 자동 보호
+# ─────────────────────────────────────────────────────────────────
+PROTECTED_STATUSES = {
+    "메일 발송", "응답 대기", "미팅 중", "계약 완료", "거절", "기타) 패싱"
+}
+
+
+def scan_unfit_brands() -> dict:
+    """필터 미적합 브랜드 미리보기 (삭제 X).
+    반환: {
+        "delete_candidates": [...],   # 삭제 대상
+        "protected_unfit": [...],      # 영업 진행 중이라 보호됨
+        "keep_count": int,             # 통과
+    }
+    """
+    sb = get_supabase_client()
+    if sb is None:
+        return {"delete_candidates": [], "protected_unfit": [], "keep_count": 0}
+
+    result = sb.table(TABLE_NAME).select(
+        "brand_name, flagship_product, sales_status"
+    ).execute()
+
+    delete_candidates = []
+    protected_unfit = []
+    keep_count = 0
+
+    for row in result.data:
+        brand = (row.get("brand_name") or "").strip()
+        title = (row.get("flagship_product") or "").strip()
+        status = (row.get("sales_status") or "").strip()
+        if not brand:
+            continue
+
+        tag, reason = market_fit_check(brand, title)
+        if tag == "ok":
+            keep_count += 1
+            continue
+
+        if status in PROTECTED_STATUSES:
+            protected_unfit.append({
+                "brand": brand, "reason": reason, "status": status,
+            })
+            continue
+
+        delete_candidates.append({
+            "brand": brand, "reason": reason, "tag": tag,
+            "title": title[:40],
+        })
+
+    return {
+        "delete_candidates": delete_candidates,
+        "protected_unfit": protected_unfit,
+        "keep_count": keep_count,
+    }
+
+
+def delete_unfit_brands(delete_candidates: list) -> dict:
+    """실제 삭제 실행. 호출 전 사용자 확인 필수.
+    반환: {"deleted": int, "failed": int}
+    """
+    sb = get_supabase_client()
+    if sb is None:
+        return {"deleted": 0, "failed": len(delete_candidates)}
+
+    deleted, failed = 0, 0
+    for c in delete_candidates:
+        try:
+            sb.table(TABLE_NAME).delete().eq("brand_name", c["brand"]).execute()
+            deleted += 1
+        except Exception:
+            failed += 1
+    return {"deleted": deleted, "failed": failed}
+
+
+# ─────────────────────────────────────────────────────────────────
 # 커스텀 CSS — 깔끔한 디자인 톤
 # ─────────────────────────────────────────────────────────────────
 st.markdown(
@@ -518,7 +598,106 @@ if fix_clicked:
                     st.write(", ".join(result["not_found"]))
             st.rerun()
         except Exception as e:
-            st.error(f"채우기 중 오류: {e}")
+            st.error(f"오류: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 시장 미적합 브랜드 정리 (A+B+C 필터 기반) — Expander로 접어둠
+# ─────────────────────────────────────────────────────────────────
+with st.expander("🧹 시장 미적합 브랜드 정리 (A+B+C 필터)", expanded=False):
+    st.markdown(
+        "<div style='color: #6b7280; font-size: 13px; margin-bottom: 8px;'>"
+        "영유아·산모 시장 외 브랜드, 대기업, 다른 시장 브랜드를 일괄 삭제합니다. "
+        "<b>영업 진행 중인 브랜드는 자동 보호.</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    scan_clicked = st.button(
+        "1단계: 미리보기 (삭제 안 함)",
+        use_container_width=False,
+        key="scan_unfit_btn",
+    )
+
+    if scan_clicked:
+        with st.spinner("필터 적용 중..."):
+            scan_result = scan_unfit_brands()
+            st.session_state["unfit_scan"] = scan_result
+
+    # 미리보기 결과 표시 + 삭제 옵션
+    if "unfit_scan" in st.session_state:
+        scan = st.session_state["unfit_scan"]
+        del_cands = scan["delete_candidates"]
+        protected = scan["protected_unfit"]
+        keep_n = scan["keep_count"]
+
+        # 통계
+        m1, m2, m3 = st.columns(3)
+        m1.metric("✅ 통과", f"{keep_n}건")
+        m2.metric("🛡 보호 (영업 중)", f"{len(protected)}건")
+        m3.metric("❌ 삭제 대상", f"{len(del_cands)}건")
+
+        # 삭제 대상 목록
+        if del_cands:
+            by_tag = {"a": [], "b": [], "c": []}
+            for c in del_cands:
+                by_tag[c["tag"]].append(c)
+
+            st.markdown("---")
+            st.markdown("**삭제 대상 미리보기**")
+
+            if by_tag["b"]:
+                st.markdown(f"**B 대기업 ({len(by_tag['b'])}건)**")
+                for c in by_tag["b"]:
+                    st.markdown(f"- `{c['brand']}` — {c['reason']}")
+
+            if by_tag["c"]:
+                st.markdown(f"**C 다른 시장 ({len(by_tag['c'])}건)**")
+                for c in by_tag["c"]:
+                    st.markdown(f"- `{c['brand']}` — {c['reason']}")
+
+            if by_tag["a"]:
+                st.markdown(f"**A 영유아 시장 X ({len(by_tag['a'])}건)**")
+                for c in by_tag["a"]:
+                    st.markdown(f"- `{c['brand']}` (상품: {c['title']})")
+
+            # 보호 명단
+            if protected:
+                with st.expander(f"🛡 영업 진행 중이라 보호됨 ({len(protected)}건)", expanded=False):
+                    for p in protected:
+                        st.markdown(
+                            f"- `{p['brand']}` (영업: **{p['status']}**, 사유: {p['reason']})"
+                        )
+
+            # 2단계: 동의 체크박스 + 삭제 버튼
+            st.markdown("---")
+            agree = st.checkbox(
+                f"위 {len(del_cands)}건을 영구 삭제하는 데 동의합니다 (되돌릴 수 없음)",
+                key="unfit_agree",
+            )
+            delete_clicked = st.button(
+                "🗑️ 2단계: 삭제 실행",
+                type="primary",
+                disabled=not agree,
+                key="unfit_delete_btn",
+            )
+
+            if delete_clicked and agree:
+                with st.spinner(f"{len(del_cands)}건 삭제 중..."):
+                    try:
+                        del_result = delete_unfit_brands(del_cands)
+                        st.cache_data.clear()
+                        st.success(
+                            f"삭제 성공 {del_result['deleted']}건 / "
+                            f"실패 {del_result['failed']}건"
+                        )
+                        # 다음 미리보기 위해 캐시 지우기
+                        if "unfit_scan" in st.session_state:
+                            del st.session_state["unfit_scan"]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"삭제 중 오류: {e}")
+        else:
+            st.info("삭제 대상 없음. 모든 브랜드가 필터 통과 또는 영업 진행 중.")
 
 st.markdown("---")
 

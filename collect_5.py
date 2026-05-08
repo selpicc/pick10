@@ -75,76 +75,14 @@ TARGET_KEYWORDS = [
     "유아", "베이비", "출산", "임신", "분유"
 ]
 
-# ─────────────────────────────────────────────────────────────────
-# 시장 타깃 크로스체크 (A+B+C 자동 필터)
-# 5건 저장 전에 무조건 통과해야 하는 3중 필터
-# ─────────────────────────────────────────────────────────────────
-
-# A. 영유아·산모 시장 키워드 (1개 이상 필수 포함)
-# 어린이/키즈는 제외 — 유아까지가 셀픽 타깃
-MARKET_FIT_KEYWORDS = {
-    "영유아", "신생아", "영아", "유아",
-    "베이비", "baby", "아기", "아이",
-    "출산", "임산부", "임신",
-    "수유", "모유", "분유",
-    "산모", "산후", "유모",
-    "젖병", "기저귀", "이유식",
-    "맘", "mom", "mommy",
-}
-
-# B. 대기업 명단 (자동 제외)
-# 영유아 시장 주요 대기업/대형 브랜드
-BIG_COMPANY_BLOCKLIST = {
-    "유한킴벌리", "하기스", "마미포코", "봉봉",
-    "LG생활건강", "깨끗한나라", "보솜이",
-    "매일유업", "남양유업", "일동후디스",
-    "한국야쿠르트", "매일홀딩스",
-    "앱솔루트", "임페리얼XO", "아이엠마더", "산양",
-    "풀무원", "베베쿡", "CJ제일제당", "농심",
-    "보령제약", "동국제약", "닥터아토",
-    "아가방앤컴퍼니", "한솔교육",
-}
-
-# C. 부정 키워드 (다른 시장 자동 차단)
-# 영유아 외 시장 신호
-NEGATIVE_KEYWORDS = {
-    "시니어", "노인", "어르신", "노년", "실버",
-    "반려", "펫", "강아지", "고양이", "댕댕이", "냥이",
-    "다이어트", "헬스", "스포츠", "골프", "운동복",
-    "자동차", "게임", "IT", "컴퓨터", "문구",
-    "산업재", "도매", "B2B",
-    "주류", "술", "와인", "맥주", "담배", "성인용",
-}
-
-
-def market_fit_check(brand_name: str, product_title: str) -> tuple:
-    """3중 크로스체크 (A+B+C).
-    매칭 범위: 브랜드명 + 상품명 (소문자 비교)
-
-    반환: (통과 여부, 탈락 사유)
-        ("ok", "")            — 통과
-        ("a", reason)         — A 탈락 (영유아 키워드 X)
-        ("b", reason)         — B 탈락 (대기업)
-        ("c", reason)         — C 탈락 (다른 시장)
-    """
-    text = f"{brand_name} {product_title}".lower()
-
-    # B. 대기업 명단 검사 (가장 강한 컷 — 먼저)
-    for big in BIG_COMPANY_BLOCKLIST:
-        if big.lower() in text:
-            return "b", f"대기업: {big}"
-
-    # C. 부정 키워드 검사 (다른 시장)
-    for neg in NEGATIVE_KEYWORDS:
-        if neg.lower() in text:
-            return "c", f"다른 시장: {neg}"
-
-    # A. 영유아 키워드 1개 이상 필수
-    for tk in MARKET_FIT_KEYWORDS:
-        if tk.lower() in text:
-            return "ok", ""
-
-    return "a", "영유아 시장 키워드 X"
+# 시장 타깃 크로스체크 (A+B+C) — market_filter.py 모듈에서 import
+# 키워드 명단 수정은 market_filter.py 한 곳에서만!
+from market_filter import (
+    MARKET_FIT_KEYWORDS,
+    BIG_COMPANY_BLOCKLIST,
+    NEGATIVE_KEYWORDS,
+    market_fit_check,
+)
 
 
 RESULTS_DIR = "results"
