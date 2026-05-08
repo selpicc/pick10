@@ -47,7 +47,7 @@ st.set_page_config(
     page_title="PICK10 Dashboard",
     page_icon="P",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",   # 처음 접속 시 사이드바 자동 접힘 → 표 가시성 ↑
 )
 
 
