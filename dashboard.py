@@ -779,6 +779,29 @@ if len(filtered) > 0:
 
     grid_options = gb.build()
 
+    # ⚠️ wrapper 옵션이 안 먹힘 → AG Grid raw API에 직접 강제 적용
+    # defaultColDef에 모든 필터/메뉴 차단 옵션을 직접 설정
+    grid_options.setdefault("defaultColDef", {})
+    grid_options["defaultColDef"].update({
+        "filter": False,
+        "floatingFilter": False,
+        "suppressMenu": True,
+        "suppressHeaderMenuButton": True,
+        "suppressFiltersToolPanel": True,
+        "suppressColumnsToolPanel": True,
+        "menuTabs": [],
+        "sortable": True,
+        "resizable": True,
+        "suppressMovable": True,
+    })
+
+    # 모든 컬럼에도 동일하게 강제 적용 (per-column override 방지)
+    for col in grid_options.get("columnDefs", []):
+        col["filter"] = False
+        col["suppressMenu"] = True
+        col["suppressHeaderMenuButton"] = True
+        col["menuTabs"] = []
+
     response = AgGrid(
         display_df,
         gridOptions=grid_options,
