@@ -728,14 +728,18 @@ if collect_clicked:
 
 # ─────────────────────────────────────────────────────────────────
 # 수집 결과 요약 (깔끔한 메시지 — 닫기 버튼으로 닫기 가능)
+# 핵심 원칙:
+#   - 요청 수만큼 채워짐  → 단순 "N건 수집 완료" (사유 X)
+#   - 요청 수에 못 미침   → 부족분 표시 + 사유 간략히
+#   - 0건 수집           → 사유 표시
 # ─────────────────────────────────────────────────────────────────
 if "last_collect_summary" in st.session_state:
     s = st.session_state["last_collect_summary"]
     saved = s.get("saved", 0)
+    target = s.get("target", 0)
     big = s.get("big", 0)
     a, b, c = s.get("a", 0), s.get("b", 0), s.get("c", 0)
     flagship = s.get("flagship", 0)
-    excluded_total = big + a + b + c + flagship
 
     # 제외 사유 간략 (0건은 표시 X)
     reasons = []
@@ -753,12 +757,18 @@ if "last_collect_summary" in st.session_state:
 
     res_col1, res_col2 = st.columns([6, 1])
     with res_col1:
-        if s["success"] and saved > 0:
-            msg = f"✅ {saved}건 수집 완료"
-            if excluded_total > 0:
-                msg += f"  /  🚫 {excluded_total}건 제외 ({reasons_text})"
-            st.success(msg)
+        if s["success"] and saved >= target and saved > 0:
+            # 요청 수만큼 다 채움 — 깔끔하게 완료만 표시
+            st.success(f"✅ {saved}건 수집 완료")
+        elif s["success"] and 0 < saved < target:
+            # 부족 — 부족분 + 사유
+            short = target - saved
+            msg = f"✅ {saved}건 수집 완료  /  ⚠️ {short}건 부족"
+            if reasons_text:
+                msg += f" ({reasons_text})"
+            st.warning(msg)
         elif s["success"] and saved == 0:
+            # 0건 — 모두 필터에서 제외
             info_msg = "수집 0건. 모든 후보가 필터에서 제외됨"
             if reasons_text:
                 info_msg += f" ({reasons_text})"
