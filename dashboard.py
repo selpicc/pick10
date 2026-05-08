@@ -849,7 +849,7 @@ else:
 # ─────────────────────────────────────────────────────────────────
 title_col, fix_btn_col = st.columns([5, 1.3])
 with title_col:
-    st.markdown(f"## 영업 후보 — {len(filtered)}건")
+    st.markdown(f"## 영업 후보")
 with fix_btn_col:
     st.markdown("<div style='padding-top: 18px;'></div>", unsafe_allow_html=True)
     fix_clicked_table = st.button(
@@ -857,6 +857,76 @@ with fix_btn_col:
         use_container_width=True,
         key="fix_btn_table",
         help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
+    )
+
+# ─────────────────────────────────────────────────────────────────
+# 테이블 상단 필터 (카테고리 / 영업 상태 / 마케팅 활동)
+# 멀티 셀렉트 → 여러 값 동시 선택 가능 / 빈 값 = 전체
+# ─────────────────────────────────────────────────────────────────
+ft_col1, ft_col2, ft_col3, ft_col4 = st.columns([1.4, 1.4, 1.4, 1.5])
+
+with ft_col1:
+    if "카테고리" in filtered.columns:
+        cat_options = sorted([c for c in filtered["카테고리"].dropna().unique() if c])
+    else:
+        cat_options = []
+    sel_categories_tbl = st.multiselect(
+        "카테고리",
+        options=cat_options,
+        default=[],
+        placeholder="전체",
+        key="tbl_filter_category",
+        label_visibility="visible",
+    )
+
+with ft_col2:
+    if "영업 상태 (수기)" in filtered.columns:
+        status_raw = filtered["영업 상태 (수기)"].fillna("").astype(str).unique().tolist()
+        status_options = sorted([s for s in status_raw if s])
+    else:
+        status_options = []
+    sel_statuses_tbl = st.multiselect(
+        "영업 상태",
+        options=status_options,
+        default=[],
+        placeholder="전체",
+        key="tbl_filter_status",
+        label_visibility="visible",
+    )
+
+with ft_col3:
+    grade_options = ["상", "중", "하"]
+    sel_grades_tbl = st.multiselect(
+        "마케팅 활동",
+        options=grade_options,
+        default=[],
+        placeholder="전체",
+        key="tbl_filter_grade",
+        label_visibility="visible",
+    )
+
+# 필터 적용
+if sel_categories_tbl:
+    filtered = filtered[filtered["카테고리"].isin(sel_categories_tbl)]
+if sel_statuses_tbl:
+    filtered = filtered[
+        filtered["영업 상태 (수기)"].fillna("").astype(str).isin(sel_statuses_tbl)
+    ]
+if sel_grades_tbl:
+    filtered = filtered[filtered["마케팅 등급 (자동)"].isin(sel_grades_tbl)]
+
+with ft_col4:
+    active_filters = sum([
+        bool(sel_categories_tbl),
+        bool(sel_statuses_tbl),
+        bool(sel_grades_tbl),
+    ])
+    st.markdown(
+        f"<div style='padding-top: 30px; color: #6b7280; font-size: 13px; text-align: right;'>"
+        f"<b style='color: #111827; font-size: 18px;'>{len(filtered)}건</b> "
+        + (f"· 필터 {active_filters}개 적용 중" if active_filters else "· 필터 미적용")
+        + "</div>",
+        unsafe_allow_html=True,
     )
 
 # 빈 스토어 채우기 클릭 처리 (표 상단 버튼)
