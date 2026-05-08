@@ -920,12 +920,22 @@ with fix_btn_col:
     )
 
 # ─────────────────────────────────────────────────────────────────
-# 테이블 상단 필터 (카테고리 / 영업 상태 / 마케팅 활동)
+# 테이블 상단 필터 (브랜드 검색 / 카테고리 / 영업 상태 / 마케팅 활동)
 # 멀티 셀렉트 → 여러 값 동시 선택 가능 / 빈 값 = 전체
+# 브랜드 검색을 맨 왼쪽 — 가장 자주 쓰는 필터
 # ─────────────────────────────────────────────────────────────────
-ft_col1, ft_col2, ft_col3, ft_col4 = st.columns([1.4, 1.4, 1.4, 1.5])
+ft_col1, ft_col2, ft_col3, ft_col4, ft_col5 = st.columns([1.4, 1.4, 1.4, 1.4, 1.5])
 
 with ft_col1:
+    sel_brand_search_tbl = st.text_input(
+        "브랜드 검색",
+        value="",
+        placeholder="브랜드명 입력",
+        key="tbl_filter_brand_search",
+        label_visibility="visible",
+    )
+
+with ft_col2:
     if "카테고리" in filtered.columns:
         cat_options = sorted([c for c in filtered["카테고리"].dropna().unique() if c])
     else:
@@ -939,7 +949,7 @@ with ft_col1:
         label_visibility="visible",
     )
 
-with ft_col2:
+with ft_col3:
     if "영업 상태 (수기)" in filtered.columns:
         status_raw = filtered["영업 상태 (수기)"].fillna("").astype(str).unique().tolist()
         status_options = sorted([s for s in status_raw if s])
@@ -954,7 +964,7 @@ with ft_col2:
         label_visibility="visible",
     )
 
-with ft_col3:
+with ft_col4:
     grade_options = ["상", "중", "하"]
     sel_grades_tbl = st.multiselect(
         "마케팅 활동",
@@ -974,12 +984,18 @@ if sel_statuses_tbl:
     ]
 if sel_grades_tbl:
     filtered = filtered[filtered["마케팅 등급 (자동)"].isin(sel_grades_tbl)]
+if sel_brand_search_tbl.strip():
+    keyword = sel_brand_search_tbl.strip().lower()
+    filtered = filtered[
+        filtered["브랜드명"].fillna("").astype(str).str.lower().str.contains(keyword, na=False)
+    ]
 
-with ft_col4:
+with ft_col5:
     active_filters = sum([
         bool(sel_categories_tbl),
         bool(sel_statuses_tbl),
         bool(sel_grades_tbl),
+        bool(sel_brand_search_tbl.strip()),
     ])
     st.markdown(
         f"<div style='padding-top: 30px; color: #6b7280; font-size: 13px; text-align: right;'>"
