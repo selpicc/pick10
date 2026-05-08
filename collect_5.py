@@ -515,14 +515,19 @@ for sel in passed:
     )
     flagship_price = int(flagship.get("lprice", 0))
 
-    # 5-2) 진짜 스토어 URL — 추출 실패 시 빈 칸 (대시보드 채우기 버튼이 보강)
-    #     /main/products/ 통합 URL은 일부 셀러에서 로그인 redirect되므로 fallback X
+    # 5-2) 진짜 스토어 URL — 추출 실패 시 검색 페이지로 fallback (절대 빈 칸 X)
+    # ⚠️ 영구 보장 패턴: 빈 칸 절대 안 만들기.
+    # 클라우드 IP 차단·redirect 정책 차이 등 어떤 이유로든 추출 실패해도
+    # 검색 페이지 URL은 항상 작동. 사용자가 클릭하면 그 브랜드 검색 결과로 이동.
     store_url, store_debug = resolve_real_store_url(flagship_url)
     if store_url:
         print(f"        스토어 URL: {store_url}")
     else:
-        store_url = ""   # 빈 칸 → 대시보드에서 [빈 스토어 주소 채우기]로 보강
-        print(f"        스토어 URL 추출 실패 → 빈 칸 (채우기 버튼으로 보강) — {store_debug}")
+        store_url = (
+            f"https://search.shopping.naver.com/search/all?"
+            f"query={urllib.parse.quote(brand_name)}"
+        )
+        print(f"        스토어 URL 추출 실패 → 검색 페이지 fallback ({store_debug})")
 
     # 5-3) 주력 상품명에서 검색용 핵심 키워드 추출
     product_keyword = extract_product_keyword(flagship_title)

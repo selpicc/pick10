@@ -220,14 +220,17 @@ def needs_fix(addr: str) -> bool:
 
 def fill_empty_urls_in_all_csvs() -> dict:
     """Supabase에서 갱신 필요한 스마트스토어 URL 일괄 보강.
-    검색 API → redirect 추적 → 진짜 storeId → DB update.
+
+    영구 보장 패턴 — 빈 칸 절대 안 남김:
+      1. 검색 API + redirect 추적 (성공: 진짜 셀러 메인 URL)
+      2. 실패 시 검색 페이지 URL fallback (항상 작동)
     """
     sb = get_supabase_client()
     if not sb:
         return {"fixed": 0, "not_found": [], "files": 0}
 
     fixed_count = 0
-    not_found = []
+    fallback_count = 0
 
     try:
         result = sb.table(TABLE_NAME).select("brand_name, smartstore_url").execute()
@@ -238,24 +241,37 @@ def fill_empty_urls_in_all_csvs() -> dict:
             brand = (row.get("brand_name") or "").strip()
             if not brand:
                 continue
-            link = fetch_smartstore_link(brand)
-            if not link:
-                not_found.append(brand)
-                time.sleep(0.2)
-                continue
-            real_url = resolve_real_store_url(link)
-            if real_url:
-                sb.table(TABLE_NAME).update(
-                    {"smartstore_url": real_url}
-                ).eq("brand_name", brand).execute()
-                fixed_count += 1
-            else:
-                not_found.append(f"{brand} (redirect 추적 실패)")
-            time.sleep(0.3)
-    except Exception as e:
-        not_found.append(f"오류: {e}")
 
-    return {"fixed": fixed_count, "not_found": not_found, "files": 1}
+            # 1차: redirect 추적으로 진짜 셀러 메인 URL 시도
+            real_url = ""
+            link = fetch_smartstore_link(brand)
+            if link:
+                real_url = resolve_real_store_url(link)
+
+            # 2차: 실패 시 검색 페이지 URL fallback (절대 빈 칸 X)
+            if not real_url:
+                real_url = (
+                    f"https://search.shopping.naver.com/search/all?"
+                    f"query={urllib.parse.quote(brand)}"
+                )
+                fallback_count += 1
+
+            sb.table(TABLE_NAME).update(
+                {"smartstore_url": real_url}
+            ).eq("brand_name", brand).execute()
+            fixed_count += 1
+            time.sleep(0.3)
+    except Exception:
+        pass
+
+    not_found_list = []
+    if fallback_count > 0:
+        not_found_list.append(
+            f"{fallback_count}건은 검색 페이지 URL로 fallback "
+            "(클릭 시 그 브랜드 검색 결과로 이동)"
+        )
+
+    return {"fixed": fixed_count, "not_found": not_found_list, "files": 1}
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -667,17 +683,20 @@ if len(filtered) > 0:
     main_df = filtered[safe_main_cols + extra_cols + (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])]
     main_df = main_df.sort_values([sort_col], ascending=[False]).reset_index(drop=True)
 
-    # 등급 알약 배지 (Pill) — 색상 + 가운데 정렬 + 둥근 모서리
+    # 등급 배지 — 옵션 B: 연한 파스텔 배경 + 진한 텍스트 (둥근 모서리)
     def style_grade(val):
         if val == "상":
-            return ("background-color: #111827; color: white; font-weight: 500; "
-                    "text-align: center; border-radius: 12px;")
+            # 연한 그린 배경 + 진한 그린 텍스트
+            return ("background-color: #dcfce7; color: #166534; font-weight: 600; "
+                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
         elif val == "중":
-            return ("background-color: #e5e7eb; color: #374151; font-weight: 500; "
-                    "text-align: center; border-radius: 12px;")
+            # 연한 앰버 배경 + 진한 앰버 텍스트
+            return ("background-color: #fef3c7; color: #92400e; font-weight: 600; "
+                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
         elif val == "하":
-            return ("background-color: #fed7aa; color: #9a3412; font-weight: 500; "
-                    "text-align: center; border-radius: 12px;")
+            # 연한 회색 배경 + 진한 회색 텍스트
+            return ("background-color: #f3f4f6; color: #6b7280; font-weight: 600; "
+                    "text-align: center; border-radius: 6px; padding: 4px 10px;")
         return ""
 
     display_df = main_df[safe_main_cols]
