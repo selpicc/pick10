@@ -43,6 +43,34 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────
+# 메인 테이블 가운데 정렬 (CSS 강제 주입)
+# Streamlit st.dataframe은 셀 정렬 옵션 미제공 → CSS로 처리
+# ─────────────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    /* dataframe 셀과 헤더 모두 가운데 정렬 */
+    div[data-testid="stDataFrame"] [role="gridcell"],
+    div[data-testid="stDataFrame"] [role="columnheader"],
+    div[data-testid="stDataFrame"] [role="gridcell"] > div,
+    div[data-testid="stDataFrame"] [role="columnheader"] > div {
+        text-align: center !important;
+        justify-content: center !important;
+        align-items: center !important;
+        display: flex !important;
+    }
+    /* link 컬럼 (스토어 열기) 텍스트 가운데 */
+    div[data-testid="stDataFrame"] a {
+        text-align: center !important;
+        width: 100% !important;
+        display: block !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ─────────────────────────────────────────────────────────────────
 # 비밀번호 보호 (배포 환경에서만 활성화)
 # 환경변수 APP_PASSWORD 가 설정되어 있으면 로그인 화면 표시
 # ─────────────────────────────────────────────────────────────────
