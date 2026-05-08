@@ -27,8 +27,12 @@ from supabase_client import (
     TABLE_NAME,
 )
 
-# 시장 타깃 크로스체크 (A+B+C 필터) + 자동 카테고리 분류
-from market_filter import market_fit_check, classify_category
+# 시장 타깃 크로스체크 (A+B+C 필터) + 자동 카테고리 분류 + 검색 키워드
+from market_filter import (
+    market_fit_check,
+    classify_category,
+    CATEGORY_SEARCH_KEYWORDS,
+)
 
 load_dotenv()
 CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
@@ -534,12 +538,8 @@ st.markdown(
 # 모드 3: 키워드 입력 (사용자 직접)
 # ─────────────────────────────────────────────────────────────────
 
-# 카테고리 프리셋 (collect_5.py CATEGORY_PRESETS와 동기화)
-COLLECT_CATEGORIES = [
-    "분유·유아식", "신생아 케어", "임산부·산모 뷰티", "산모 서비스",
-    "유모차·카시트", "모유수유용품", "출산 준비물", "베이비 사진",
-    "유아 의류", "임산부 영양제", "베이비 식기", "유아 교육",
-]
+# 카테고리 프리셋 — 메인 표 자동 분류와 동일 10개 (market_filter.py 단일 진실의 원천)
+COLLECT_CATEGORIES = list(CATEGORY_SEARCH_KEYWORDS.keys())
 
 mode_col, _spacer = st.columns([2, 3])
 with mode_col:
