@@ -650,30 +650,16 @@ else:   # 키워드 입력
 
 if collect_clicked:
     # ────────────────────────────────────────────────
-    # 1단계: 시장 미적합 브랜드 자동 정리 (영업 진행 중 자동 보호)
+    # 1단계: 시장 미적합 브랜드 자동 정리 (조용히 실행, 영업 진행 중 자동 보호)
     # ────────────────────────────────────────────────
-    cleanup_msg = ""
     try:
-        with st.spinner("기존 브랜드 검토 중 (시장 미적합 자동 정리)..."):
+        with st.spinner("기존 브랜드 검토 중..."):
             scan = scan_unfit_brands()
             del_cands = scan["delete_candidates"]
-            protected_n = len(scan["protected_unfit"])
-
             if del_cands:
-                del_result = delete_unfit_brands(del_cands)
-                cleanup_msg = (
-                    f"🧹 정리: {del_result['deleted']}건 삭제 "
-                    f"(실패 {del_result['failed']}건"
-                    + (f", 영업 진행 중 보호 {protected_n}건" if protected_n else "")
-                    + ")"
-                )
-            else:
-                cleanup_msg = (
-                    f"🧹 정리: 미적합 브랜드 없음"
-                    + (f" (영업 진행 중 보호 {protected_n}건)" if protected_n else "")
-                )
-    except Exception as e:
-        cleanup_msg = f"🧹 정리 단계 오류 (수집은 진행): {e}"
+                delete_unfit_brands(del_cands)
+    except Exception:
+        pass   # 정리 실패해도 수집은 계속 진행
 
     # ────────────────────────────────────────────────
     # 2단계: 수집 (모드별 인자 전달 — collect_5.py에 [3.5/6] A+B+C 필터 내장)
@@ -701,63 +687,20 @@ if collect_clicked:
                 timeout=300,
                 cwd=script_dir,
             )
-            # 결과를 session_state에 저장 → 새로고침 후에도 로그 유지
-            st.session_state["last_collect_result"] = {
-                "success": result.returncode == 0,
-                "cleanup_msg": cleanup_msg,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "mode": collect_mode,
-                "n": collect_n,
-            }
             if result.returncode == 0:
+                # 캐시 클리어 후 자동 새로고침 → 새 데이터 즉시 반영
                 st.cache_data.clear()
+                st.toast(f"✅ {collect_n}건 수집 완료", icon="✅")
                 st.rerun()
+            else:
+                # 실패 시에만 간단한 에러 메시지 (자동 사라짐)
+                st.toast("수집 실패. 잠시 후 다시 시도해주세요.", icon="⚠️")
         except subprocess.TimeoutExpired:
             st.error("시간 초과 (5분). 네트워크 또는 API 응답이 늦을 수 있어요. 잠시 후 다시 시도하세요.")
         except FileNotFoundError:
             st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
         except Exception as e:
             st.error(f"실행 중 오류: {e}")
-
-# fix_clicked 핸들러는 표 상단 버튼 정의 이후로 이동 (이 위치 X)
-
-
-# ─────────────────────────────────────────────────────────────────
-# 마지막 수집 결과 표시 (session_state 기반 — rerun 후에도 유지)
-# ─────────────────────────────────────────────────────────────────
-if "last_collect_result" in st.session_state:
-    res = st.session_state["last_collect_result"]
-    res_col1, res_col2 = st.columns([5, 1])
-    with res_col1:
-        if res["success"]:
-            st.success(
-                f"[{res['timestamp']}] {res['cleanup_msg']}  ·  "
-                f"✅ 수집 완료 ({res['mode']}, {res['n']}건 시도)"
-            )
-        else:
-            st.error(
-                f"[{res['timestamp']}] {res['cleanup_msg']}  ·  "
-                f"❌ 수집 실패 (종료 코드 {res['returncode']})"
-            )
-    with res_col2:
-        if st.button("로그 닫기", key="close_log_btn", use_container_width=True):
-            del st.session_state["last_collect_result"]
-            st.rerun()
-
-    # 로그 항상 펼친 상태로 표시 (실패 시 자동 펼침)
-    with st.expander(
-        "실행 로그 보기 (디버그용)",
-        expanded=not res["success"],   # 실패 시 자동 펼침
-    ):
-        if res["stderr"].strip():
-            st.markdown("**stderr:**")
-            st.code(res["stderr"][-2000:], language="text")
-        st.markdown("**stdout:**")
-        st.code(res["stdout"][-3000:], language="text")
-
 
 st.markdown("---")
 
@@ -969,23 +912,17 @@ with ft_col4:
 
 # 빈 스토어 채우기 클릭 처리 (표 상단 버튼)
 if fix_clicked_table:
-    with st.spinner("빈 스토어 주소 검색 + CSV 갱신 중..."):
+    with st.spinner("빈 스토어 주소 갱신 중..."):
         try:
             result = fill_empty_urls_in_all_csvs()
             st.cache_data.clear()
             if result["fixed"] > 0:
-                st.success(
-                    f"{result['fixed']}건 스마트스토어 URL로 갱신 완료. "
-                    f"({result['files']}개 파일 검사)"
-                )
+                st.toast(f"✅ {result['fixed']}건 갱신 완료", icon="✅")
             else:
-                st.info("빈 행이 없거나 모두 정상이에요.")
-            if result["not_found"]:
-                with st.expander(f"검색 API에서 못 찾은 셀러 {len(result['not_found'])}건", expanded=False):
-                    st.write(", ".join(result["not_found"]))
+                st.toast("이미 모두 정상입니다", icon="ℹ️")
             st.rerun()
-        except Exception as e:
-            st.error(f"오류: {e}")
+        except Exception:
+            st.toast("갱신 중 오류 발생", icon="⚠️")
 
 def save_one_brand(brand: str, new_values: dict) -> bool:
     """한 셀러의 수기 컬럼 값을 Supabase에 update.
