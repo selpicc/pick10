@@ -711,12 +711,15 @@ if len(filtered) > 0:
     gb = GridOptionsBuilder.from_dataframe(display_df)
 
     # 모든 셀 가운데 정렬 (default)
+    # 컬럼별 필터/메뉴 완전 제거 (사이드바에 이미 필터 있음)
     gb.configure_default_column(
         cellStyle={"text-align": "center"},
         sortable=True,
         filter=False,
         resizable=True,
-        suppressMenu=True,
+        suppressMenu=True,                # 구버전 AG Grid 호환
+        suppressHeaderMenuButton=True,    # 신버전 AG Grid (필터 아이콘 숨김)
+        suppressMovable=True,             # 컬럼 드래그로 순서 변경 방지
         wrapText=False,
     )
 
