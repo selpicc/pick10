@@ -703,7 +703,14 @@ if len(filtered) > 0:
     # 순번 열 추가 (Selpic 점수 정렬 후 1부터) — 브랜드명 앞에 위치
     display_df.insert(0, "No.", range(1, len(display_df) + 1))
 
-    styled = display_df
+    # 모든 셀 가운데 정렬 (헤더 + 본문)
+    styled = (
+        display_df.style
+        .set_properties(**{"text-align": "center"})
+        .set_table_styles([
+            {"selector": "th", "props": [("text-align", "center")]},
+        ])
+    )
 
     main_column_config = {
         "No.": st.column_config.NumberColumn("No.", width="small", format="%d"),
