@@ -85,6 +85,48 @@ def market_fit_check(brand_name: str, product_title: str) -> tuple:
 
 
 # ─────────────────────────────────────────────────────────────────
+# 키워드 동의어 사전 (사용자 키워드 입력 시 자동 확장)
+# "아기 로션" → "베이비 로션", "신생아 로션", "유아 로션" 등 자동 검색
+# ─────────────────────────────────────────────────────────────────
+KEYWORD_SYNONYMS = {
+    "baby": ["아기", "베이비", "신생아", "유아", "영아", "아이", "영유아"],
+    "mom": ["임산부", "산모", "임부", "수유", "산후"],
+}
+
+
+def expand_keyword(keyword: str) -> list:
+    """사용자 키워드를 동의어로 확장.
+
+    예: "아기 로션" → ["아기 로션", "베이비 로션", "신생아 로션", ...]
+    예: "임산부 영양제" → ["임산부 영양제", "산모 영양제", "임부 영양제", ...]
+    """
+    keyword = keyword.strip()
+    if not keyword:
+        return []
+    expanded = {keyword}   # 원본 포함
+
+    # 영유아 단어 치환
+    baby_words = KEYWORD_SYNONYMS["baby"]
+    for word in baby_words:
+        if word in keyword:
+            for replace in baby_words:
+                if replace != word:
+                    expanded.add(keyword.replace(word, replace))
+            break   # 첫 매칭만 치환 (중복 방지)
+
+    # 임산부 단어 치환
+    mom_words = KEYWORD_SYNONYMS["mom"]
+    for word in mom_words:
+        if word in keyword:
+            for replace in mom_words:
+                if replace != word:
+                    expanded.add(keyword.replace(word, replace))
+            break
+
+    return list(expanded)
+
+
+# ─────────────────────────────────────────────────────────────────
 # 카테고리별 Naver 검색 키워드 (10개 카테고리 = 자동 분류와 동일)
 # "카테고리 지정" 수집 모드에서 이 키워드로 Naver 검색 → 셀러 후보 수집
 # 단일 진실의 원천: 메인 표 카테고리 = 신규 수집 카테고리 = 자동 분류

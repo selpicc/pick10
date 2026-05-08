@@ -120,6 +120,7 @@ from market_filter import (
     NEGATIVE_KEYWORDS,
     market_fit_check,
     classify_category,
+    expand_keyword,
 )
 
 
@@ -141,14 +142,14 @@ if not CLIENT_ID or not CLIENT_SECRET:
 # ─────────────────────────────────────────────────────────────────
 # 공용 함수
 # ─────────────────────────────────────────────────────────────────
-def search_naver(category: str, query: str, display: int = 20) -> dict:
-    """네이버 검색 API 일반화"""
+def search_naver(category: str, query: str, display: int = 20, start: int = 1) -> dict:
+    """네이버 검색 API 일반화 (페이지네이션 지원)"""
     api_url = f"https://openapi.naver.com/v1/search/{category}.json"
     headers = {
         "X-Naver-Client-Id": CLIENT_ID,
         "X-Naver-Client-Secret": CLIENT_SECRET,
     }
-    params = {"query": query, "display": display, "sort": "sim"}
+    params = {"query": query, "display": display, "sort": "sim", "start": start}
     try:
         resp = requests.get(api_url, headers=headers, params=params, timeout=10)
         if resp.status_code == 200:
@@ -158,8 +159,8 @@ def search_naver(category: str, query: str, display: int = 20) -> dict:
     return {"total": 0, "items": []}
 
 
-def search_shop(query: str, display: int = 20) -> list:
-    return search_naver("shop", query, display).get("items", [])
+def search_shop(query: str, display: int = 20, start: int = 1) -> list:
+    return search_naver("shop", query, display, start).get("items", [])
 
 
 def clean_html_tags(text: str) -> str:
@@ -459,21 +460,38 @@ print("=" * 60 + "\n")
 candidates = []
 
 if COLLECT_MODE == "keywords":
-    # 모드 3: 사용자 키워드 직접 입력
-    print(f"🔍 [1/6] 사용자 키워드 {len(USER_KEYWORDS)}개로 검색 → 후보 풀 모음...")
-    for keyword in USER_KEYWORDS:
-        items = search_shop(keyword, display=15)   # 키워드당 더 많이
-        ss_items = [
-            it for it in items
-            if "smartstore.naver.com" in it.get("link", "")
-        ]
-        for rank, item in enumerate(ss_items, 1):
-            item["_keyword"] = keyword
-            item["_category_preset"] = "사용자 키워드"
-            item["_rank"] = rank
-            candidates.append(item)
-        time.sleep(0.15)
-        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {len(ss_items)}건")
+    # 모드 3: 사용자 키워드 직접 입력 — 동의어 자동 확장 + 페이지네이션
+    # 영유아/임산부 동의어 자동 추가 (예: "아기 로션" → "베이비 로션", "신생아 로션" 등)
+    expanded_keywords = []
+    for kw in USER_KEYWORDS:
+        expansions = expand_keyword(kw)
+        expanded_keywords.extend(expansions)
+        if len(expansions) > 1:
+            print(f"   🔄 '{kw}' → {len(expansions)}개로 확장: {', '.join(expansions)}")
+
+    # 중복 제거
+    expanded_keywords = list(dict.fromkeys(expanded_keywords))
+    print(f"\n🔍 [1/6] 사용자 키워드 {len(USER_KEYWORDS)}개 → 확장 {len(expanded_keywords)}개로 검색...")
+
+    for keyword in expanded_keywords:
+        keyword_total = 0
+        # 페이지네이션: start=1 (1~30위), start=31 (31~60위)
+        for start_offset in [1, 31]:
+            items = search_shop(keyword, display=30, start=start_offset)
+            if not items:
+                break
+            ss_items = [
+                it for it in items
+                if "smartstore.naver.com" in it.get("link", "")
+            ]
+            for rank, item in enumerate(ss_items, start_offset):
+                item["_keyword"] = keyword
+                item["_category_preset"] = "사용자 키워드"
+                item["_rank"] = rank
+                candidates.append(item)
+            keyword_total += len(ss_items)
+            time.sleep(0.15)
+        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건")
 
 elif COLLECT_MODE == "category":
     # 모드 2: 단일 카테고리 한정
