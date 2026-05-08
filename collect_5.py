@@ -515,19 +515,29 @@ for sel in passed:
     )
     flagship_price = int(flagship.get("lprice", 0))
 
-    # 5-2) 진짜 스토어 URL — 추출 실패 시 검색 페이지로 fallback (절대 빈 칸 X)
-    # ⚠️ 영구 보장 패턴: 빈 칸 절대 안 만들기.
-    # 클라우드 IP 차단·redirect 정책 차이 등 어떤 이유로든 추출 실패해도
-    # 검색 페이지 URL은 항상 작동. 사용자가 클릭하면 그 브랜드 검색 결과로 이동.
+    # 5-2) 진짜 스토어 URL — 3중 fallback 전략 (검색 페이지로는 절대 안 보냄)
+    # ⚠️ 영구 보장 패턴 (학습된 규칙):
+    #   1순위: redirect 추적 성공 → 셀러 메인 URL (https://smartstore.naver.com/{storeId})
+    #   2순위: API 원본 link (상품 상세 페이지) — 진짜 스마트스토어 페이지, 셀러명 클릭 가능
+    #   3순위 (최후): 검색 페이지 — 절대 안 씀. 영업 흐름 끊김.
+    # 핵심: API 원본 link가 있으면 무조건 그걸 보존. 검색 fallback X.
     store_url, store_debug = resolve_real_store_url(flagship_url)
     if store_url:
-        print(f"        스토어 URL: {store_url}")
+        print(f"        스토어 URL: {store_url} (셀러 메인)")
+    elif flagship_url and "smartstore.naver.com" in flagship_url:
+        # API 원본 link 보존 (상품 페이지지만 진짜 스마트스토어)
+        store_url = flagship_url
+        print(f"        스토어 URL: 상품 페이지 fallback (셀러명 클릭으로 메인 이동)")
+    elif flagship_url and "brand.naver.com" in flagship_url:
+        store_url = flagship_url
+        print(f"        스토어 URL: brand.naver.com 상품 페이지 fallback")
     else:
+        # 마지막 안전망 — 여기 도달하면 API link도 비어있는 비정상 케이스
         store_url = (
             f"https://search.shopping.naver.com/search/all?"
             f"query={urllib.parse.quote(brand_name)}"
         )
-        print(f"        스토어 URL 추출 실패 → 검색 페이지 fallback ({store_debug})")
+        print(f"        스토어 URL: 비정상 — 검색 페이지 최후 fallback ({store_debug})")
 
     # 5-3) 주력 상품명에서 검색용 핵심 키워드 추출
     product_keyword = extract_product_keyword(flagship_title)

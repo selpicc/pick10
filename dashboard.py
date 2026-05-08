@@ -245,13 +245,23 @@ def fill_empty_urls_in_all_csvs() -> dict:
             if not brand:
                 continue
 
-            # 1차: redirect 추적으로 진짜 셀러 메인 URL 시도
+            # 3중 fallback 전략 (검색 페이지는 최후 안전망)
+            # 1순위: redirect 추적 → 셀러 메인 URL
+            # 2순위: API 원본 link → 상품 상세 페이지 (진짜 스마트스토어)
+            # 3순위 (최후): 검색 페이지 — API link도 없는 비정상 케이스
             real_url = ""
             link = fetch_smartstore_link(brand)
             if link:
                 real_url = resolve_real_store_url(link)
 
-            # 2차: 실패 시 검색 페이지 URL fallback (절대 빈 칸 X)
+            # 2차: redirect 실패 → API 원본 link 보존 (상품 페이지)
+            if not real_url and link and (
+                "smartstore.naver.com" in link or "brand.naver.com" in link
+            ):
+                real_url = link
+                fallback_count += 1   # 상품 페이지 fallback 카운트
+
+            # 3차 (최후): API link도 없으면 검색 페이지
             if not real_url:
                 real_url = (
                     f"https://search.shopping.naver.com/search/all?"
