@@ -1015,6 +1015,7 @@ if len(filtered) > 0:
     # 행 클릭 → 디테일 패널 펼침
     # ─────────────────────────────────────────────────────────
     main_cols = [
+        "수집일",              # 최신순으로 보기 위함 — No. 바로 옆에 위치
         "브랜드명",
         "스마트스토어 주소",   # 브랜드명 바로 옆 — 빠르게 셀러 페이지 확인
         "카테고리",            # 스토어 옆 — 주력상품 기반 자동 분류
@@ -1026,9 +1027,19 @@ if len(filtered) > 0:
     safe_main_cols = [c for c in main_cols if c in filtered.columns]
 
     extra_cols = ["_source_file"] if "_source_file" in filtered.columns else []
-    sort_col = "Selpic 점수" if "Selpic 점수" in filtered.columns else safe_main_cols[0]
     main_df = filtered[safe_main_cols + extra_cols + (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])]
-    main_df = main_df.sort_values([sort_col], ascending=[False]).reset_index(drop=True)
+
+    # 정렬: 1순위 수집일 desc (최신 우선) → 2순위 Selpic 점수 desc (점수 높음 우선)
+    sort_keys = []
+    if "수집일" in main_df.columns:
+        sort_keys.append("수집일")
+    if "Selpic 점수" in main_df.columns:
+        sort_keys.append("Selpic 점수")
+    if not sort_keys:
+        sort_keys = [safe_main_cols[0]]   # 안전 fallback
+    main_df = main_df.sort_values(
+        sort_keys, ascending=[False] * len(sort_keys)
+    ).reset_index(drop=True)
 
     # 등급 표시값 — 컬러 도트 + 텍스트 (Linear/Notion 스타일 미니멀)
     # 셀 자체는 흰색 유지, 도트만 색상 → 가장 깔끔한 간소화
@@ -1073,6 +1084,8 @@ if len(filtered) > 0:
 
     # 컬럼별 너비/표시 이름
     gb.configure_column("No.", width=70, pinned="left")
+    if "수집일" in display_df.columns:
+        gb.configure_column("수집일", headerName="수집일", width=110, pinned="left")
     gb.configure_column("브랜드명", width=180)
     if "카테고리" in display_df.columns:
         gb.configure_column("카테고리", headerName="카테고리", width=130)
