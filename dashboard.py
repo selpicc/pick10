@@ -711,16 +711,20 @@ if len(filtered) > 0:
     gb = GridOptionsBuilder.from_dataframe(display_df)
 
     # 모든 셀 가운데 정렬 (default)
-    # 컬럼별 필터/메뉴 완전 제거 (사이드바에 이미 필터 있음)
+    # ⚠️ streamlit-aggrid는 AG Grid 래퍼 — 옵션 이름이 약간 다름
+    #     filter (X) → filterable (O)
+    #     sortable (X) → sorteable (O, 오타 그대로)
     gb.configure_default_column(
         cellStyle={"text-align": "center"},
-        sortable=True,
-        filter=False,
+        filterable=False,                  # ⭐ 컬럼별 필터 메뉴 완전 제거
+        sorteable=True,                    # 헤더 클릭 → 정렬 가능
         resizable=True,
-        suppressMenu=True,                # 구버전 AG Grid 호환
-        suppressHeaderMenuButton=True,    # 신버전 AG Grid (필터 아이콘 숨김)
-        suppressMovable=True,             # 컬럼 드래그로 순서 변경 방지
-        wrapText=False,
+        editable=False,
+        groupable=False,
+        suppressMenu=True,                 # 메뉴 버튼 (구버전)
+        suppressHeaderMenuButton=True,     # 메뉴 버튼 (신버전)
+        suppressMovable=True,              # 컬럼 드래그 비활성
+        menuTabs=[],                       # 메뉴 탭 없음 → 필터/컬럼/필터 다 X
     )
 
     # 컬럼별 너비/표시 이름
