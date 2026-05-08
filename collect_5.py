@@ -50,7 +50,21 @@ sys.stdout.reconfigure(encoding="utf-8")
 # 설정 (수정 가능)
 # ─────────────────────────────────────────────────────────────────
 SCORE_THRESHOLD = 70   # Selpic Fit Score 임계치
-TARGET_COUNT = 5       # 일일 선별 건수
+TARGET_COUNT = 5       # 일일 선별 건수 (기본값)
+
+# 커맨드라인 인자로 덮어쓰기 가능
+# 사용법: python collect_5.py [건수]   예: python collect_5.py 3 → 3건만 수집
+# 안전 제한: 1~10건
+if len(sys.argv) > 1:
+    try:
+        _n = int(sys.argv[1])
+        if 1 <= _n <= 10:
+            TARGET_COUNT = _n
+            print(f"   📌 수집 건수: {TARGET_COUNT}건 (커맨드라인 인자 적용)")
+        else:
+            print(f"   ⚠️  인자 {_n} 무시 (허용 범위 1~10) → 기본 {TARGET_COUNT}건")
+    except ValueError:
+        print(f"   ⚠️  인자 '{sys.argv[1]}' 무시 (숫자 X) → 기본 {TARGET_COUNT}건")
 
 # 12개 카테고리 프리셋 (영유아·산모 특화)
 # 카테고리당 첫 키워드를 메인으로 사용 (다른 키워드는 보조)

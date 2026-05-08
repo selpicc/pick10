@@ -521,24 +521,31 @@ st.markdown(
 )
 
 # ─────────────────────────────────────────────────────────────────
-# 액션 — 새 5건 수집 버튼
+# 액션 — 수집 건수 선택 + 수집 버튼
 # ─────────────────────────────────────────────────────────────────
-action_col1, action_col2, action_col3 = st.columns([1, 1, 3])
+action_col1, action_col2, action_col3, action_col4 = st.columns([1, 1.3, 1, 2])
 with action_col1:
+    collect_n = st.selectbox(
+        "수집 건수",
+        options=[1, 2, 3, 4, 5],
+        index=4,   # 기본값 5
+        key="collect_count",
+    )
+with action_col2:
     collect_clicked = st.button(
-        "+ 5건 새로 수집",
+        f"+ {collect_n}건 새로 수집",
         type="primary",
         use_container_width=True,
     )
-with action_col2:
+with action_col3:
     fix_clicked = st.button(
         "빈 스토어 주소 채우기",
         use_container_width=True,
         help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
     )
-with action_col3:
+with action_col4:
     st.markdown(
-        "<div style='padding-top: 8px; color: #6b7280; font-size: 13px;'>"
+        "<div style='padding-top: 32px; color: #6b7280; font-size: 13px;'>"
         "수집: 30~60초 · 채우기: 빈 행 N건 × 약 0.3초"
         "</div>",
         unsafe_allow_html=True,
@@ -574,11 +581,11 @@ if collect_clicked:
     # ────────────────────────────────────────────────
     # 2단계: 수집 (collect_5.py에 [3.5/6] A+B+C 필터 내장)
     # ────────────────────────────────────────────────
-    with st.spinner("수집 중... 네이버 검색 + 분석 진행 중 (30~60초 소요)"):
+    with st.spinner(f"수집 중... 네이버 검색 + 분석 진행 중 ({collect_n}건, 약 {15 + collect_n * 8}초 소요)"):
         try:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             result = subprocess.run(
-                [sys.executable, "collect_5.py"],
+                [sys.executable, "collect_5.py", str(collect_n)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
