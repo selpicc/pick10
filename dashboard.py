@@ -675,8 +675,8 @@ if len(filtered) > 0:
         "브랜드명",
         "스마트스토어 주소",   # 브랜드명 바로 옆 — 빠르게 셀러 페이지 확인
         "영업 상태 (수기)",
+        "전화 (수기)",         # 영업 상태 다음 — 통화 우선 워크플로우
         "이메일 (수기)",
-        "전화 (수기)",
         "마케팅 등급 (자동)",
     ]
     safe_main_cols = [c for c in main_cols if c in filtered.columns]
@@ -730,7 +730,7 @@ if len(filtered) > 0:
     if "전화 (수기)" in display_df.columns:
         gb.configure_column("전화 (수기)", headerName="연락처", width=140)
     if "마케팅 등급 (자동)" in display_df.columns:
-        gb.configure_column("마케팅 등급 (자동)", headerName="등급", width=100)
+        gb.configure_column("마케팅 등급 (자동)", headerName="마케팅 활동", width=120)
 
     # 스토어 링크 컬럼 — "열기" 텍스트 + 클릭 시 새 탭으로 이동
     # ⚠️ AG Grid는 React 래핑이라 DOM 엘리먼트 직접 반환 불가
