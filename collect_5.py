@@ -198,9 +198,21 @@ def build_real_product_url(store_url: str, product_id: str) -> str:
 
 
 def extract_product_keyword(title: str) -> str:
-    """주력 상품명에서 검색용 핵심 키워드 추출
-    - [의료기기] / (15g) 같은 부가정보 제거
-    - 첫 단어가 specific하면 그것만, 일반 단어면 첫 2단어
+    """주력 상품명에서 가장 의미있는 상품 키워드 추출
+
+    전략:
+      1. [의료기기] / (15g) 같은 부가정보 제거
+      2. 토큰화
+      3. SKIP_MODIFIERS 제외 (사이즈/시장/일반 수식어)
+      4. 남은 단어 중 가장 긴(고유한) 것 선택
+
+    예: "빅사이즈 임산부 원피스 반팔 베이글주름원피스"
+        → 수식어 제외 → ["원피스", "베이글주름원피스"]
+        → 가장 긴 단어 → "베이글주름원피스" ✅
+
+    예: "에디슨 유아 젓가락 셀프케어 세트"
+        → 수식어 제외 → ["에디슨", "젓가락", "셀프케어"]
+        → 가장 긴 단어 → "셀프케어"
     """
     if not title:
         return ""
@@ -212,16 +224,33 @@ def extract_product_keyword(title: str) -> str:
     if not words:
         return ""
 
-    # 흔한 일반 단어 (이게 첫 단어면 검색 너무 광범위 → 두 단어 사용)
-    common_words = {
-        "베이비", "유아", "아기", "신생아", "임산부", "산모",
+    # 스킵할 수식어 (제품 식별에 도움 안 되는 단어)
+    SKIP_MODIFIERS = {
+        # 사이즈
+        "빅사이즈", "스몰", "미디움", "라지", "엑스라지", "프리사이즈",
+        "미니", "맥시", "스탠다드", "투웨이",
+        # 옷 종류 수식어
+        "반팔", "긴팔", "민소매", "오버사이즈",
+        # 일반 수식어
+        "프리미엄", "신상", "정품", "신형", "구형", "한정", "신규",
+        "오리지널", "에디션", "스페셜",
+        # 묶음/세트
+        "세트", "묶음", "패키지", "콤보",
+        # 시장 키워드 (이미 컨텍스트로 활용됨)
+        "베이비", "유아", "아기", "신생아", "영아", "영유아",
+        "임산부", "산모", "임부", "수유", "출산", "임신", "산후",
         "임산부용", "유아용", "신생아용", "키즈", "주니어",
-        "프리미엄", "신상", "정품", "세트", "출산", "임신",
     }
 
-    if words[0] in common_words and len(words) >= 2:
-        return f"{words[0]} {words[1]}"
-    return words[0]
+    # 수식어 제외
+    filtered = [w for w in words if w not in SKIP_MODIFIERS]
+    if not filtered:
+        # 모두 수식어면 첫 단어로 fallback
+        return words[0]
+
+    # 가장 긴 (고유한) 단어 선택 — 한국어 상품명은 보통 끝부분이 상품 본체
+    filtered.sort(key=len, reverse=True)
+    return filtered[0]
 
 
 def resolve_real_store_url(link: str, max_retries: int = 2) -> tuple:
@@ -362,6 +391,9 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     sns_cafe = search_naver("cafearticle", f"{query_main} 인스타", 1).get("total", 0)
     sns = sns_blog + sns_cafe
 
+    # 실제 검색에 사용된 쿼리 (DB에 저장용)
+    used_query = query_main
+
     # 점수 계산 — 3채널 가중치 (카페 가장 중요)
     score = (
         math.log10(blog + 1) * 1.5
@@ -401,6 +433,7 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
         "score": round(score, 2),
         "size": size,
         "size_note": size_note,
+        "query": used_query,   # 실제 검색에 사용된 쿼리
     }
 
 
@@ -787,7 +820,7 @@ for sel in passed:
         "상품 카테고리":        flagship_category,
         "가격":                 f"{flagship_price:,}원" if flagship_price else "",
         "점수 근거":            " · ".join(sel["_breakdown"]),
-        "마케팅 검색 키워드 (자동)": product_keyword,
+        "마케팅 검색 키워드 (자동)": mgrade.get("query", product_keyword),
         "마케팅 등급 (자동)":   mgrade["grade"],
         "마케팅 점수 (자동)":   mgrade["score"],
         "마케팅 채널별 노출 (자동)": (
