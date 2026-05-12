@@ -85,13 +85,13 @@ USER_KEYWORDS = [k.strip() for k in (_args.keywords or "").split(",") if k.strip
 # 모드 결정
 if USER_KEYWORDS:
     COLLECT_MODE = "keywords"
-    SCORE_THRESHOLD = 30   # 사용자 키워드는 카테고리 점수 없을 수 있어 임계치 낮춤
+    SCORE_THRESHOLD = 0    # 키워드 모드 — 엄격 카테고리 매칭이 메인 필터, 점수 컷 비활성
 elif TARGET_CATEGORY:
     COLLECT_MODE = "category"
-    SCORE_THRESHOLD = 50   # 단일 카테고리 — 후보 풀 작아서 임계치 약간 낮춤
+    SCORE_THRESHOLD = 30   # 카테고리 모드 — 엄격 매칭으로 보완, 점수 임계치 약간 낮춤
 else:
     COLLECT_MODE = "auto"
-    SCORE_THRESHOLD = 70   # 전체 카테고리 기본값
+    SCORE_THRESHOLD = 70   # 자동 모드 — 전체 시장 탐색, 점수 변별력 유지
 
 print(f"   📌 수집 모드: {COLLECT_MODE}")
 print(f"   📌 수집 건수: {TARGET_COUNT}건")
@@ -481,8 +481,9 @@ if COLLECT_MODE == "keywords":
             kw_cat = keyword   # 분류 실패 시 키워드 그대로 사용
 
         keyword_total = 0
-        # 페이지네이션: start=1 (1~30위), start=31 (31~60위)
-        for start_offset in [1, 31]:
+        # 페이지네이션 확대: start=1, 31, 61, 91 (1~120위) — 후보 풀 4배
+        # 엄격 매칭 통과율 낮아도 충분한 풀 확보로 요청 건수 충족
+        for start_offset in [1, 31, 61, 91]:
             items = search_shop(keyword, display=30, start=start_offset)
             if not items:
                 break
@@ -508,18 +509,24 @@ elif COLLECT_MODE == "category":
     keywords = CATEGORY_PRESETS[TARGET_CATEGORY]
     print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 키워드 {len(keywords)}개로 검색...")
     for keyword in keywords:
-        items = search_shop(keyword, display=15)
-        ss_items = [
-            it for it in items
-            if "smartstore.naver.com" in it.get("link", "")
-        ]
-        for rank, item in enumerate(ss_items, 1):
-            item["_keyword"] = keyword
-            item["_category_preset"] = TARGET_CATEGORY
-            item["_rank"] = rank
-            candidates.append(item)
-        time.sleep(0.15)
-        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {len(ss_items)}건")
+        keyword_total = 0
+        # 페이지네이션: start=1, 31, 61, 91 (1~120위) — 엄격 매칭 통과율 보완
+        for start_offset in [1, 31, 61, 91]:
+            items = search_shop(keyword, display=30, start=start_offset)
+            if not items:
+                break
+            ss_items = [
+                it for it in items
+                if "smartstore.naver.com" in it.get("link", "")
+            ]
+            for rank, item in enumerate(ss_items, start_offset):
+                item["_keyword"] = keyword
+                item["_category_preset"] = TARGET_CATEGORY
+                item["_rank"] = rank
+                candidates.append(item)
+            keyword_total += len(ss_items)
+            time.sleep(0.15)
+        print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건")
 
 else:
     # 모드 1 (기본): 12개 카테고리 전체
