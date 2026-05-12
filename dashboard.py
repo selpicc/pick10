@@ -1227,6 +1227,9 @@ if len(filtered) > 0:
         "resizable": True,
         "suppressMovable": True,
     })
+    # 행 클릭 선택 명시적 활성화 (체크박스 외에도 행 클릭으로 선택 가능)
+    grid_options["suppressRowClickSelection"] = False
+    grid_options["rowSelection"] = "multiple"
 
     # 모든 컬럼에도 동일하게 강제 적용 (per-column override 방지)
     for col in grid_options.get("columnDefs", []):
@@ -1399,9 +1402,9 @@ if len(filtered) > 0:
     # 디테일 패널 — 선택된 행이 있을 때만
     # ─────────────────────────────────────────────────────────
     # AgGrid 응답에서 선택된 행 추출 (DataFrame 또는 list 형식 둘 다 지원)
-    # 디테일 패널 — 정확히 1건 선택 시에만 표시
-    # (다중 선택은 위에서 액션 바로 처리됨)
-    sel_brand = selected_brands[0] if len(selected_brands) == 1 else ""
+    # 디테일 패널 — 1건 이상 선택 시 항상 표시 (첫 번째 선택된 브랜드 기준)
+    # 다중 선택해도 첫 번째 브랜드 디테일 표시 (action bar는 별도로 위에 표시됨)
+    sel_brand = selected_brands[0] if selected_brands else ""
 
     if sel_brand:
         # 원본에서 전체 정보 가져오기
