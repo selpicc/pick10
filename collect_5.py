@@ -324,21 +324,42 @@ def resolve_real_store_url(link: str, max_retries: int = 2) -> tuple:
     return "", "재시도 모두 실패"
 
 
-def calculate_marketing_grade(search_keyword: str) -> dict:
+def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "") -> dict:
     """3채널 검색 노출량 → 상/중/하 + 규모
-    search_keyword: 주력 상품 핵심 키워드 (브랜드명이 아니라 상품명 추출본)
 
-    채널 구성 (뉴스/지식인 제거, SNS(인스타그램) 추가):
+    노이즈 제거 핵심 — 브랜드명 + 시장 컨텍스트 조합으로 검색:
+      예: "에디슨" 단독 → 토마스 에디슨(과학자) 글 다 잡혀 → 부정확
+      예: "에디슨 베이비" 조합 → 그 브랜드의 베이비 시장 활동만 측정 ✅
+
+    검색 쿼리 구성:
+      - 메인: "{brand_name} {시장 컨텍스트}"
+              시장 컨텍스트는 카테고리에서 자동 추론 (임산부 / 베이비)
+      - SNS: "{brand_name} {시장 컨텍스트} 인스타"
+
+    채널 구성 (3채널):
       - 블로그: Naver 블로그 검색 결과 수
       - 카페: Naver 카페 검색 결과 수 (가장 신뢰성 높음, 유기적 입소문)
-      - SNS: Naver에서 "{키워드} 인스타" / "{키워드} 인스타그램" 멘션
-             (인스타그램 직접 API 없음 → Naver 멘션량을 프록시로 사용)
+      - SNS: Naver에서 "{쿼리} 인스타" 멘션 (인스타그램 프록시)
     """
-    blog = search_naver("blog", search_keyword, 1).get("total", 0)
-    cafe = search_naver("cafearticle", search_keyword, 1).get("total", 0)
+    # 시장 컨텍스트 결정 (카테고리 기반)
+    if any(k in category for k in ["임산부", "산모", "출산", "산후"]):
+        market_context = "임산부"
+    else:
+        market_context = "베이비"
+
+    # 검색 쿼리: 브랜드명 + 시장 컨텍스트
+    # (search_keyword는 보조 정보로만 사용 — 노이즈 원인이 될 수 있음)
+    if brand_name:
+        query_main = f"{brand_name} {market_context}"
+    else:
+        # 브랜드명 없으면 fallback (드문 케이스)
+        query_main = f"{search_keyword} {market_context}"
+
+    blog = search_naver("blog", query_main, 1).get("total", 0)
+    cafe = search_naver("cafearticle", query_main, 1).get("total", 0)
     # SNS(인스타그램) 노출 — Naver 블로그+카페에서 "인스타" 멘션 합산
-    sns_blog = search_naver("blog", f"{search_keyword} 인스타", 1).get("total", 0)
-    sns_cafe = search_naver("cafearticle", f"{search_keyword} 인스타", 1).get("total", 0)
+    sns_blog = search_naver("blog", f"{query_main} 인스타", 1).get("total", 0)
+    sns_cafe = search_naver("cafearticle", f"{query_main} 인스타", 1).get("total", 0)
     sns = sns_blog + sns_cafe
 
     # 점수 계산 — 3채널 가중치 (카페 가장 중요)
@@ -730,13 +751,14 @@ for sel in passed:
     # 5-3) 주력 상품명에서 검색용 핵심 키워드 추출
     product_keyword = extract_product_keyword(flagship_title)
 
-    # 5-4) 마케팅 등급 + 규모 추정 (주력 상품 키워드로 4채널 검색)
-    mgrade = calculate_marketing_grade(product_keyword)
-    # 자동 카테고리 분류 (주력상품명 기준)
+    # 5-4) 마케팅 등급 + 규모 추정
+    # 브랜드명 + 시장 컨텍스트로 검색 → "에디슨" 같은 브랜드명 노이즈 제거
+    # 자동 카테고리 분류 먼저 (마케팅 검색의 시장 컨텍스트 결정에 사용)
     auto_cat = classify_category(flagship_title)
+    mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat)
     print(f"        주력: {flagship_title[:50]}")
     print(f"        카테고리: {auto_cat}  (자동 분류)")
-    print(f"        검색 키워드: '{product_keyword}'")
+    print(f"        마케팅 검색 쿼리: '{brand_name} {('임산부' if any(k in auto_cat for k in ['임산부','산모','출산','산후']) else '베이비')}'")
     print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
     print(f"        규모 추정: {mgrade['size']} ({mgrade['size_note']})")
 
