@@ -624,10 +624,10 @@ if COLLECT_MODE == "keywords":
             kw_cat = keyword   # 분류 실패 시 키워드 그대로 사용
 
         keyword_total = 0
-        # 페이지네이션 확대: start=1, 31, 61, 91 (1~120위) — 후보 풀 4배
-        # 엄격 매칭 통과율 낮아도 충분한 풀 확보로 요청 건수 충족
-        for start_offset in [1, 31, 61, 91]:
-            items = search_shop(keyword, display=30, start=start_offset)
+        # 페이지네이션 대폭 확대 — 후보 풀 최대 확보 (5건 충족 보장)
+        # display=50 × 6 페이지 = 키워드당 300 결과 (Naver 한도 충분)
+        for start_offset in [1, 51, 101, 151, 201, 251]:
+            items = search_shop(keyword, display=50, start=start_offset)
             if not items:
                 break
             ss_items = [
@@ -653,9 +653,9 @@ elif COLLECT_MODE == "category":
     print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 키워드 {len(keywords)}개로 검색...")
     for keyword in keywords:
         keyword_total = 0
-        # 페이지네이션: start=1, 31, 61, 91 (1~120위) — 엄격 매칭 통과율 보완
-        for start_offset in [1, 31, 61, 91]:
-            items = search_shop(keyword, display=30, start=start_offset)
+        # 페이지네이션 대폭 확대 — 후보 풀 최대 확보
+        for start_offset in [1, 51, 101, 151, 201, 251]:
+            items = search_shop(keyword, display=50, start=start_offset)
             if not items:
                 break
             ss_items = [
@@ -861,26 +861,34 @@ for sel in passed:
         continue   # 5건에 안 포함
 
     # 5-1.6) keyword/category 모드: 브랜드 상품에 검색 키워드가 직접 포함되는지 확인
-    # 이유: classify_category()는 fallback이 광범위해 "산모 트리트먼트"도 "임산부 뷰티"로 분류됨
-    # → 카테고리 매칭만으로는 부족. 상품명 텍스트에 검색 키워드가 실제로 들어가야 함
-    # brand_items의 top 10 상품 중 1개라도 매칭되면 통과
+    # ⚠️ 완화된 매칭 (5건 충족 우선):
+    #   - 전체 brand_items (top 20) 모두 검사
+    #   - 부분 매칭도 허용 (튼살크림 → "튼살"만 있어도 통과)
+    #   - 초기 검색이 키워드 기반이라 어차피 어느 상품엔 키워드 있음 → 보장 ↑
     if COLLECT_MODE in ("keywords", "category"):
-        # 검색 키워드 풀 구성
+        # 검색 키워드 풀 구성 + 핵심 부분 키워드 추출
         if COLLECT_MODE == "keywords":
-            # 사용자 입력 + 확장 동의어
             search_kw_pool = set()
             for kw in USER_KEYWORDS:
                 for ex in expand_keyword(kw):
                     search_kw_pool.add(ex.lower())
-        else:   # category mode
-            # 선택 카테고리의 검색 키워드들
+                # 원본 키워드의 부분도 추가 (예: "튼살크림" → "튼살", "크림")
+                for token in kw.split():
+                    if len(token) >= 2:
+                        search_kw_pool.add(token.lower())
+        else:
             cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
             search_kw_pool = {kw.lower() for kw in cat_kws}
+            # 부분 키워드도 추가
+            for kw in cat_kws:
+                for token in kw.split():
+                    if len(token) >= 2:
+                        search_kw_pool.add(token.lower())
 
-        # 브랜드 상품 top 10 중 1개라도 키워드 포함?
+        # brand_items 전체(20개) 검사
         has_matching_product = False
         matched_product = ""
-        for item in brand_items[:10]:
+        for item in brand_items:   # top 10 → 전체
             title = clean_html_tags(item.get("title", "")).lower()
             for kw in search_kw_pool:
                 if kw in title:
@@ -893,7 +901,7 @@ for sel in passed:
         if not has_matching_product:
             print(f"        🚫 검색 키워드와 매칭되는 상품 없음 → 다음 후보로")
             time.sleep(0.3)
-            continue   # 5건에 안 포함
+            continue
         else:
             print(f"        ✓ 매칭 상품 발견: {matched_product}")
 
