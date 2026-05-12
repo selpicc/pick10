@@ -371,6 +371,28 @@ def delete_unfit_brands(delete_candidates: list) -> dict:
     return {"deleted": deleted, "failed": failed}
 
 
+def delete_brands_by_name(brand_names: list) -> dict:
+    """브랜드명 리스트로 일괄 삭제 (사용자 수동 선택용).
+    반환: {"deleted": int, "failed": int, "failed_brands": [...]}
+    """
+    sb = get_supabase_client()
+    if sb is None:
+        return {"deleted": 0, "failed": len(brand_names), "failed_brands": brand_names}
+
+    deleted, failed = 0, 0
+    failed_brands = []
+    for brand in brand_names:
+        if not brand:
+            continue
+        try:
+            sb.table(TABLE_NAME).delete().eq("brand_name", brand).execute()
+            deleted += 1
+        except Exception:
+            failed += 1
+            failed_brands.append(brand)
+    return {"deleted": deleted, "failed": failed, "failed_brands": failed_brands}
+
+
 # ─────────────────────────────────────────────────────────────────
 # 커스텀 CSS — 깔끔한 디자인 톤
 # ─────────────────────────────────────────────────────────────────
@@ -1173,8 +1195,14 @@ if len(filtered) > 0:
             """),
         )
 
-    # 단일 행 선택 (체크박스 X, 행 클릭 O)
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    # 다중 선택 + 체크박스 (맨 앞 컬럼)
+    # 행 클릭으로도 선택 가능 → 단일 선택 시 디테일 패널 열림 / 다중 선택 시 삭제 가능
+    gb.configure_selection(
+        selection_mode="multiple",
+        use_checkbox=True,
+        header_checkbox=True,   # 헤더 체크박스 → 전체 선택
+        rowMultiSelectWithClick=True,   # 행 클릭으로도 다중 선택
+    )
 
     # 헤더 가운데 정렬 CSS
     custom_css = {
@@ -1220,6 +1248,98 @@ if len(filtered) > 0:
         key="main_aggrid",
     )
 
+    # ─────────────────────────────────────────────────────────
+    # 선택된 행 처리 (체크박스 / 클릭으로 선택됨)
+    # 1건 선택 → 디테일 패널 / 2건+ 선택 → 다중 선택 액션 바
+    # ─────────────────────────────────────────────────────────
+    selected = response.get("selected_rows") if isinstance(response, dict) else response["selected_rows"]
+    selected_brands = []
+    if selected is not None:
+        if isinstance(selected, pd.DataFrame) and len(selected) > 0:
+            selected_brands = [
+                str(row.get("브랜드명", "")).strip()
+                for _, row in selected.iterrows()
+                if str(row.get("브랜드명", "")).strip()
+            ]
+        elif isinstance(selected, list) and len(selected) > 0:
+            selected_brands = [
+                str(row.get("브랜드명", "")).strip()
+                for row in selected
+                if str(row.get("브랜드명", "")).strip()
+            ]
+
+    # 다중 선택 시 액션 바 (1건도 표시 — 디테일 + 삭제 둘 다 가능)
+    if len(selected_brands) >= 1:
+        action_col_left, action_col_right = st.columns([4, 2])
+        with action_col_left:
+            st.markdown(
+                f"<div style='background: #fff7e6; border: 0.5px solid #fbbf24; "
+                f"border-radius: 8px; padding: 10px 14px; font-size: 14px; color: #92400e;'>"
+                f"<b>{len(selected_brands)}건 선택됨</b> · 삭제하려면 우측 버튼 클릭"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with action_col_right:
+            if st.button(
+                f"🗑️ 선택 {len(selected_brands)}건 삭제",
+                type="primary",
+                use_container_width=True,
+                key="delete_selected_btn",
+            ):
+                st.session_state["pending_delete_brands"] = selected_brands
+                st.session_state["show_delete_confirm"] = True
+                st.rerun()
+
+    # 삭제 확인 모달 (session_state 기반)
+    if st.session_state.get("show_delete_confirm", False):
+        pending = st.session_state.get("pending_delete_brands", [])
+        if pending:
+            st.markdown("---")
+            with st.container(border=True):
+                st.markdown(
+                    f"<div style='color: #991b1b; font-size: 17px; font-weight: 600; margin-bottom: 8px;'>"
+                    f"⚠️ 정말 삭제할까요?</div>"
+                    f"<div style='font-size: 14px; color: #6b7280; margin-bottom: 12px;'>"
+                    f"<b style='color: #111827;'>{len(pending)}건의 브랜드</b>가 영구 삭제됩니다. 되돌릴 수 없습니다."
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                # 삭제 대상 미리보기 (최대 10개)
+                preview = pending[:10]
+                preview_html = "<br>".join([f"• <s>{b}</s>" for b in preview])
+                if len(pending) > 10:
+                    preview_html += f"<br><span style='color: #9ca3af;'>... 그 외 {len(pending) - 10}건</span>"
+                st.markdown(
+                    f"<div style='background: #f3f4f6; padding: 10px 14px; border-radius: 8px; "
+                    f"font-size: 13px; line-height: 1.7; max-height: 220px; overflow-y: auto;'>"
+                    f"{preview_html}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("<br>", unsafe_allow_html=True)
+                btn_col1, btn_col2, btn_col3 = st.columns([3, 1.2, 1.5])
+                with btn_col2:
+                    if st.button("취소", use_container_width=True, key="delete_cancel_btn"):
+                        st.session_state["show_delete_confirm"] = False
+                        st.session_state["pending_delete_brands"] = []
+                        st.rerun()
+                with btn_col3:
+                    if st.button(
+                        "🗑️ 삭제 실행",
+                        type="primary",
+                        use_container_width=True,
+                        key="delete_confirm_btn",
+                    ):
+                        with st.spinner(f"{len(pending)}건 삭제 중..."):
+                            result = delete_brands_by_name(pending)
+                            st.cache_data.clear()
+                            if result["deleted"] > 0:
+                                st.toast(f"✅ {result['deleted']}건 삭제 완료", icon="✅")
+                            if result["failed"] > 0:
+                                st.toast(f"⚠️ {result['failed']}건 삭제 실패", icon="⚠️")
+                            st.session_state["show_delete_confirm"] = False
+                            st.session_state["pending_delete_brands"] = []
+                            st.rerun()
+
     # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
     download_col1, download_col2, download_col3 = st.columns([1, 1, 4])
     with download_col1:
@@ -1260,13 +1380,9 @@ if len(filtered) > 0:
     # 디테일 패널 — 선택된 행이 있을 때만
     # ─────────────────────────────────────────────────────────
     # AgGrid 응답에서 선택된 행 추출 (DataFrame 또는 list 형식 둘 다 지원)
-    selected = response.get("selected_rows") if isinstance(response, dict) else response["selected_rows"]
-    sel_brand = ""
-    if selected is not None:
-        if isinstance(selected, pd.DataFrame) and len(selected) > 0:
-            sel_brand = str(selected.iloc[0].get("브랜드명", "")).strip()
-        elif isinstance(selected, list) and len(selected) > 0:
-            sel_brand = str(selected[0].get("브랜드명", "")).strip()
+    # 디테일 패널 — 정확히 1건 선택 시에만 표시
+    # (다중 선택은 위에서 액션 바로 처리됨)
+    sel_brand = selected_brands[0] if len(selected_brands) == 1 else ""
 
     if sel_brand:
         # 원본에서 전체 정보 가져오기
