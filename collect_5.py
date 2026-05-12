@@ -781,13 +781,40 @@ for sel in passed:
     print(f"\n   ▶ {brand_name}  (Selpic 점수 {sel['_score']})")
     print(f"        근거: {' · '.join(sel['_breakdown'])}")
 
-    # 5-1) 브랜드명 재검색 → 주력 상품 식별
-    brand_items = search_shop(brand_name, display=10)
+    # 5-1) 브랜드명 재검색 → 주력 상품 식별 (display 20개로 늘려 종합몰 판별에도 활용)
+    brand_items = search_shop(brand_name, display=20)
     own_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
         and "smartstore.naver.com" in it.get("link", "")
     ]
+
+    # 5-1.3) 종합몰 자동 제외 (예: 테필라 같은 multi-category 셀러)
+    # 영유아 비율 < 50% OR 카테고리 5종 이상 → 종합몰로 판단
+    own_brand_items = [
+        it for it in brand_items
+        if it.get("mallName", "").strip() == brand_name
+    ]
+    if len(own_brand_items) >= 5:   # 표본 5개 이상일 때만 신뢰성 있는 판별
+        cat1_counts = {}
+        for it in own_brand_items:
+            cat1 = it.get("category1", "").strip()
+            if cat1:
+                cat1_counts[cat1] = cat1_counts.get(cat1, 0) + 1
+
+        if cat1_counts:
+            total_items = sum(cat1_counts.values())
+            BABY_CATS = {"출산/육아"}   # Naver Shopping 영유아 대분류
+            baby_count = sum(cnt for cat, cnt in cat1_counts.items() if cat in BABY_CATS)
+            baby_ratio = baby_count / total_items
+            diversity = len(cat1_counts)
+
+            # 종합몰 판별: 영유아 50% 미만 OR 카테고리 5종 이상
+            if baby_ratio < 0.5 or diversity >= 5:
+                print(f"        🚫 종합몰 자동 제외 "
+                      f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
+                time.sleep(0.3)
+                continue   # 5건에 안 포함
     flagship = own_items[0] if own_items else sel
     flagship_title = clean_html_tags(flagship.get("title", ""))
     flagship_url = flagship.get("link", "")
