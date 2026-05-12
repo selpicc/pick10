@@ -1227,10 +1227,8 @@ if len(filtered) > 0:
         "resizable": True,
         "suppressMovable": True,
     })
-    # ⭐ 핵심: 행 클릭이 체크박스를 토글하지 못하도록 차단
-    # → 체크박스는 체크박스 클릭으로만 토글
-    # → 행 본문 클릭은 cellClicked 이벤트로 별도 캡처 (디테일용)
-    grid_options["suppressRowClickSelection"] = True
+    # 행 클릭 = 선택 (단일 모드처럼 작동), 체크박스 = 다중 선택
+    grid_options["suppressRowClickSelection"] = False
     grid_options["rowSelection"] = "multiple"
 
     # 모든 컬럼에도 동일하게 강제 적용 (per-column override 방지)
@@ -1246,9 +1244,7 @@ if len(filtered) > 0:
         height=420,
         width="100%",
         allow_unsafe_jscode=True,
-        # 선택 변경 (체크박스) + 셀 클릭 (디테일용) 둘 다 트리거
         update_mode=GridUpdateMode.SELECTION_CHANGED,
-        update_on=["cellClicked"],   # 행 클릭 이벤트도 캡처
         fit_columns_on_grid_load=False,
         theme="streamlit",
         custom_css=custom_css,
@@ -1276,40 +1272,22 @@ if len(filtered) > 0:
                 if str(row.get("브랜드명", "")).strip()
             ]
 
-    # 행 클릭으로 디테일 보기 (체크박스 X)
-    # cellClicked 이벤트 시 response에 event_data 또는 grid_response에 데이터 들어옴
-    # streamlit-aggrid 버전에 따라 다름 → 여러 패턴 시도
-    clicked_brand = None
-    try:
-        # 패턴 1: response["event_data"]
-        event_data = response.get("event_data") if isinstance(response, dict) else None
-        if event_data and isinstance(event_data, dict):
-            # 체크박스 컬럼 클릭이 아니면 디테일용 (selectionColumn 필드 체크)
-            col_name = event_data.get("colDef", {}).get("field") or event_data.get("column", "")
-            if col_name and col_name not in ("checkboxSelection", ""):
-                clicked_brand = event_data.get("data", {}).get("브랜드명") or event_data.get("브랜드명")
-        # 패턴 2: 마지막 클릭 정보 (session_state 캐시)
-        if not clicked_brand:
-            clicked_brand = st.session_state.get("last_clicked_brand", "")
-        if clicked_brand:
-            st.session_state["last_clicked_brand"] = clicked_brand
-    except Exception:
-        clicked_brand = st.session_state.get("last_clicked_brand", "")
+    # 디테일 패널용 — 첫 번째 선택된 브랜드 (체크박스든 행 클릭이든 동일)
 
-    # 체크박스로 선택된 경우 액션 바 표시 (다중 삭제용)
-    if len(selected_brands) >= 1:
+    # 액션 바 — 2건 이상 선택 시에만 표시 (1건은 디테일만 보이게 깔끔)
+    if len(selected_brands) >= 2:
         action_col_left, action_col_right = st.columns([4, 2])
         with action_col_left:
             st.markdown(
                 f"<div style='background: #fff7e6; border: 0.5px solid #fbbf24; "
                 f"border-radius: 8px; padding: 10px 14px; font-size: 14px; color: #92400e;'>"
-                f"<b>{len(selected_brands)}건 체크됨</b> · 삭제하려면 우측 버튼 클릭"
+                f"<b>{len(selected_brands)}건 선택됨</b> · 일괄 삭제하려면 우측 버튼"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         with action_col_right:
             if st.button(
-                f"🗑️ 체크 {len(selected_brands)}건 삭제",
+                f"🗑️ 선택 {len(selected_brands)}건 삭제",
                 type="primary",
                 use_container_width=True,
                 key="delete_selected_btn",
@@ -1429,9 +1407,8 @@ if len(filtered) > 0:
     # 디테일 패널 — 선택된 행이 있을 때만
     # ─────────────────────────────────────────────────────────
     # AgGrid 응답에서 선택된 행 추출 (DataFrame 또는 list 형식 둘 다 지원)
-    # 디테일 패널 — 행 클릭으로 본 브랜드 표시 (체크박스와 무관)
-    # 체크박스 선택은 별도 (다중 삭제용)
-    sel_brand = clicked_brand or ""
+    # 디테일 패널 — 첫 번째 선택된 브랜드 (행 클릭이든 체크박스든)
+    sel_brand = selected_brands[0] if selected_brands else ""
 
     if sel_brand:
         # 원본에서 전체 정보 가져오기
