@@ -848,19 +848,42 @@ for sel in passed:
         time.sleep(0.3)
         continue   # 5건에 안 포함
 
-    # 5-1.6) keyword/category 모드: 주력상품 카테고리가 검색 의도와 일치하는지 검증
-    # 이유: 사용자가 "임산부 튼살크림" 검색 → 주력상품이 "이유식 식기"인 브랜드 제외
-    # auto 모드는 전체 시장 탐색이라 일치 검증 X
+    # 5-1.6) keyword/category 모드: 브랜드 상품에 검색 키워드가 직접 포함되는지 확인
+    # 이유: classify_category()는 fallback이 광범위해 "산모 트리트먼트"도 "임산부 뷰티"로 분류됨
+    # → 카테고리 매칭만으로는 부족. 상품명 텍스트에 검색 키워드가 실제로 들어가야 함
+    # brand_items의 top 10 상품 중 1개라도 매칭되면 통과
     if COLLECT_MODE in ("keywords", "category"):
-        intended_cat = sel.get("_category_preset", "")
-        flagship_cat = classify_category(flagship_title)
-        valid_cats = set(CATEGORY_PRESETS.keys())   # 표준 10개 카테고리
+        # 검색 키워드 풀 구성
+        if COLLECT_MODE == "keywords":
+            # 사용자 입력 + 확장 동의어
+            search_kw_pool = set()
+            for kw in USER_KEYWORDS:
+                for ex in expand_keyword(kw):
+                    search_kw_pool.add(ex.lower())
+        else:   # category mode
+            # 선택 카테고리의 검색 키워드들
+            cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
+            search_kw_pool = {kw.lower() for kw in cat_kws}
 
-        if intended_cat in valid_cats and flagship_cat != intended_cat:
-            print(f"        🚫 주력상품 분야 불일치: "
-                  f"검색({intended_cat}) ≠ 주력({flagship_cat}) → 다음 후보로")
+        # 브랜드 상품 top 10 중 1개라도 키워드 포함?
+        has_matching_product = False
+        matched_product = ""
+        for item in brand_items[:10]:
+            title = clean_html_tags(item.get("title", "")).lower()
+            for kw in search_kw_pool:
+                if kw in title:
+                    has_matching_product = True
+                    matched_product = item.get("title", "")[:40]
+                    break
+            if has_matching_product:
+                break
+
+        if not has_matching_product:
+            print(f"        🚫 검색 키워드와 매칭되는 상품 없음 → 다음 후보로")
             time.sleep(0.3)
             continue   # 5건에 안 포함
+        else:
+            print(f"        ✓ 매칭 상품 발견: {matched_product}")
 
     flagship_price = int(flagship.get("lprice", 0))
 
