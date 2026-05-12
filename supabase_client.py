@@ -37,7 +37,7 @@ DB_TO_KOR = {
     "marketing_grade":        "마케팅 등급 (자동)",
     "marketing_score":        "마케팅 점수 (자동)",
     "marketing_exposure":     "마케팅 채널별 노출 (자동)",
-    "size_estimate":          "규모 추정 (자동)",
+    "size_estimate":          "마케팅 활동 단계 (자동)",
     "manual_followers":       "관심고객수 (수기)",
     "manual_reviews":         "리뷰수 (수기)",
     "manual_company_name":    "상호 (수기)",

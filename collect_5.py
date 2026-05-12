@@ -469,24 +469,41 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     else:
         grade = "하"
 
-    # 규모 추정 — 관심고객수 우선 / 카페+SNS는 안정기/성장기/초기 구분만
-    # 대기업 판별:
-    #   1순위: 관심고객수 30만+ (스마트스토어 직접 측정 — 가장 정확)
-    #   2순위: BIG_COMPANY_BLOCKLIST 명단 (이미 A+B+C 필터에서 처리됨)
-    # 카페+SNS 단순 합산은 광고 활발 중소기업도 잡힐 위험 있어 대기업 판별에서 제외
-    social_total = cafe + sns
+    # 마케팅 활동 단계 — 3단계 (대기업 컷 후)
+    #   🚀 확장기 — 마케팅 활발, 신규 매출 채널 확장 적기
+    #   📈 성장기 — 마케팅 시도 중, 효율 채널 도입 적기
+    #   🌱 도입기 — 마케팅 미흡, 기초 컨설팅 필요
+    # 대기업은 관심고객 30만+ 만으로 판별 (앞서 합의)
     if follower_count >= 300_000:
         size = "대기업"
         size_note = f"관심고객 {follower_count:,}명 (영업 비효율, 자체 마케팅팀 보유)"
-    elif social_total >= 50_000:
-        size = "안정기"
-        size_note = "큰 브랜드, 추가 채널 검토 가능"
-    elif social_total >= 1_500:
-        size = "성장기"
-        size_note = "Sweet spot — 광고 의지 강함"
     else:
-        size = "초기"
-        size_note = "노출 부족, 영업 효율 낮을 수 있음"
+        # 채널별 강세/약세 분석
+        channels = {"블로그": blog, "카페": cafe, "SNS": sns}
+        max_channel = max(channels, key=channels.get)
+        max_value = channels[max_channel]
+
+        # 단계 결정 (점수 기반)
+        if score >= 12:
+            size = "확장기"
+            # 서술: 강세 채널 + 권장 영업 방향
+            size_note = (
+                f"{max_channel} 노출 {max_value:,}건 등 마케팅 활발 — "
+                f"신규 매출 채널 확장 적기"
+            )
+        elif score >= 5:
+            size = "성장기"
+            size_note = (
+                f"{max_channel} 중심 노출 형성 중 ({max_value:,}건) — "
+                f"효율 채널 도입 적기"
+            )
+        else:
+            size = "도입기"
+            # 가장 부족한 정보 표시
+            size_note = (
+                f"전 채널 노출 미흡 (블{blog:,}/카{cafe:,}/SNS{sns:,}) — "
+                f"마케팅 기초 도입 컨설팅 필요"
+            )
 
     return {
         "grade": grade,
@@ -882,7 +899,7 @@ for sel in passed:
     else:
         print(f"        관심고객수: 자동 수집 실패 (페이지 차단 또는 비공개)")
 
-    # 5-4) 마케팅 등급 + 규모 추정
+    # 5-4) 마케팅 등급 + 활동 단계
     # 브랜드명 + 시장 컨텍스트로 검색 → "에디슨" 같은 브랜드명 노이즈 제거
     # 자동 카테고리 분류 먼저 (마케팅 검색의 시장 컨텍스트 결정에 사용)
     auto_cat = classify_category(flagship_title)
@@ -891,7 +908,7 @@ for sel in passed:
     print(f"        카테고리: {auto_cat}  (자동 분류)")
     print(f"        마케팅 검색 쿼리: '{brand_name} {('임산부' if any(k in auto_cat for k in ['임산부','산모','출산','산후']) else '베이비')}'")
     print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
-    print(f"        규모 추정: {mgrade['size']} ({mgrade['size_note']})")
+    print(f"        마케팅 활동 단계: {mgrade['size']} — {mgrade['size_note']}")
 
     # 5-5) 대기업 자동 제외 (관심고객수 30만+)
     if mgrade["size"] == "대기업":
@@ -925,7 +942,7 @@ for sel in passed:
             f"카페 {mgrade['cafe']:,} · "
             f"SNS {mgrade['sns']:,}"
         ),
-        "규모 추정 (자동)":     f"{mgrade['size']} ({mgrade['size_note']})",
+        "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
         "관심고객수 (자동)":    follower_count,   # 스마트스토어 자동 수집 (0이면 실패)
         # 수기 입력 컬럼
         "관심고객수 (수기)":         "",

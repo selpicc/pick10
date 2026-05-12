@@ -839,13 +839,13 @@ if "마케팅 등급 (자동)" in df.columns:
         default=all_grades,
     )
 
-# 규모 추정
+# 마케팅 활동 단계
 selected_sizes = None
-size_col = "규모 추정 (자동)"
+size_col = "마케팅 활동 단계 (자동)"
 if size_col in df.columns:
     all_sizes = sorted(df[size_col].dropna().unique())
     selected_sizes = st.sidebar.multiselect(
-        "규모 추정",
+        "마케팅 활동 단계",
         all_sizes,
         default=all_sizes,
     )
@@ -1277,7 +1277,7 @@ if len(filtered) > 0:
                     f"<b style='color: #374151;'>분석:</b> "
                     f"{sel_full.get('발견 카테고리', '')} · "
                     f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
-                    f"규모 {sel_full.get(size_col, '-')}"
+                    f"{sel_full.get(size_col, '-')}"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
