@@ -25,6 +25,7 @@ DB_TO_KOR = {
     "selpic_score":           "Selpic 점수",
     "category":               "발견 카테고리",
     "keyword":                "발견 키워드",
+    "collect_mode":           "수집 모드",   # auto / category / keywords
     "brand_name":             "브랜드명",
     "smartstore_url":         "스마트스토어 주소",
     "flagship_product":       "주력상품명",

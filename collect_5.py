@@ -670,6 +670,21 @@ for sel in passed:
         print(f"        🚫 주력상품 재검사 탈락: {flagship_reason} → 다음 후보로")
         time.sleep(0.3)
         continue   # 5건에 안 포함
+
+    # 5-1.6) keyword/category 모드: 주력상품 카테고리가 검색 의도와 일치하는지 검증
+    # 이유: 사용자가 "임산부 튼살크림" 검색 → 주력상품이 "이유식 식기"인 브랜드 제외
+    # auto 모드는 전체 시장 탐색이라 일치 검증 X
+    if COLLECT_MODE in ("keywords", "category"):
+        intended_cat = sel.get("_category_preset", "")
+        flagship_cat = classify_category(flagship_title)
+        valid_cats = set(CATEGORY_PRESETS.keys())   # 표준 10개 카테고리
+
+        if intended_cat in valid_cats and flagship_cat != intended_cat:
+            print(f"        🚫 주력상품 분야 불일치: "
+                  f"검색({intended_cat}) ≠ 주력({flagship_cat}) → 다음 후보로")
+            time.sleep(0.3)
+            continue   # 5건에 안 포함
+
     flagship_price = int(flagship.get("lprice", 0))
 
     # 5-2) 진짜 스토어 URL — 3중 fallback 전략 (검색 페이지로는 절대 안 보냄)
@@ -726,6 +741,7 @@ for sel in passed:
         "Selpic 점수":          sel["_score"],
         "발견 카테고리":        sel["_category_preset"],
         "발견 키워드":          sel["_keyword"],
+        "수집 모드":            COLLECT_MODE,   # auto / category / keywords
         "브랜드명":             brand_name,
         "스마트스토어 주소":    store_url,
         "주력상품명":           flagship_title,

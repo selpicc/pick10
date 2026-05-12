@@ -514,11 +514,23 @@ def load_all_data() -> pd.DataFrame:
             ).fillna(0).astype(int)
 
         # 자동 카테고리 분류 (주력상품명 기준 → 10개 카테고리)
-        # 모든 브랜드(기존+신규)에 매번 적용 — 분류 규칙 변경 시 즉시 반영
-        if "주력상품명" in df.columns:
-            df["카테고리"] = df["주력상품명"].fillna("").astype(str).apply(classify_category)
-        else:
-            df["카테고리"] = "기타"
+        # 단, 키워드 모드로 수집된 브랜드는 발견 카테고리(검색 키워드 기반) 우선 사용
+        # 이유: 사용자가 의도적으로 그 시장으로 발굴했으므로 검색 맥락이 더 중요
+        valid_categories = set(CATEGORY_SEARCH_KEYWORDS.keys())   # 10개 표준 카테고리
+
+        def resolve_category(row):
+            mode = str(row.get("수집 모드", "auto") or "auto").strip()
+            discovered = str(row.get("발견 카테고리", "") or "").strip()
+            flagship = str(row.get("주력상품명", "") or "").strip()
+
+            # 키워드 모드 + 발견 카테고리가 표준 10개 중 하나면 그대로 사용
+            if mode == "keywords" and discovered in valid_categories:
+                return discovered
+
+            # 그 외 모든 경우: 주력상품 기반 자동 분류
+            return classify_category(flagship) if flagship else "기타"
+
+        df["카테고리"] = df.apply(resolve_category, axis=1)
 
         return df
     except Exception as e:
