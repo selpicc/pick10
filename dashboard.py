@@ -1196,12 +1196,12 @@ if len(filtered) > 0:
         )
 
     # 다중 선택 + 체크박스 (맨 앞 컬럼)
-    # 행 클릭으로도 선택 가능 → 단일 선택 시 디테일 패널 열림 / 다중 선택 시 삭제 가능
+    # 행 클릭 → 단일 선택 (디테일 패널 표시)
+    # 체크박스 클릭 → 다중 선택 (삭제 등 일괄 작업)
     gb.configure_selection(
         selection_mode="multiple",
         use_checkbox=True,
         header_checkbox=True,   # 헤더 체크박스 → 전체 선택
-        rowMultiSelectWithClick=True,   # 행 클릭으로도 다중 선택
     )
 
     # 헤더 가운데 정렬 CSS
