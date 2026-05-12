@@ -353,7 +353,67 @@ def resolve_real_store_url(link: str, max_retries: int = 2) -> tuple:
     return "", "재시도 모두 실패"
 
 
-def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "") -> dict:
+def fetch_follower_count(store_url: str) -> int:
+    """스마트스토어 셀러 페이지에서 관심고객수 자동 추출
+
+    - 성공: 관심고객 수 반환 (int)
+    - 실패 (네트워크 오류, 봇 차단, 로그인 redirect, 셀러 비공개 등): 0 반환
+
+    여러 패턴 시도:
+      1. "관심고객 12,345명" 형식 텍스트
+      2. JSON 안의 followerCount: 12345
+      3. data-fan-count 같은 HTML 속성
+    """
+    if not store_url or "smartstore.naver.com" not in store_url:
+        return 0
+    # 상품 페이지 URL (/main/products/) 이면 메인 URL로 변환 시도 X (그냥 0 반환)
+    if "/main/products/" in store_url:
+        return 0
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+    }
+    try:
+        resp = requests.get(store_url, headers=headers, timeout=15)
+        if resp.status_code != 200:
+            return 0
+        html = resp.text or ""
+
+        # 패턴 1: "관심고객 12,345" 또는 "관심고객 12,345명"
+        m = re.search(r'관심고객[\s"]*?([\d,]{3,})', html)
+        if m:
+            try:
+                return int(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+        # 패턴 2: JSON에서 followerCount, fanCount, subscriberCount 등
+        for pattern in [
+            r'"followerCount"\s*:\s*(\d+)',
+            r'"fanCount"\s*:\s*(\d+)',
+            r'"subscriberCount"\s*:\s*(\d+)',
+        ]:
+            m = re.search(pattern, html)
+            if m:
+                try:
+                    return int(m.group(1))
+                except ValueError:
+                    pass
+
+        return 0
+    except requests.exceptions.RequestException:
+        return 0
+    except Exception:
+        return 0
+
+
+def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "", follower_count: int = 0) -> dict:
     """3채널 검색 노출량 → 상/중/하 + 규모
 
     노이즈 제거 핵심 — 브랜드명 + 시장 컨텍스트 조합으로 검색:
@@ -409,12 +469,15 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     else:
         grade = "하"
 
-    # 규모 추정 — 카페 + SNS 합산 (유기적 사회 신호)
-    # 카페: 일반 소비자 입소문 / SNS: 인스타그램 마케팅 활동
+    # 규모 추정 — 관심고객수 우선 / 카페+SNS는 안정기/성장기/초기 구분만
+    # 대기업 판별:
+    #   1순위: 관심고객수 30만+ (스마트스토어 직접 측정 — 가장 정확)
+    #   2순위: BIG_COMPANY_BLOCKLIST 명단 (이미 A+B+C 필터에서 처리됨)
+    # 카페+SNS 단순 합산은 광고 활발 중소기업도 잡힐 위험 있어 대기업 판별에서 제외
     social_total = cafe + sns
-    if social_total >= 500_000:
+    if follower_count >= 300_000:
         size = "대기업"
-        size_note = "영업 비효율 (자체 마케팅팀 보유 가능성)"
+        size_note = f"관심고객 {follower_count:,}명 (영업 비효율, 자체 마케팅팀 보유)"
     elif social_total >= 50_000:
         size = "안정기"
         size_note = "큰 브랜드, 추가 채널 검토 가능"
@@ -784,24 +847,31 @@ for sel in passed:
     # 5-3) 주력 상품명에서 검색용 핵심 키워드 추출
     product_keyword = extract_product_keyword(flagship_title)
 
+    # 5-3.5) 스마트스토어 관심고객수 자동 수집 (대기업 판별용)
+    # 실패 시 0 → 대기업 판별 skip (명단 매칭에 의존)
+    follower_count = fetch_follower_count(store_url)
+    if follower_count > 0:
+        print(f"        관심고객수: {follower_count:,}명")
+    else:
+        print(f"        관심고객수: 자동 수집 실패 (페이지 차단 또는 비공개)")
+
     # 5-4) 마케팅 등급 + 규모 추정
     # 브랜드명 + 시장 컨텍스트로 검색 → "에디슨" 같은 브랜드명 노이즈 제거
     # 자동 카테고리 분류 먼저 (마케팅 검색의 시장 컨텍스트 결정에 사용)
     auto_cat = classify_category(flagship_title)
-    mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat)
+    mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat, follower_count)
     print(f"        주력: {flagship_title[:50]}")
     print(f"        카테고리: {auto_cat}  (자동 분류)")
     print(f"        마케팅 검색 쿼리: '{brand_name} {('임산부' if any(k in auto_cat for k in ['임산부','산모','출산','산후']) else '베이비')}'")
     print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
     print(f"        규모 추정: {mgrade['size']} ({mgrade['size_note']})")
 
-    # 5-5) 대기업 자동 제외 (카페 + SNS 합산 50만+)
+    # 5-5) 대기업 자동 제외 (관심고객수 30만+)
     if mgrade["size"] == "대기업":
-        social_total = mgrade["cafe"] + mgrade["sns"]
-        print(f"        🚫 대기업 자동 제외 (카페+SNS {social_total:,}건) → 다음 후보로")
+        print(f"        🚫 대기업 자동 제외 (관심고객 {follower_count:,}명) → 다음 후보로")
         big_company_skipped.append({
             "브랜드명": brand_name,
-            "사회 노출 합계": social_total,
+            "관심고객수": follower_count,
             "Selpic 점수": sel["_score"],
         })
         time.sleep(0.3)
@@ -829,6 +899,7 @@ for sel in passed:
             f"SNS {mgrade['sns']:,}"
         ),
         "규모 추정 (자동)":     f"{mgrade['size']} ({mgrade['size_note']})",
+        "관심고객수 (자동)":    follower_count,   # 스마트스토어 자동 수집 (0이면 실패)
         # 수기 입력 컬럼
         "관심고객수 (수기)":         "",
         "리뷰수 (수기)":             "",
@@ -846,7 +917,7 @@ print(f"   ✅ 최종 선별: {len(results)}건")
 if big_company_skipped:
     print(f"   🚫 대기업 자동 제외: {len(big_company_skipped)}건")
     for bc in big_company_skipped:
-        print(f"      - {bc['브랜드명']} (카페+SNS {bc['사회 노출 합계']:,}건, 점수 {bc['Selpic 점수']})")
+        print(f"      - {bc['브랜드명']} (관심고객 {bc['관심고객수']:,}명, 점수 {bc['Selpic 점수']})")
 if len(results) < TARGET_COUNT:
     print(f"   ⚠️ 목표 {TARGET_COUNT}건 미달. 카테고리 추가 또는 임계치 조정 검토")
 print()

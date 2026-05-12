@@ -26,6 +26,7 @@ DB_TO_KOR = {
     "category":               "발견 카테고리",
     "keyword":                "발견 키워드",
     "collect_mode":           "수집 모드",   # auto / category / keywords
+    "auto_followers":         "관심고객수 (자동)",   # 스마트스토어에서 자동 수집
     "brand_name":             "브랜드명",
     "smartstore_url":         "스마트스토어 주소",
     "flagship_product":       "주력상품명",
@@ -89,6 +90,11 @@ def kor_row_to_db(row: dict) -> dict:
 
         # 타입 변환
         if db_col == "selpic_score":
+            try:
+                db_row[db_col] = int(val) if val else 0
+            except ValueError:
+                db_row[db_col] = 0
+        elif db_col == "auto_followers":
             try:
                 db_row[db_col] = int(val) if val else 0
             except ValueError:
