@@ -1253,28 +1253,18 @@ if len(filtered) > 0:
             )
 
             with st.container(border=True):
-                # 헤더
-                header_col1, header_col2 = st.columns([5, 1])
-                with header_col1:
-                    st.markdown(
-                        f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
-                        f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
-                        f"<b style='color: #374151;'>분석:</b> "
-                        f"{sel_full.get('발견 카테고리', '')} · "
-                        f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
-                        f"규모 {sel_full.get(size_col, '-')}"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
-                with header_col2:
-                    store_url = sel_full.get("스마트스토어 주소", "")
-                    if store_url:
-                        st.markdown(
-                            f"<div style='text-align: right; padding-top: 8px;'>"
-                            f"<a href='{store_url}' target='_blank' style='color: #2563eb; font-size: 13px; text-decoration: none;'>"
-                            f"스토어 열기 ↗</a></div>",
-                            unsafe_allow_html=True,
-                        )
+                # 헤더 (브랜드명 + 분석 정보 — 좌측 단독)
+                # 우측 "스토어 열기" 버튼은 비노출 (메인 표 스토어 열기로 충분)
+                st.markdown(
+                    f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
+                    f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
+                    f"<b style='color: #374151;'>분석:</b> "
+                    f"{sel_full.get('발견 카테고리', '')} · "
+                    f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
+                    f"규모 {sel_full.get(size_col, '-')}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
                 st.markdown("---")
 
