@@ -861,21 +861,33 @@ for sel in passed:
         time.sleep(0.3)
         continue   # 5건에 안 포함
 
-    # 5-1.6) 카테고리 모드만 주력상품 매칭 검증 (키워드 모드는 건너뜀)
-    # 이유: 키워드 모드는 사용자가 직접 키워드 입력 → Naver 검색 결과 신뢰
-    #       검색에 잡혔다는 것 자체가 해당 키워드 상품을 판매 중이라는 의미
-    # 카테고리 모드는 광범위 검색이라 검증 필요 (트리트먼트 같은 무관 브랜드 차단)
-    if COLLECT_MODE == "category":
-        cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
-        search_kw_pool = {kw.lower() for kw in cat_kws}
-        for kw in cat_kws:
-            for token in kw.split():
-                if len(token) >= 2:
-                    search_kw_pool.add(token.lower())
+    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 20 상품 중 1개라도 검색 키워드 부분 매칭 필수
+    # 이유: 키워드 모드도 무관 브랜드(바퀴벌레약 등) 차단 필요
+    # 매칭 방식: 부분 키워드 매칭 (튼살크림 → "튼살"만 있어도 OK)
+    if COLLECT_MODE in ("keywords", "category"):
+        if COLLECT_MODE == "keywords":
+            # 사용자 입력 + 확장 동의어 + 부분 키워드
+            search_kw_pool = set()
+            for kw in USER_KEYWORDS:
+                for ex in expand_keyword(kw):
+                    search_kw_pool.add(ex.lower())
+                for token in kw.split():
+                    if len(token) >= 2:
+                        search_kw_pool.add(token.lower())
+        else:
+            cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
+            search_kw_pool = {kw.lower() for kw in cat_kws}
+            for kw in cat_kws:
+                for token in kw.split():
+                    if len(token) >= 2:
+                        search_kw_pool.add(token.lower())
 
+        # 브랜드 top 5 상품(메인 라인) 중 1개라도 검색 키워드 부분 매칭
+        # Top 5만 검사 → 브랜드의 진짜 메인 비즈니스가 검색 키워드와 관련 있는지 확인
+        # (예: 아기자기랩이 이유식 셀러인데 튼살크림 1개 있어도 top 5 안에 없으면 제외)
         has_matching_product = False
         matched_product = ""
-        for item in brand_items:
+        for item in brand_items[:5]:   # top 20 → top 5로 축소 (엄격)
             title = clean_html_tags(item.get("title", "")).lower()
             for kw in search_kw_pool:
                 if kw in title:
@@ -886,11 +898,11 @@ for sel in passed:
                 break
 
         if not has_matching_product:
-            print(f"        🚫 카테고리 상품 매칭 없음 → 다음 후보로")
+            print(f"        🚫 메인 라인(top 5)에 검색 키워드 관련 상품 없음 → 다음 후보로")
             time.sleep(0.3)
             continue
         else:
-            print(f"        ✓ 매칭 상품 발견: {matched_product}")
+            print(f"        ✓ 메인 라인 매칭: {matched_product}")
 
     flagship_price = int(flagship.get("lprice", 0))
 
