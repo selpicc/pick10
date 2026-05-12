@@ -732,9 +732,14 @@ print(f"   ✅ {len(candidates)}건 → {len(unique_candidates)}건")
 print(f"      (이번 실행 중복 {dup_removed}건 + 이전 수집 {already_collected_skipped}건 제외)\n")
 
 
-# ── [3.5/6] 시장 타깃 크로스체크 (A+B+C 자동 필터) ──
-# 5건 저장 전 무조건 통과해야 하는 3중 필터
-print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (A 영유아 필수 / B 대기업 컷 / C 다른시장 차단)...")
+# ── [3.5/6] 시장 타깃 크로스체크 (B+C 필터, A는 keyword/category 모드에서 건너뜀) ──
+# 자동 모드: A+B+C 모두 적용 (시장 좁히기용)
+# 키워드/카테고리 모드: B+C만 적용 (사용자가 이미 시장 의도 명시)
+#   → "튼살크림" 검색은 이미 임산부 시장이라 A 영유아 키워드 강제 불필요
+if COLLECT_MODE in ("keywords", "category"):
+    print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (B 대기업 컷 / C 다른시장 차단 — A 건너뜀: 사용자 의도 명확)...")
+else:
+    print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (A 영유아 필수 / B 대기업 컷 / C 다른시장 차단)...")
 fit_candidates = []
 fail_log = {"a": [], "b": [], "c": []}
 
@@ -742,7 +747,11 @@ for c in unique_candidates:
     brand = c.get("mallName", "").strip()
     title = clean_html_tags(c.get("title", ""))
     result, reason = market_fit_check(brand, title)
-    if result == "ok":
+
+    # 키워드/카테고리 모드: A 탈락은 무시 (시장 의도 이미 명확)
+    if result == "a" and COLLECT_MODE in ("keywords", "category"):
+        fit_candidates.append(c)   # A 통과로 처리
+    elif result == "ok":
         fit_candidates.append(c)
     else:
         fail_log[result].append(f"{brand} ({reason})")
@@ -839,11 +848,14 @@ for sel in passed:
         filter(None, [flagship.get(f"category{i}", "") for i in range(1, 5)])
     )
 
-    # 5-1.5) 주력상품 발견 후 A+B+C 재검사 (대기업/부정 키워드 누락 방지)
-    # 이유: [3.5/6]은 검색 결과 제목 기반 → 주력상품 ≠ 검색 결과일 수 있음
-    # 예: "베이비 오일" 검색 결과로 들어왔지만 주력상품이 "LG생활건강 비누"인 경우
+    # 5-1.5) 주력상품 발견 후 B+C 재검사 (대기업/부정 키워드 누락 방지)
+    # 자동 모드: A+B+C 모두 적용
+    # 키워드/카테고리 모드: B+C만 적용 (A 건너뜀 — 사용자 의도 명확)
     flagship_check, flagship_reason = market_fit_check(brand_name, flagship_title)
-    if flagship_check != "ok":
+    # 키워드/카테고리 모드에서 A 탈락은 무시
+    if flagship_check == "a" and COLLECT_MODE in ("keywords", "category"):
+        pass   # 통과 처리
+    elif flagship_check != "ok":
         print(f"        🚫 주력상품 재검사 탈락: {flagship_reason} → 다음 후보로")
         time.sleep(0.3)
         continue   # 5건에 안 포함
