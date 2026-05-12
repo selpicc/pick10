@@ -1343,9 +1343,28 @@ if len(filtered) > 0:
     # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
     download_col1, download_col2, download_col3 = st.columns([1, 1, 4])
     with download_col1:
+        # CSV 내보내기 시 비노출 컬럼 (사용자 요청)
+        # 내부용·기술적 컬럼은 영업자에게 불필요
+        CSV_EXCLUDE_COLS = [
+            "Selpic 점수",
+            "점수 근거",
+            "마케팅 등급 (자동)",
+            "마케팅 분석 메모 (수기)",
+            "created_at",
+            "updated_at",
+            "수집 모드",
+            "관심고객수 (자동)",
+            "_단계명",        # 내부 정규화용
+            "_source_file",   # 내부 메타데이터
+            "id",             # DB 키
+        ]
+        export_df = filtered.drop(
+            columns=[c for c in CSV_EXCLUDE_COLS if c in filtered.columns],
+            errors="ignore",
+        )
         # to_csv()는 string 반환 시 encoding 무시 → 직접 BOM 포함 bytes로 변환
         # BOM(Byte Order Mark) 있어야 Excel이 UTF-8 인식 → 한글 깨짐 방지
-        csv_export = filtered.to_csv(index=False).encode("utf-8-sig")
+        csv_export = export_df.to_csv(index=False).encode("utf-8-sig")
         today_label = datetime.now().strftime("%Y-%m-%d_%H%M")
         st.download_button(
             label="CSV 다운로드",
