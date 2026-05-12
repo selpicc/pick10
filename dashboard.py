@@ -1151,9 +1151,9 @@ if len(filtered) > 0:
     )
 
     # 컬럼별 너비/표시 이름
-    gb.configure_column("No.", width=70, pinned="left")
+    gb.configure_column("No.", width=70)
     if "수집일" in display_df.columns:
-        gb.configure_column("수집일", headerName="수집일", width=110, pinned="left")
+        gb.configure_column("수집일", headerName="수집일", width=110)
     gb.configure_column("브랜드명", width=180)
     if "카테고리" in display_df.columns:
         gb.configure_column("카테고리", headerName="카테고리", width=130)
