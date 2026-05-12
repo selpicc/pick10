@@ -1195,10 +1195,14 @@ if len(filtered) > 0:
             """),
         )
 
-    # 단일 행 선택 — 행 클릭 시 디테일 패널 표시
-    # 체크박스 X (행 클릭과 체크박스 분리가 어려워 단일 모드로)
-    # 일괄 삭제는 표 아래 별도 섹션에서 처리
-    gb.configure_selection(selection_mode="single", use_checkbox=False)
+    # 체크박스 컬럼 (선택용) + 행 클릭은 별도 (디테일용)
+    # selection_mode="multiple" + use_checkbox=True → 1열에 체크박스
+    # suppressRowClickSelection=True → 행 본문 클릭은 선택 X (디테일만)
+    gb.configure_selection(
+        selection_mode="multiple",
+        use_checkbox=True,
+        header_checkbox=True,
+    )
 
     # 헤더 가운데 정렬 CSS
     custom_css = {
@@ -1223,9 +1227,11 @@ if len(filtered) > 0:
         "resizable": True,
         "suppressMovable": True,
     })
-    # 단일 행 선택 명시적 설정
-    grid_options["suppressRowClickSelection"] = False
-    grid_options["rowSelection"] = "single"
+    # ⭐ 핵심: 행 클릭이 체크박스를 토글하지 못하도록 차단
+    # → 체크박스는 체크박스 클릭으로만 토글
+    # → 행 본문 클릭은 cellClicked 이벤트로 별도 캡처 (디테일용)
+    grid_options["suppressRowClickSelection"] = True
+    grid_options["rowSelection"] = "multiple"
 
     # 모든 컬럼에도 동일하게 강제 적용 (per-column override 방지)
     for col in grid_options.get("columnDefs", []):
@@ -1240,7 +1246,9 @@ if len(filtered) > 0:
         height=420,
         width="100%",
         allow_unsafe_jscode=True,
+        # 선택 변경 (체크박스) + 셀 클릭 (디테일용) 둘 다 트리거
         update_mode=GridUpdateMode.SELECTION_CHANGED,
+        update_on=["cellClicked"],   # 행 클릭 이벤트도 캡처
         fit_columns_on_grid_load=False,
         theme="streamlit",
         custom_css=custom_css,
@@ -1248,9 +1256,10 @@ if len(filtered) > 0:
     )
 
     # ─────────────────────────────────────────────────────────
-    # 선택된 행 처리 (체크박스 / 클릭으로 선택됨)
-    # 1건 선택 → 디테일 패널 / 2건+ 선택 → 다중 선택 액션 바
+    # 1) 체크박스로 선택된 행 → 다중 선택 (삭제용)
+    # 2) 행 클릭 → 디테일 패널용 (selection과 별개)
     # ─────────────────────────────────────────────────────────
+    # 체크박스 선택된 브랜드 추출
     selected = response.get("selected_rows") if isinstance(response, dict) else response["selected_rows"]
     selected_brands = []
     if selected is not None:
@@ -1267,8 +1276,47 @@ if len(filtered) > 0:
                 if str(row.get("브랜드명", "")).strip()
             ]
 
-    # 액션 바 제거됨 (체크박스 없이 단일 선택 모드)
-    # 단일 삭제는 디테일 패널에서 처리 / 일괄 삭제는 표 아래 별도 섹션
+    # 행 클릭으로 디테일 보기 (체크박스 X)
+    # cellClicked 이벤트 시 response에 event_data 또는 grid_response에 데이터 들어옴
+    # streamlit-aggrid 버전에 따라 다름 → 여러 패턴 시도
+    clicked_brand = None
+    try:
+        # 패턴 1: response["event_data"]
+        event_data = response.get("event_data") if isinstance(response, dict) else None
+        if event_data and isinstance(event_data, dict):
+            # 체크박스 컬럼 클릭이 아니면 디테일용 (selectionColumn 필드 체크)
+            col_name = event_data.get("colDef", {}).get("field") or event_data.get("column", "")
+            if col_name and col_name not in ("checkboxSelection", ""):
+                clicked_brand = event_data.get("data", {}).get("브랜드명") or event_data.get("브랜드명")
+        # 패턴 2: 마지막 클릭 정보 (session_state 캐시)
+        if not clicked_brand:
+            clicked_brand = st.session_state.get("last_clicked_brand", "")
+        if clicked_brand:
+            st.session_state["last_clicked_brand"] = clicked_brand
+    except Exception:
+        clicked_brand = st.session_state.get("last_clicked_brand", "")
+
+    # 체크박스로 선택된 경우 액션 바 표시 (다중 삭제용)
+    if len(selected_brands) >= 1:
+        action_col_left, action_col_right = st.columns([4, 2])
+        with action_col_left:
+            st.markdown(
+                f"<div style='background: #fff7e6; border: 0.5px solid #fbbf24; "
+                f"border-radius: 8px; padding: 10px 14px; font-size: 14px; color: #92400e;'>"
+                f"<b>{len(selected_brands)}건 체크됨</b> · 삭제하려면 우측 버튼 클릭"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with action_col_right:
+            if st.button(
+                f"🗑️ 체크 {len(selected_brands)}건 삭제",
+                type="primary",
+                use_container_width=True,
+                key="delete_selected_btn",
+            ):
+                st.session_state["pending_delete_brands"] = selected_brands
+                st.session_state["show_delete_confirm"] = True
+                st.rerun()
 
     # 삭제 확인 모달 (session_state 기반)
     if st.session_state.get("show_delete_confirm", False):
@@ -1361,26 +1409,7 @@ if len(filtered) > 0:
             help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
         )
 
-    # 다수 일괄 삭제 (별도 expander로 접어두기 — 자주 안 씀)
-    with st.expander("🗑️ 다수 일괄 삭제 (여러 브랜드 한번에)", expanded=False):
-        st.caption("여러 브랜드를 한번에 삭제하려면 아래에서 선택하세요. 영업 진행 중 브랜드는 자동 보호됩니다.")
-        all_brand_names = sorted(filtered["브랜드명"].dropna().unique().tolist())
-        bulk_selected = st.multiselect(
-            "삭제할 브랜드 선택 (다중 선택 가능)",
-            options=all_brand_names,
-            default=[],
-            placeholder="브랜드명 선택...",
-            key="bulk_delete_select",
-        )
-        if bulk_selected:
-            if st.button(
-                f"🗑️ 선택한 {len(bulk_selected)}건 일괄 삭제",
-                type="primary",
-                key="bulk_delete_btn",
-            ):
-                st.session_state["pending_delete_brands"] = bulk_selected
-                st.session_state["show_delete_confirm"] = True
-                st.rerun()
+    # 일괄 삭제 expander 제거됨 (메인 표 체크박스로 충분)
 
     # 빈 스토어 채우기 클릭 처리 (버튼 정의 직후)
     if fix_clicked_table:
@@ -1400,9 +1429,9 @@ if len(filtered) > 0:
     # 디테일 패널 — 선택된 행이 있을 때만
     # ─────────────────────────────────────────────────────────
     # AgGrid 응답에서 선택된 행 추출 (DataFrame 또는 list 형식 둘 다 지원)
-    # 디테일 패널 — 1건 이상 선택 시 항상 표시 (첫 번째 선택된 브랜드 기준)
-    # 다중 선택해도 첫 번째 브랜드 디테일 표시 (action bar는 별도로 위에 표시됨)
-    sel_brand = selected_brands[0] if selected_brands else ""
+    # 디테일 패널 — 행 클릭으로 본 브랜드 표시 (체크박스와 무관)
+    # 체크박스 선택은 별도 (다중 삭제용)
+    sel_brand = clicked_brand or ""
 
     if sel_brand:
         # 원본에서 전체 정보 가져오기
