@@ -196,13 +196,13 @@ def resolve_real_store_url(link: str) -> str:
 
 def parse_marketing_exposure(text) -> dict:
     """마케팅 채널별 노출 텍스트 → {채널명: 숫자} 딕셔너리.
-    예: '블로그 13,146 · 카페 19,689 · 뉴스 863 · 지식인 3,150'
-        → {'블로그': 13146, '카페': 19689, '뉴스': 863, '지식인': 3150}
+    예: '블로그 13,146 · 카페 19,689 · SNS 3,150'
+        → {'블로그': 13146, '카페': 19689, 'SNS': 3150}
     """
     if not text or pd.isna(text):
         return {}
     result = {}
-    pattern = r"(블로그|카페|뉴스|지식인)\s+([\d,]+)"
+    pattern = r"(블로그|카페|SNS|뉴스|지식인)\s+([\d,]+)"
     for match in re.finditer(pattern, str(text)):
         channel = match.group(1)
         try:
@@ -1300,12 +1300,12 @@ if len(filtered) > 0:
                     sel_full.get("마케팅 채널별 노출 (자동)", "")
                 )
                 if exposure:
-                    st.caption("마케팅 노출 (4채널)")
+                    st.caption("마케팅 노출 (3채널)")
                     max_channel = max(exposure, key=exposure.get)
                     max_value = max(exposure.values()) or 1
 
-                    metric_cols = st.columns(4)
-                    for i, ch in enumerate(["블로그", "카페", "뉴스", "지식인"]):
+                    metric_cols = st.columns(3)
+                    for i, ch in enumerate(["블로그", "카페", "SNS"]):
                         with metric_cols[i]:
                             value = exposure.get(ch, 0)
                             is_top = (ch == max_channel)

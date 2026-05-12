@@ -325,21 +325,30 @@ def resolve_real_store_url(link: str, max_retries: int = 2) -> tuple:
 
 
 def calculate_marketing_grade(search_keyword: str) -> dict:
-    """4채널 검색 노출량 → 상/중/하
+    """3채널 검색 노출량 → 상/중/하 + 규모
     search_keyword: 주력 상품 핵심 키워드 (브랜드명이 아니라 상품명 추출본)
+
+    채널 구성 (뉴스/지식인 제거, SNS(인스타그램) 추가):
+      - 블로그: Naver 블로그 검색 결과 수
+      - 카페: Naver 카페 검색 결과 수 (가장 신뢰성 높음, 유기적 입소문)
+      - SNS: Naver에서 "{키워드} 인스타" / "{키워드} 인스타그램" 멘션
+             (인스타그램 직접 API 없음 → Naver 멘션량을 프록시로 사용)
     """
     blog = search_naver("blog", search_keyword, 1).get("total", 0)
     cafe = search_naver("cafearticle", search_keyword, 1).get("total", 0)
-    news = search_naver("news", search_keyword, 1).get("total", 0)
-    kin = search_naver("kin", search_keyword, 1).get("total", 0)
+    # SNS(인스타그램) 노출 — Naver 블로그+카페에서 "인스타" 멘션 합산
+    sns_blog = search_naver("blog", f"{search_keyword} 인스타", 1).get("total", 0)
+    sns_cafe = search_naver("cafearticle", f"{search_keyword} 인스타", 1).get("total", 0)
+    sns = sns_blog + sns_cafe
 
+    # 점수 계산 — 3채널 가중치 (카페 가장 중요)
     score = (
         math.log10(blog + 1) * 1.5
         + math.log10(cafe + 1) * 2.0
-        + math.log10(news + 1) * 1.0
-        + math.log10(kin + 1) * 1.0
+        + math.log10(sns + 1) * 1.5
     )
 
+    # 마케팅 등급 (3채널이라 임계치 조정)
     if score >= 9:
         grade = "상"
     elif score >= 4:
@@ -347,15 +356,16 @@ def calculate_marketing_grade(search_keyword: str) -> dict:
     else:
         grade = "하"
 
-    # 규모 추정 (카페 노출량 기반)
-    # 카페가 입소문·구매자 의견 노출이라 셀러 규모와 가장 상관관계 높음
-    if cafe >= 500_000:
+    # 규모 추정 — 카페 + SNS 합산 (유기적 사회 신호)
+    # 카페: 일반 소비자 입소문 / SNS: 인스타그램 마케팅 활동
+    social_total = cafe + sns
+    if social_total >= 500_000:
         size = "대기업"
         size_note = "영업 비효율 (자체 마케팅팀 보유 가능성)"
-    elif cafe >= 50_000:
+    elif social_total >= 50_000:
         size = "안정기"
         size_note = "큰 브랜드, 추가 채널 검토 가능"
-    elif cafe >= 1_000:
+    elif social_total >= 1_500:
         size = "성장기"
         size_note = "Sweet spot — 광고 의지 강함"
     else:
@@ -366,8 +376,7 @@ def calculate_marketing_grade(search_keyword: str) -> dict:
         "grade": grade,
         "blog": blog,
         "cafe": cafe,
-        "news": news,
-        "kin": kin,
+        "sns": sns,
         "score": round(score, 2),
         "size": size,
         "size_note": size_note,
@@ -728,15 +737,16 @@ for sel in passed:
     print(f"        주력: {flagship_title[:50]}")
     print(f"        카테고리: {auto_cat}  (자동 분류)")
     print(f"        검색 키워드: '{product_keyword}'")
-    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/뉴{mgrade['news']}/지{mgrade['kin']})")
+    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
     print(f"        규모 추정: {mgrade['size']} ({mgrade['size_note']})")
 
-    # 5-5) 대기업 자동 제외 (카페 50만+)
+    # 5-5) 대기업 자동 제외 (카페 + SNS 합산 50만+)
     if mgrade["size"] == "대기업":
-        print(f"        🚫 대기업 자동 제외 → 다음 후보로")
+        social_total = mgrade["cafe"] + mgrade["sns"]
+        print(f"        🚫 대기업 자동 제외 (카페+SNS {social_total:,}건) → 다음 후보로")
         big_company_skipped.append({
             "브랜드명": brand_name,
-            "카페 노출": mgrade["cafe"],
+            "사회 노출 합계": social_total,
             "Selpic 점수": sel["_score"],
         })
         time.sleep(0.3)
@@ -761,8 +771,7 @@ for sel in passed:
         "마케팅 채널별 노출 (자동)": (
             f"블로그 {mgrade['blog']:,} · "
             f"카페 {mgrade['cafe']:,} · "
-            f"뉴스 {mgrade['news']:,} · "
-            f"지식인 {mgrade['kin']:,}"
+            f"SNS {mgrade['sns']:,}"
         ),
         "규모 추정 (자동)":     f"{mgrade['size']} ({mgrade['size_note']})",
         # 수기 입력 컬럼
@@ -782,7 +791,7 @@ print(f"   ✅ 최종 선별: {len(results)}건")
 if big_company_skipped:
     print(f"   🚫 대기업 자동 제외: {len(big_company_skipped)}건")
     for bc in big_company_skipped:
-        print(f"      - {bc['브랜드명']} (카페 {bc['카페 노출']:,}건, 점수 {bc['Selpic 점수']})")
+        print(f"      - {bc['브랜드명']} (카페+SNS {bc['사회 노출 합계']:,}건, 점수 {bc['Selpic 점수']})")
 if len(results) < TARGET_COUNT:
     print(f"   ⚠️ 목표 {TARGET_COUNT}건 미달. 카테고리 추가 또는 임계치 조정 검토")
 print()
