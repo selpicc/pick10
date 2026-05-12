@@ -1195,9 +1195,9 @@ if len(filtered) > 0:
             """),
         )
 
-    # 체크박스 컬럼 (선택용) + 행 클릭은 별도 (디테일용)
-    # selection_mode="multiple" + use_checkbox=True → 1열에 체크박스
-    # suppressRowClickSelection=True → 행 본문 클릭은 선택 X (디테일만)
+    # 다중 선택 + 체크박스 (1열에 표시)
+    # 행 클릭 = 그 행만 선택 (다른 선택 해제) → 디테일 열림
+    # 체크박스 클릭 = 다중 선택 (삭제용)
     gb.configure_selection(
         selection_mode="multiple",
         use_checkbox=True,
@@ -1227,7 +1227,7 @@ if len(filtered) > 0:
         "resizable": True,
         "suppressMovable": True,
     })
-    # 행 클릭 = 선택 (단일 모드처럼 작동), 체크박스 = 다중 선택
+    # 다중 선택 모드 — 행 클릭은 선택을 1개로 replace, 체크박스로 multi
     grid_options["suppressRowClickSelection"] = False
     grid_options["rowSelection"] = "multiple"
 
@@ -1274,7 +1274,8 @@ if len(filtered) > 0:
 
     # 디테일 패널용 — 첫 번째 선택된 브랜드 (체크박스든 행 클릭이든 동일)
 
-    # 액션 바 — 2건 이상 선택 시에만 표시 (1건은 디테일만 보이게 깔끔)
+    # 액션 바 — 2건 이상 체크박스로 선택 시에만 표시
+    # 행 1개 클릭 시는 디테일만 (액션 바 X) → 깔끔한 검토 UX
     if len(selected_brands) >= 2:
         action_col_left, action_col_right = st.columns([4, 2])
         with action_col_left:
@@ -1387,7 +1388,7 @@ if len(filtered) > 0:
             help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
         )
 
-    # 일괄 삭제 expander 제거됨 (메인 표 체크박스로 충분)
+    # 일괄 삭제 expander 제거 — 메인 표 체크박스로 충분
 
     # 빈 스토어 채우기 클릭 처리 (버튼 정의 직후)
     if fix_clicked_table:
