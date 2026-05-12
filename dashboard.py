@@ -826,24 +826,18 @@ else:
         (score_min, score_max),
     )
 
-# 마케팅 등급
+# 마케팅 등급은 비노출 (마케팅 활동 단계로 통합됨)
 selected_grades = None
-if "마케팅 등급 (자동)" in df.columns:
-    grade_order = ["상", "중", "하"]
-    all_grades = [g for g in grade_order if g in df["마케팅 등급 (자동)"].dropna().unique()]
-    if not all_grades:
-        all_grades = sorted(df["마케팅 등급 (자동)"].dropna().unique())
-    selected_grades = st.sidebar.multiselect(
-        "마케팅 등급",
-        all_grades,
-        default=all_grades,
-    )
 
-# 마케팅 활동 단계
+# 마케팅 활동 단계 (도입기/성장기/확장기)
 selected_sizes = None
 size_col = "마케팅 활동 단계 (자동)"
 if size_col in df.columns:
-    all_sizes = sorted(df[size_col].dropna().unique())
+    # 저장된 텍스트에서 단계명만 추출 (예: "확장기 — 카페..." → "확장기")
+    df["_단계명"] = df[size_col].fillna("").astype(str).str.split(" ").str[0]
+    stage_order = ["도입기", "성장기", "확장기"]
+    available_stages = [s for s in stage_order if s in df["_단계명"].unique()]
+    all_sizes = available_stages if available_stages else sorted(df["_단계명"].dropna().unique())
     selected_sizes = st.sidebar.multiselect(
         "마케팅 활동 단계",
         all_sizes,
@@ -887,10 +881,10 @@ filtered = df[
     (df["Selpic 점수"] >= score_range[0])
     & (df["Selpic 점수"] <= score_range[1])
 ]
-if selected_grades is not None:
-    filtered = filtered[filtered["마케팅 등급 (자동)"].isin(selected_grades)]
-if selected_sizes is not None:
-    filtered = filtered[filtered[size_col].isin(selected_sizes)]
+# 마케팅 등급은 비노출 (필터 미적용)
+if selected_sizes is not None and "_단계명" in filtered.columns:
+    # 저장된 텍스트의 단계명만 비교 (예: "확장기 — 카페..." → "확장기")
+    filtered = filtered[filtered["_단계명"].isin(selected_sizes)]
 if selected_cats is not None:
     filtered = filtered[filtered["발견 카테고리"].isin(selected_cats)]
 if selected_statuses is not None and "영업 상태 (수기)" in filtered.columns:
@@ -970,10 +964,10 @@ with ft_col3:
     )
 
 with ft_col4:
-    grade_options = ["상", "중", "하"]
+    stage_options = ["도입기", "성장기", "확장기"]
     sel_grades_tbl = st.multiselect(
         "마케팅 활동",
-        options=grade_options,
+        options=stage_options,
         default=[],
         placeholder="전체",
         key="tbl_filter_grade",
@@ -987,8 +981,9 @@ if sel_statuses_tbl:
     filtered = filtered[
         filtered["영업 상태 (수기)"].fillna("").astype(str).isin(sel_statuses_tbl)
     ]
-if sel_grades_tbl:
-    filtered = filtered[filtered["마케팅 등급 (자동)"].isin(sel_grades_tbl)]
+if sel_grades_tbl and "_단계명" in filtered.columns:
+    # 단계명 추출하여 비교 (저장값: "확장기 — 카페...")
+    filtered = filtered[filtered["_단계명"].isin(sel_grades_tbl)]
 if sel_brand_search_tbl.strip():
     keyword = sel_brand_search_tbl.strip().lower()
     filtered = filtered[
@@ -1056,7 +1051,7 @@ if len(filtered) > 0:
         "영업 상태 (수기)",
         "전화 (수기)",         # 영업 상태 다음 — 통화 우선 워크플로우
         "이메일 (수기)",
-        "마케팅 등급 (자동)",
+        "마케팅 활동 단계 (자동)",   # 도입기/성장기/확장기 — 등급 대체
     ]
     safe_main_cols = [c for c in main_cols if c in filtered.columns]
 
@@ -1072,20 +1067,29 @@ if len(filtered) > 0:
     else:
         main_df = main_df.reset_index(drop=True)
 
-    # 등급 표시값 — 컬러 도트 + 텍스트 (Linear/Notion 스타일 미니멀)
-    # 셀 자체는 흰색 유지, 도트만 색상 → 가장 깔끔한 간소화
-    GRADE_DISPLAY = {
-        "상": "🟢  상",
-        "중": "🟡  중",
-        "하": "⚪  하",
+    # 마케팅 활동 단계 표시값 — 컬러 도트 + 단계명 (Linear/Notion 스타일)
+    # 도입기 = ⚪ 회색 / 성장기 = 🟢 초록 / 확장기 = 🟡 노랑
+    STAGE_DISPLAY = {
+        "도입기": "⚪  도입기",
+        "성장기": "🟢  성장기",
+        "확장기": "🟡  확장기",
     }
 
+    def stage_to_display(text: str) -> str:
+        """저장된 '확장기 — 카페 중심...' 텍스트에서 단계만 추출 + 도트 적용"""
+        if not text:
+            return ""
+        # 첫 단어가 단계명
+        first_word = str(text).split(" ")[0].strip()
+        return STAGE_DISPLAY.get(first_word, first_word)
+
     display_df = main_df[safe_main_cols].copy()
-    if "마케팅 등급 (자동)" in display_df.columns:
-        display_df["마케팅 등급 (자동)"] = (
-            display_df["마케팅 등급 (자동)"]
-            .map(GRADE_DISPLAY)
+    if "마케팅 활동 단계 (자동)" in display_df.columns:
+        display_df["마케팅 활동 단계 (자동)"] = (
+            display_df["마케팅 활동 단계 (자동)"]
             .fillna("")
+            .astype(str)
+            .apply(stage_to_display)
         )
 
     # 순번 열 추가 (역순) — 최근 수집이 큰 숫자
@@ -1129,8 +1133,8 @@ if len(filtered) > 0:
         gb.configure_column("이메일 (수기)", headerName="이메일", width=200)
     if "전화 (수기)" in display_df.columns:
         gb.configure_column("전화 (수기)", headerName="연락처", width=140)
-    if "마케팅 등급 (자동)" in display_df.columns:
-        gb.configure_column("마케팅 등급 (자동)", headerName="마케팅 활동", width=120)
+    if "마케팅 활동 단계 (자동)" in display_df.columns:
+        gb.configure_column("마케팅 활동 단계 (자동)", headerName="마케팅 활동", width=130)
 
     # 스토어 링크 컬럼 — "열기" 텍스트 + 클릭 시 새 탭으로 이동
     # ⚠️ AG Grid는 React 래핑이라 DOM 엘리먼트 직접 반환 불가
@@ -1276,7 +1280,6 @@ if len(filtered) > 0:
                     f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
                     f"<b style='color: #374151;'>분석:</b> "
                     f"{sel_full.get('발견 카테고리', '')} · "
-                    f"마케팅 {sel_full.get('마케팅 등급 (자동)', '-')} · "
                     f"{sel_full.get(size_col, '-')}"
                     f"</div>",
                     unsafe_allow_html=True,
