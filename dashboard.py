@@ -535,28 +535,13 @@ def load_all_data() -> pd.DataFrame:
                 df["Selpic 점수"], errors="coerce"
             ).fillna(0).astype(int)
 
-        # 카테고리 분류 — 모드별 다른 로직
-        # ┌─ keyword/category 모드: 발견 카테고리 우선 (검색 의도)
-        # │   예: "임산부 튼살크림" 검색 → 카테고리 = "임산부 뷰티"
-        # │       (주력이 이유식이어도 검색 맥락 표시)
-        # └─ auto 모드: 주력상품 기반 자동 분류
-        #     예: 자동 수집 브랜드 → 주력상품으로 분류
-        # 디테일 패널의 "주력상품"은 별도로 진짜 베스트셀러 표시
-        valid_categories = set(CATEGORY_SEARCH_KEYWORDS.keys())   # 10개 표준
-
-        def resolve_category(row):
-            mode = str(row.get("수집 모드", "auto") or "auto").strip()
-            discovered = str(row.get("발견 카테고리", "") or "").strip()
-            flagship = str(row.get("주력상품명", "") or "").strip()
-
-            # keyword/category 모드 + 발견 카테고리가 표준 10개 중 하나면 그대로 사용
-            if mode in ("keywords", "category") and discovered in valid_categories:
-                return discovered
-
-            # auto 모드 또는 legacy 데이터: 주력상품 기반 분류
-            return classify_category(flagship) if flagship else "기타"
-
-        df["카테고리"] = df.apply(resolve_category, axis=1)
+        # 카테고리 분류 — 모든 모드 통일: 주력상품 기반 자동 분류
+        # 이유: 브랜드별 진짜 시장을 표시 (그 브랜드가 실제 뭘 파는지)
+        # 검색 의도와 다를 수 있지만, 영업 시 그 브랜드의 진짜 라인 이해에 도움
+        if "주력상품명" in df.columns:
+            df["카테고리"] = df["주력상품명"].fillna("").astype(str).apply(classify_category)
+        else:
+            df["카테고리"] = "기타"
 
         return df
     except Exception as e:
