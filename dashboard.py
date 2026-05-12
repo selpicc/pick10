@@ -829,20 +829,17 @@ else:
 # 마케팅 등급은 비노출 (마케팅 활동 단계로 통합됨)
 selected_grades = None
 
-# 마케팅 활동 단계 (도입기/성장기/확장기 + legacy 안정기/초기 호환)
+# 마케팅 활동 단계 (도입기/성장기/확장기) — legacy 자동 정규화
 selected_sizes = None
 size_col = "마케팅 활동 단계 (자동)"
 if size_col in df.columns:
     # 저장된 텍스트에서 단계명만 추출 (예: "확장기 — 카페..." → "확장기")
     df["_단계명"] = df[size_col].fillna("").astype(str).str.split(" ").str[0]
-    # 신규 + legacy 모두 포함 (어떤 단계명이 데이터에 있든 표시)
-    all_stages_data = sorted([s for s in df["_단계명"].unique() if s])
-    # 표시 순서: 신규 단계 우선, 그 다음 legacy
-    preferred = ["도입기", "성장기", "확장기", "초기", "안정기", "대기업"]
-    all_sizes = (
-        [s for s in preferred if s in all_stages_data]
-        + [s for s in all_stages_data if s not in preferred]
-    )
+    # Legacy → 신규 매핑 (옛 데이터 "초기/안정기"를 새 단계로 정규화)
+    LEGACY_STAGE_MAP = {"초기": "도입기", "안정기": "확장기"}
+    df["_단계명"] = df["_단계명"].replace(LEGACY_STAGE_MAP)
+    # 사이드바 표시는 항상 3단계 (legacy는 위에서 이미 매핑됨)
+    all_sizes = ["도입기", "성장기", "확장기"]
     selected_sizes = st.sidebar.multiselect(
         "마케팅 활동 단계",
         all_sizes,
@@ -969,8 +966,8 @@ with ft_col3:
     )
 
 with ft_col4:
-    # 신규 + legacy 단계 (옛 데이터 호환)
-    stage_options = ["도입기", "성장기", "확장기", "초기", "안정기"]
+    # 표시는 3단계만 — legacy 데이터는 내부 매핑으로 처리
+    stage_options = ["도입기", "성장기", "확장기"]
     sel_grades_tbl = st.multiselect(
         "마케팅 활동",
         options=stage_options,
