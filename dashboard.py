@@ -1195,14 +1195,10 @@ if len(filtered) > 0:
             """),
         )
 
-    # 다중 선택 + 체크박스 (맨 앞 컬럼)
-    # 행 클릭 → 단일 선택 (디테일 패널 표시)
-    # 체크박스 클릭 → 다중 선택 (삭제 등 일괄 작업)
-    gb.configure_selection(
-        selection_mode="multiple",
-        use_checkbox=True,
-        header_checkbox=True,   # 헤더 체크박스 → 전체 선택
-    )
+    # 단일 행 선택 — 행 클릭 시 디테일 패널 표시
+    # 체크박스 X (행 클릭과 체크박스 분리가 어려워 단일 모드로)
+    # 일괄 삭제는 표 아래 별도 섹션에서 처리
+    gb.configure_selection(selection_mode="single", use_checkbox=False)
 
     # 헤더 가운데 정렬 CSS
     custom_css = {
@@ -1227,9 +1223,9 @@ if len(filtered) > 0:
         "resizable": True,
         "suppressMovable": True,
     })
-    # 행 클릭 선택 명시적 활성화 (체크박스 외에도 행 클릭으로 선택 가능)
+    # 단일 행 선택 명시적 설정
     grid_options["suppressRowClickSelection"] = False
-    grid_options["rowSelection"] = "multiple"
+    grid_options["rowSelection"] = "single"
 
     # 모든 컬럼에도 동일하게 강제 적용 (per-column override 방지)
     for col in grid_options.get("columnDefs", []):
@@ -1271,27 +1267,8 @@ if len(filtered) > 0:
                 if str(row.get("브랜드명", "")).strip()
             ]
 
-    # 다중 선택 시 액션 바 (1건도 표시 — 디테일 + 삭제 둘 다 가능)
-    if len(selected_brands) >= 1:
-        action_col_left, action_col_right = st.columns([4, 2])
-        with action_col_left:
-            st.markdown(
-                f"<div style='background: #fff7e6; border: 0.5px solid #fbbf24; "
-                f"border-radius: 8px; padding: 10px 14px; font-size: 14px; color: #92400e;'>"
-                f"<b>{len(selected_brands)}건 선택됨</b> · 삭제하려면 우측 버튼 클릭"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        with action_col_right:
-            if st.button(
-                f"🗑️ 선택 {len(selected_brands)}건 삭제",
-                type="primary",
-                use_container_width=True,
-                key="delete_selected_btn",
-            ):
-                st.session_state["pending_delete_brands"] = selected_brands
-                st.session_state["show_delete_confirm"] = True
-                st.rerun()
+    # 액션 바 제거됨 (체크박스 없이 단일 선택 모드)
+    # 단일 삭제는 디테일 패널에서 처리 / 일괄 삭제는 표 아래 별도 섹션
 
     # 삭제 확인 모달 (session_state 기반)
     if st.session_state.get("show_delete_confirm", False):
@@ -1384,6 +1361,27 @@ if len(filtered) > 0:
             help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
         )
 
+    # 다수 일괄 삭제 (별도 expander로 접어두기 — 자주 안 씀)
+    with st.expander("🗑️ 다수 일괄 삭제 (여러 브랜드 한번에)", expanded=False):
+        st.caption("여러 브랜드를 한번에 삭제하려면 아래에서 선택하세요. 영업 진행 중 브랜드는 자동 보호됩니다.")
+        all_brand_names = sorted(filtered["브랜드명"].dropna().unique().tolist())
+        bulk_selected = st.multiselect(
+            "삭제할 브랜드 선택 (다중 선택 가능)",
+            options=all_brand_names,
+            default=[],
+            placeholder="브랜드명 선택...",
+            key="bulk_delete_select",
+        )
+        if bulk_selected:
+            if st.button(
+                f"🗑️ 선택한 {len(bulk_selected)}건 일괄 삭제",
+                type="primary",
+                key="bulk_delete_btn",
+            ):
+                st.session_state["pending_delete_brands"] = bulk_selected
+                st.session_state["show_delete_confirm"] = True
+                st.rerun()
+
     # 빈 스토어 채우기 클릭 처리 (버튼 정의 직후)
     if fix_clicked_table:
         with st.spinner("빈 스토어 주소 갱신 중..."):
@@ -1419,17 +1417,28 @@ if len(filtered) > 0:
             )
 
             with st.container(border=True):
-                # 헤더 (브랜드명 + 분석 정보 — 좌측 단독)
-                # 우측 "스토어 열기" 버튼은 비노출 (메인 표 스토어 열기로 충분)
-                st.markdown(
-                    f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
-                    f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
-                    f"<b style='color: #374151;'>분석:</b> "
-                    f"{sel_full.get('발견 카테고리', '')} · "
-                    f"{sel_full.get(size_col, '-')}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+                # 헤더 (브랜드명 + 분석 정보 + 우측 삭제 버튼)
+                header_left, header_right = st.columns([5, 1])
+                with header_left:
+                    st.markdown(
+                        f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
+                        f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
+                        f"<b style='color: #374151;'>분석:</b> "
+                        f"{sel_full.get('발견 카테고리', '')} · "
+                        f"{sel_full.get(size_col, '-')}"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with header_right:
+                    st.markdown("<div style='padding-top: 8px;'></div>", unsafe_allow_html=True)
+                    if st.button(
+                        "🗑️ 이 셀러 삭제",
+                        key=f"delete_single_{sel_brand}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["pending_delete_brands"] = [sel_brand]
+                        st.session_state["show_delete_confirm"] = True
+                        st.rerun()
 
                 st.markdown("---")
 
