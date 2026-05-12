@@ -815,13 +815,14 @@ for sel in passed:
         and "smartstore.naver.com" in it.get("link", "")
     ]
 
-    # 5-1.3) 종합몰 자동 제외 (예: 테필라 같은 multi-category 셀러)
-    # 영유아 비율 < 50% OR 카테고리 5종 이상 → 종합몰로 판단
+    # 5-1.3) 종합몰 자동 제외 — 자동 모드만 적용
+    # 키워드/카테고리 모드는 건너뜀 (화장품 회사가 튼살크림 파는 케이스 차단 X)
+    # 사용자가 명시적으로 키워드/카테고리 발굴한 경우 = 종합몰이라도 OK
     own_brand_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
     ]
-    if len(own_brand_items) >= 5:   # 표본 5개 이상일 때만 신뢰성 있는 판별
+    if COLLECT_MODE == "auto" and len(own_brand_items) >= 5:
         cat1_counts = {}
         for it in own_brand_items:
             cat1 = it.get("category1", "").strip()
@@ -830,17 +831,17 @@ for sel in passed:
 
         if cat1_counts:
             total_items = sum(cat1_counts.values())
-            BABY_CATS = {"출산/육아"}   # Naver Shopping 영유아 대분류
+            BABY_CATS = {"출산/육아"}
             baby_count = sum(cnt for cat, cnt in cat1_counts.items() if cat in BABY_CATS)
             baby_ratio = baby_count / total_items
             diversity = len(cat1_counts)
 
-            # 종합몰 판별: 영유아 50% 미만 OR 카테고리 5종 이상
-            if baby_ratio < 0.5 or diversity >= 5:
+            # 자동 모드 → 종합몰 차단 (영유아 50% 미만 OR 카테고리 8종 이상으로 완화)
+            if baby_ratio < 0.5 or diversity >= 8:
                 print(f"        🚫 종합몰 자동 제외 "
                       f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
                 time.sleep(0.3)
-                continue   # 5건에 안 포함
+                continue
     flagship = own_items[0] if own_items else sel
     flagship_title = clean_html_tags(flagship.get("title", ""))
     flagship_url = flagship.get("link", "")
