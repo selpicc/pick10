@@ -360,6 +360,257 @@ def _is_keyword_match(title: str, search_kw_pool: set, user_kw_tokens: list) -> 
     return False, ""
 
 
+# ─────────────────────────────────────────────────────────────────
+# 한 후보 처리 — 디테일 수집 + 모든 필터 (5-1 ~ 5-6 통합)
+# 메인 [5/6] + 확장 라운드 양쪽에서 재사용
+# ─────────────────────────────────────────────────────────────────
+def _process_one_candidate(
+    sel,
+    processed_brands,
+    results,
+    big_company_skipped,
+    search_kw_pool_strict,
+    user_kw_tokens,
+    auto_mode_contexts,
+    is_expansion=False,
+):
+    """한 후보의 디테일 수집 + 모든 필터 통과 시 results.append.
+
+    반환: True if added, False otherwise.
+    """
+    import urllib.parse as _urlparse
+    brand_name = sel.get("mallName", "").strip()
+    if not brand_name or brand_name in processed_brands:
+        return False
+    processed_brands.add(brand_name)
+
+    mark = " [확장]" if is_expansion else ""
+    print(f"\n   ▶ {brand_name}{mark}  (Selpic 점수 {sel['_score']})")
+    print(f"        근거: {' · '.join(sel['_breakdown'])}")
+
+    # 5-1) 브랜드 재검색
+    brand_items = search_shop(brand_name, display=20)
+    own_items = [
+        it for it in brand_items
+        if it.get("mallName", "").strip() == brand_name
+        and "smartstore.naver.com" in it.get("link", "")
+    ]
+
+    # 5-1.3) 종합몰/무관 셀러 자동 제외
+    own_brand_items = [
+        it for it in brand_items
+        if it.get("mallName", "").strip() == brand_name
+    ]
+    if len(own_brand_items) >= 5:
+        if COLLECT_MODE == "auto":
+            cat_preset = sel.get("_category_preset", "")
+            pool, tokens = auto_mode_contexts.get(cat_preset, (set(), []))
+        else:
+            pool, tokens = search_kw_pool_strict, user_kw_tokens
+        match_count = 0
+        for it in own_brand_items:
+            title = clean_html_tags(it.get("title", ""))
+            matched, _ = _is_keyword_match(title, pool, tokens)
+            if matched:
+                match_count += 1
+        target_ratio = match_count / len(own_brand_items)
+        if target_ratio < 0.3:
+            print(f"        🚫 종합몰/무관 셀러 자동 제외 "
+                  f"(사용자 키워드 관련 {target_ratio:.0%}, "
+                  f"{match_count}/{len(own_brand_items)}개) → 다음 후보로")
+            time.sleep(0.3)
+            return False
+
+    flagship = own_items[0] if own_items else sel
+    flagship_title = clean_html_tags(flagship.get("title", ""))
+    flagship_url = flagship.get("link", "")
+    flagship_category = " > ".join(
+        filter(None, [flagship.get(f"category{i}", "") for i in range(1, 5)])
+    )
+
+    # 5-1.5) 주력상품 B+C 재검사
+    flagship_check, flagship_reason = market_fit_check(brand_name, flagship_title)
+    if flagship_check == "a":
+        pass   # 모든 모드 A 건너뜀
+    elif flagship_check != "ok":
+        print(f"        🚫 주력상품 재검사 탈락: {flagship_reason} → 다음 후보로")
+        time.sleep(0.3)
+        return False
+
+    # 5-1.6) 메인 라인 매칭 (키워드 모드만)
+    if COLLECT_MODE == "keywords":
+        has_matching_product = False
+        matched_product = ""
+        matched_keyword = ""
+        for item in brand_items[:10]:
+            title = clean_html_tags(item.get("title", ""))
+            matched, kw = _is_keyword_match(title, search_kw_pool_strict, user_kw_tokens)
+            if matched:
+                has_matching_product = True
+                matched_product = item.get("title", "")[:40]
+                matched_keyword = kw
+                break
+        if not has_matching_product:
+            print(f"        🚫 메인 라인(top 10)에 사용자 키워드 매칭 X → 다음 후보로")
+            time.sleep(0.3)
+            return False
+        else:
+            print(f"        ✓ 메인 라인 매칭: '{matched_keyword}' in {matched_product}")
+
+    flagship_price = int(flagship.get("lprice", 0))
+
+    # 5-2) 진짜 스토어 URL
+    store_url, store_debug = resolve_real_store_url(flagship_url)
+    if store_url:
+        print(f"        스토어 URL: {store_url} (셀러 메인)")
+    elif flagship_url and "smartstore.naver.com" in flagship_url:
+        store_url = flagship_url
+        print(f"        스토어 URL: 상품 페이지 fallback")
+    elif flagship_url and "brand.naver.com" in flagship_url:
+        store_url = flagship_url
+        print(f"        스토어 URL: brand.naver.com 상품 페이지 fallback")
+    else:
+        store_url = (
+            f"https://search.shopping.naver.com/search/all?"
+            f"query={_urlparse.quote(brand_name)}"
+        )
+        print(f"        스토어 URL: 검색 페이지 최후 fallback ({store_debug})")
+
+    # 5-3) 상품 키워드
+    product_keyword = extract_product_keyword(flagship_title)
+
+    # 5-3.5) 관심고객수
+    follower_count = fetch_follower_count(store_url)
+    if follower_count > 0:
+        print(f"        관심고객수: {follower_count:,}명")
+    else:
+        print(f"        관심고객수: 자동 수집 실패")
+
+    # 5-4) 마케팅 등급
+    auto_cat = classify_category(flagship_title)
+    mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat, follower_count)
+    print(f"        주력: {flagship_title[:50]}")
+    print(f"        카테고리: {auto_cat}")
+    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
+    print(f"        마케팅 활동 단계: {mgrade['size']} — {mgrade['size_note']}")
+
+    # 5-5) 대기업 컷
+    if mgrade["size"] == "대기업":
+        print(f"        🚫 대기업 자동 제외 (관심고객 {follower_count:,}명) → 다음 후보로")
+        big_company_skipped.append({
+            "브랜드명": brand_name,
+            "관심고객수": follower_count,
+            "Selpic 점수": sel["_score"],
+        })
+        time.sleep(0.3)
+        return False
+
+    # 5-6) 결과 추가
+    results.append({
+        "수집일":               datetime.now().strftime("%Y-%m-%d"),
+        "Selpic 점수":          sel["_score"],
+        "발견 카테고리":        sel["_category_preset"],
+        "발견 키워드":          sel["_keyword"],
+        "수집 모드":            COLLECT_MODE,
+        "브랜드명":             brand_name,
+        "스마트스토어 주소":    store_url,
+        "주력상품명":           flagship_title,
+        "상품 카테고리":        flagship_category,
+        "가격":                 f"{flagship_price:,}원" if flagship_price else "",
+        "점수 근거":            " · ".join(sel["_breakdown"]),
+        "마케팅 검색 키워드 (자동)": mgrade.get("query", product_keyword),
+        "마케팅 등급 (자동)":   mgrade["grade"],
+        "마케팅 점수 (자동)":   mgrade["score"],
+        "마케팅 채널별 노출 (자동)": (
+            f"블로그 {mgrade['blog']:,} · "
+            f"카페 {mgrade['cafe']:,} · "
+            f"SNS {mgrade['sns']:,}"
+        ),
+        "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
+        "관심고객수 (자동)":    follower_count,
+        "관심고객수 (수기)":         "",
+        "리뷰수 (수기)":             "",
+        "상호 (수기)":               "",
+        "대표 (수기)":               "",
+        "이메일 (수기)":             "",
+        "전화 (수기)":               "",
+        "마케팅 분석 메모 (수기)":   "",
+    })
+    time.sleep(0.3)
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────
+# 확장 라운드 검색 — 부족 시 자동 확장
+# ─────────────────────────────────────────────────────────────────
+def _perform_expansion_search(
+    expansion_round,
+    expanded_keywords,
+    processed_brands,
+    already_collected,
+):
+    """확장 라운드별 다른 검색 전략으로 추가 후보 발굴.
+
+    라운드 1: asc + dsc sort, 페이지 1~150 (가격 정렬로 다른 셀러)
+    라운드 2: sort 4종, 페이지 151~300 (깊은 페이지로 더 다양)
+
+    반환: 점수순으로 정렬된 추가 passed 리스트
+    """
+    if expansion_round == 1:
+        sorts = ["asc", "dsc"]
+        offsets = [1, 51, 101]
+    else:
+        sorts = ["sim", "date", "asc", "dsc"]
+        offsets = [151, 201, 251]
+
+    new_candidates = []
+    seen_in_round = set()
+
+    for keyword in expanded_keywords:
+        for sort_method in sorts:
+            for start_offset in offsets:
+                items = search_shop(keyword, display=50, start=start_offset, sort=sort_method)
+                if not items:
+                    break
+                ss_items = [
+                    it for it in items
+                    if "smartstore.naver.com" in it.get("link", "")
+                ]
+                for rank, item in enumerate(ss_items, start_offset + expansion_round * 10000):
+                    brand = item.get("mallName", "").strip()
+                    if (not brand or brand in processed_brands
+                            or brand in already_collected
+                            or brand in seen_in_round):
+                        continue
+                    seen_in_round.add(brand)
+
+                    if COLLECT_MODE == "keywords":
+                        kw_cat = classify_category(keyword)
+                        item["_category_preset"] = kw_cat if kw_cat != "기타" else keyword
+                    elif COLLECT_MODE == "category":
+                        item["_category_preset"] = TARGET_CATEGORY
+                    else:
+                        item["_category_preset"] = ""
+                    item["_keyword"] = f"{keyword} (확장{expansion_round})"
+                    item["_rank"] = rank
+
+                    # B+C 필터 (A 모든 모드 건너뜀)
+                    title_text = clean_html_tags(item.get("title", ""))
+                    fit_result, _ = market_fit_check(brand, title_text)
+                    if fit_result not in ("a", "ok"):
+                        continue
+
+                    # 점수 산정
+                    score, breakdown = calculate_fit_score(item, item["_category_preset"])
+                    item["_score"] = score
+                    item["_breakdown"] = breakdown
+                    new_candidates.append(item)
+                time.sleep(0.05)
+
+    new_candidates.sort(key=lambda x: x["_score"], reverse=True)
+    return new_candidates
+
+
 def load_collected_brands() -> set:
     """Supabase sellers 테이블에서 이미 수집된 브랜드명 모음.
     누적 DB 역할 — 이미 영업 시도된 셀러는 다음 실행에서 자동 제외.
@@ -1112,197 +1363,36 @@ processed_brands = set()   # 같은 브랜드 중복 처리 방지
 
 for sel in passed:
     if len(results) >= TARGET_COUNT:
-        break   # 5건 다 채움
-
-    brand_name = sel.get("mallName", "").strip()
-    if not brand_name or brand_name in processed_brands:
-        continue
-    processed_brands.add(brand_name)
-
-    print(f"\n   ▶ {brand_name}  (Selpic 점수 {sel['_score']})")
-    print(f"        근거: {' · '.join(sel['_breakdown'])}")
-
-    # 5-1) 브랜드명 재검색 → 주력 상품 식별 (display 20개로 늘려 종합몰 판별에도 활용)
-    brand_items = search_shop(brand_name, display=20)
-    own_items = [
-        it for it in brand_items
-        if it.get("mallName", "").strip() == brand_name
-        and "smartstore.naver.com" in it.get("link", "")
-    ]
-
-    # 5-1.3) 종합몰/무관 셀러 자동 제외 — 통일 정책
-    # ⭐ 2026-05-13 정책 통일: 모든 모드 "사용자 키워드 관련 상품 30%+" 기준
-    #   - 자동: 후보 _category_preset의 카테고리 키워드 사용 (auto_mode_contexts)
-    #   - 카테고리: TARGET_CATEGORY 키워드 (search_kw_pool_strict)
-    #   - 키워드: USER_KEYWORDS (search_kw_pool_strict)
-    own_brand_items = [
-        it for it in brand_items
-        if it.get("mallName", "").strip() == brand_name
-    ]
-    if len(own_brand_items) >= 5:
-        # 매칭 컨텍스트 결정 (모드별)
-        if COLLECT_MODE == "auto":
-            # 자동 모드: 후보가 발견된 카테고리의 컨텍스트 사용
-            cat_preset = sel.get("_category_preset", "")
-            pool, tokens = auto_mode_contexts.get(cat_preset, (set(), []))
-        else:
-            pool, tokens = search_kw_pool_strict, user_kw_tokens
-
-        is_general_mall = False
-        match_count = 0
-        for it in own_brand_items:
-            title = clean_html_tags(it.get("title", ""))
-            matched, _ = _is_keyword_match(title, pool, tokens)
-            if matched:
-                match_count += 1
-        target_ratio = match_count / len(own_brand_items)
-
-        if target_ratio < 0.3:
-            is_general_mall = True
-            print(f"        🚫 종합몰/무관 셀러 자동 제외 "
-                  f"(사용자 키워드 관련 상품 {target_ratio:.0%}, "
-                  f"{match_count}/{len(own_brand_items)}개) → 다음 후보로")
-
-        if is_general_mall:
-            time.sleep(0.3)
-            continue
-    flagship = own_items[0] if own_items else sel
-    flagship_title = clean_html_tags(flagship.get("title", ""))
-    flagship_url = flagship.get("link", "")
-    flagship_category = " > ".join(
-        filter(None, [flagship.get(f"category{i}", "") for i in range(1, 5)])
+        break
+    _process_one_candidate(
+        sel, processed_brands, results, big_company_skipped,
+        search_kw_pool_strict, user_kw_tokens, auto_mode_contexts,
     )
 
-    # 5-1.5) 주력상품 발견 후 B+C 재검사 (대기업/부정 키워드 누락 방지)
-    # 자동 모드: A+B+C 모두 적용
-    # 키워드/카테고리 모드: B+C만 적용 (A 건너뜀 — 사용자 의도 명확)
-    flagship_check, flagship_reason = market_fit_check(brand_name, flagship_title)
-    # 키워드/카테고리 모드에서 A 탈락은 무시
-    if flagship_check == "a" and COLLECT_MODE in ("keywords", "category"):
-        pass   # 통과 처리
-    elif flagship_check != "ok":
-        print(f"        🚫 주력상품 재검사 탈락: {flagship_reason} → 다음 후보로")
-        time.sleep(0.3)
-        continue   # 5건에 안 포함
+# ─── 부족 시 자동 확장 검색 (사용자 요청: 미달 시 검색범위 자동 확대) ───
+# 키워드/카테고리 모드만 적용 (자동 모드는 검색 범위 이미 광범위)
+expansion_round = 0
+MAX_EXPANSION_ROUNDS = 2
+while len(results) < TARGET_COUNT and expansion_round < MAX_EXPANSION_ROUNDS:
+    if COLLECT_MODE == "auto":
+        break   # 자동 모드는 확장 미지원
 
-    # 5-1.6) 메인 라인 매칭 — 키워드 모드만 적용 ⭐ 2026-05-13 정책 통일
-    # 자동/카테고리 모드: 사용자가 직접 키워드 입력하지 않으므로 메인 라인 매칭 X
-    #                    (5-1.3 종합몰 컷이 카테고리 키워드로 이미 충분)
-    # 키워드 모드만: 사용자가 입력한 키워드가 top 10에 1개+ 매칭 필수
-    if COLLECT_MODE == "keywords":
-        has_matching_product = False
-        matched_product = ""
-        matched_keyword = ""
-        for item in brand_items[:10]:
-            title = clean_html_tags(item.get("title", ""))
-            matched, kw = _is_keyword_match(
-                title, search_kw_pool_strict, user_kw_tokens
-            )
-            if matched:
-                has_matching_product = True
-                matched_product = item.get("title", "")[:40]
-                matched_keyword = kw
-                break
+    expansion_round += 1
+    print(f"\n⚡ 결과 {len(results)}/{TARGET_COUNT}건 미달 → 확장 라운드 {expansion_round} 시작...")
 
-        if not has_matching_product:
-            print(f"        🚫 메인 라인(top 10)에 사용자 키워드 매칭 X → 다음 후보로")
-            time.sleep(0.3)
-            continue
-        else:
-            print(f"        ✓ 메인 라인 매칭: '{matched_keyword}' in {matched_product}")
+    extra_passed = _perform_expansion_search(
+        expansion_round, expanded_keywords, processed_brands, already_collected,
+    )
+    print(f"   확장 후보: {len(extra_passed)}건 → 디테일 수집 시작...")
 
-    flagship_price = int(flagship.get("lprice", 0))
-
-    # 5-2) 진짜 스토어 URL — 3중 fallback 전략 (검색 페이지로는 절대 안 보냄)
-    # ⚠️ 영구 보장 패턴 (학습된 규칙):
-    #   1순위: redirect 추적 성공 → 셀러 메인 URL (https://smartstore.naver.com/{storeId})
-    #   2순위: API 원본 link (상품 상세 페이지) — 진짜 스마트스토어 페이지, 셀러명 클릭 가능
-    #   3순위 (최후): 검색 페이지 — 절대 안 씀. 영업 흐름 끊김.
-    # 핵심: API 원본 link가 있으면 무조건 그걸 보존. 검색 fallback X.
-    store_url, store_debug = resolve_real_store_url(flagship_url)
-    if store_url:
-        print(f"        스토어 URL: {store_url} (셀러 메인)")
-    elif flagship_url and "smartstore.naver.com" in flagship_url:
-        # API 원본 link 보존 (상품 페이지지만 진짜 스마트스토어)
-        store_url = flagship_url
-        print(f"        스토어 URL: 상품 페이지 fallback (셀러명 클릭으로 메인 이동)")
-    elif flagship_url and "brand.naver.com" in flagship_url:
-        store_url = flagship_url
-        print(f"        스토어 URL: brand.naver.com 상품 페이지 fallback")
-    else:
-        # 마지막 안전망 — 여기 도달하면 API link도 비어있는 비정상 케이스
-        store_url = (
-            f"https://search.shopping.naver.com/search/all?"
-            f"query={urllib.parse.quote(brand_name)}"
+    for sel in extra_passed:
+        if len(results) >= TARGET_COUNT:
+            break
+        _process_one_candidate(
+            sel, processed_brands, results, big_company_skipped,
+            search_kw_pool_strict, user_kw_tokens, auto_mode_contexts,
+            is_expansion=True,
         )
-        print(f"        스토어 URL: 비정상 — 검색 페이지 최후 fallback ({store_debug})")
-
-    # 5-3) 주력 상품명에서 검색용 핵심 키워드 추출
-    product_keyword = extract_product_keyword(flagship_title)
-
-    # 5-3.5) 스마트스토어 관심고객수 자동 수집 (대기업 판별용)
-    # 실패 시 0 → 대기업 판별 skip (명단 매칭에 의존)
-    follower_count = fetch_follower_count(store_url)
-    if follower_count > 0:
-        print(f"        관심고객수: {follower_count:,}명")
-    else:
-        print(f"        관심고객수: 자동 수집 실패 (페이지 차단 또는 비공개)")
-
-    # 5-4) 마케팅 등급 + 활동 단계
-    # 브랜드명 + 시장 컨텍스트로 검색 → "에디슨" 같은 브랜드명 노이즈 제거
-    # 자동 카테고리 분류 먼저 (마케팅 검색의 시장 컨텍스트 결정에 사용)
-    auto_cat = classify_category(flagship_title)
-    mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat, follower_count)
-    print(f"        주력: {flagship_title[:50]}")
-    print(f"        카테고리: {auto_cat}  (자동 분류)")
-    print(f"        마케팅 검색 쿼리: '{brand_name} {('임산부' if any(k in auto_cat for k in ['임산부','산모','출산','산후']) else '베이비')}'")
-    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
-    print(f"        마케팅 활동 단계: {mgrade['size']} — {mgrade['size_note']}")
-
-    # 5-5) 대기업 자동 제외 (관심고객수 30만+)
-    if mgrade["size"] == "대기업":
-        print(f"        🚫 대기업 자동 제외 (관심고객 {follower_count:,}명) → 다음 후보로")
-        big_company_skipped.append({
-            "브랜드명": brand_name,
-            "관심고객수": follower_count,
-            "Selpic 점수": sel["_score"],
-        })
-        time.sleep(0.3)
-        continue   # 5건에 안 포함
-
-    # 5-6) 정상 결과 추가
-    results.append({
-        "수집일":               datetime.now().strftime("%Y-%m-%d"),
-        "Selpic 점수":          sel["_score"],
-        "발견 카테고리":        sel["_category_preset"],
-        "발견 키워드":          sel["_keyword"],
-        "수집 모드":            COLLECT_MODE,   # auto / category / keywords
-        "브랜드명":             brand_name,
-        "스마트스토어 주소":    store_url,
-        "주력상품명":           flagship_title,
-        "상품 카테고리":        flagship_category,
-        "가격":                 f"{flagship_price:,}원" if flagship_price else "",
-        "점수 근거":            " · ".join(sel["_breakdown"]),
-        "마케팅 검색 키워드 (자동)": mgrade.get("query", product_keyword),
-        "마케팅 등급 (자동)":   mgrade["grade"],
-        "마케팅 점수 (자동)":   mgrade["score"],
-        "마케팅 채널별 노출 (자동)": (
-            f"블로그 {mgrade['blog']:,} · "
-            f"카페 {mgrade['cafe']:,} · "
-            f"SNS {mgrade['sns']:,}"
-        ),
-        "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
-        "관심고객수 (자동)":    follower_count,   # 스마트스토어 자동 수집 (0이면 실패)
-        # 수기 입력 컬럼
-        "관심고객수 (수기)":         "",
-        "리뷰수 (수기)":             "",
-        "상호 (수기)":               "",
-        "대표 (수기)":               "",
-        "이메일 (수기)":             "",
-        "전화 (수기)":               "",
-        "마케팅 분석 메모 (수기)":   "",
-    })
-    time.sleep(0.3)
 
 # 최종 요약
 print()
