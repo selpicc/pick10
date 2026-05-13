@@ -901,42 +901,54 @@ for sel in passed:
     ]
 
     # 5-1.3) 종합몰 자동 제외 — 모드별 다른 기준
-    # 자동 모드:    영유아 50% 미만 OR 카테고리 8종+ → 종합몰
-    # 키워드/카테고리: 카테고리 5종+ 만 (영유아 비율 X — 화장품 브랜드도 통과)
+    # 자동 모드:    Naver 카테고리1 영유아 50% 미만 OR 카테고리 8종+
+    # 키워드/카테고리: 상품 제목에 영유아/산모 타깃 키워드 30% 미만 포함
+    #   (Naver 카테고리1보다 정확 — 산모 전문 브랜드도 카테고리는 다양할 수 있어서)
     own_brand_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
     ]
     if len(own_brand_items) >= 5:
-        cat1_counts = {}
-        for it in own_brand_items:
-            cat1 = it.get("category1", "").strip()
-            if cat1:
-                cat1_counts[cat1] = cat1_counts.get(cat1, 0) + 1
+        is_general_mall = False
 
-        if cat1_counts:
-            total_items = sum(cat1_counts.values())
-            BABY_CATS = {"출산/육아"}
-            baby_count = sum(cnt for cat, cnt in cat1_counts.items() if cat in BABY_CATS)
-            baby_ratio = baby_count / total_items
-            diversity = len(cat1_counts)
+        if COLLECT_MODE == "auto":
+            # 자동 모드: Naver 카테고리1 기반
+            cat1_counts = {}
+            for it in own_brand_items:
+                cat1 = it.get("category1", "").strip()
+                if cat1:
+                    cat1_counts[cat1] = cat1_counts.get(cat1, 0) + 1
 
-            is_general_mall = False
-            if COLLECT_MODE == "auto":
-                # 자동 모드: 영유아 50% 미만 OR 카테고리 8종+
+            if cat1_counts:
+                total_items = sum(cat1_counts.values())
+                BABY_CATS = {"출산/육아"}
+                baby_count = sum(cnt for cat, cnt in cat1_counts.items() if cat in BABY_CATS)
+                baby_ratio = baby_count / total_items
+                diversity = len(cat1_counts)
+
                 if baby_ratio < 0.5 or diversity >= 8:
                     is_general_mall = True
-            else:
-                # 키워드/카테고리 모드: 카테고리 5종+ (다양성 기준만)
-                # 화장품 회사처럼 2~3종은 통과, 진짜 종합몰만 차단
-                if diversity >= 5:
-                    is_general_mall = True
+                    print(f"        🚫 종합몰 자동 제외 "
+                          f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
+        else:
+            # 키워드/카테고리 모드: 타깃 키워드 포함율 기반
+            # 상품 제목에 영유아/산모 키워드(MARKET_FIT_KEYWORDS) 30% 이상 포함되어야
+            target_count = 0
+            for it in own_brand_items:
+                title = clean_html_tags(it.get("title", "")).lower()
+                if any(kw.lower() in title for kw in MARKET_FIT_KEYWORDS):
+                    target_count += 1
+            target_ratio = target_count / len(own_brand_items)
 
-            if is_general_mall:
+            if target_ratio < 0.3:
+                is_general_mall = True
                 print(f"        🚫 종합몰 자동 제외 "
-                      f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
-                time.sleep(0.3)
-                continue
+                      f"(타깃 키워드 포함율 {target_ratio:.0%}, "
+                      f"{target_count}/{len(own_brand_items)}개) → 다음 후보로")
+
+        if is_general_mall:
+            time.sleep(0.3)
+            continue
     flagship = own_items[0] if own_items else sel
     flagship_title = clean_html_tags(flagship.get("title", ""))
     flagship_url = flagship.get("link", "")
