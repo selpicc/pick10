@@ -278,49 +278,58 @@ def _build_keyword_match_context(
     user_kw_tokens = []
     seen_tokens = set()
 
-    if mode == "keywords":
-        for kw in user_keywords:
-            # 원본 + 띄어쓰기 변형 (substring 매칭 대상)
-            variants = generate_space_variants(kw)
-            for variant in variants:
-                search_kw_pool.add(variant.lower())
-                # 변형의 토큰 추출 — GENERIC 제외
-                # "튼살크림" 변형의 "튼살" 같은 specific 토큰 단독 매칭은 OK
-                # "임산부 로션" 변형의 "임산부"/"로션" 단독 매칭은 차단
-                for token in variant.split():
-                    tok = token.strip().lower()
-                    if len(tok) >= 2 and tok not in GENERIC_TOKENS:
-                        search_kw_pool.add(tok)
+    def _process_keyword(kw: str):
+        """단일 키워드 처리 — search_kw_pool + user_kw_tokens 동시 채움.
 
-            # AND 토큰 매칭용 — 원본 + 띄어쓰기 변형에서 2개+ 토큰 추출
-            # "튼살크림" 변형 "튼살 크림" → ("튼살", "크림") AND 매칭
-            # "임산부 로션" 원본 → ("임산부", "로션") AND 매칭
+        ⭐ 2026-05-13 버그 수정:
+          기존: 띄어쓰기 변형의 split된 토큰을 모두 search_kw_pool/user_kw_tokens에 추가
+            → "신생아 로션"의 의미없는 변형 "신생 아로션"의 토큰 "신생", "아로션"이
+               풀에 들어가 false positive 양산
+          수정: 변형 자체는 substring 매칭용으로만 추가, 토큰 분리는 원본 키워드만
+                (단, 원본이 공백 없는 합성어이면 변형 토큰 허용 — "튼살크림" → "튼살 크림")
+        """
+        variants = generate_space_variants(kw)
+
+        # 1. Substring 매칭용 — 변형 전체를 풀에 (공백 차이 무관)
+        for variant in variants:
+            search_kw_pool.add(variant.lower())
+
+        # 2. 원본 키워드의 토큰만 search_kw_pool에 단독 추가
+        #    GENERIC 단독 차단 (예: "신생아", "로션" 단독 매칭 X)
+        for token in kw.split():
+            tok = token.strip().lower()
+            if len(tok) >= 2 and tok not in GENERIC_TOKENS:
+                search_kw_pool.add(tok)
+
+        # 3. AND 토큰 매칭용 — 의미있는 토큰 페어만
+        orig_tokens = tuple(
+            t.strip().lower() for t in kw.split() if len(t.strip()) >= 2
+        )
+        if len(orig_tokens) >= 2:
+            # 원본이 이미 공백 분리됨 → 그 토큰 페어만 사용 (의미 보장)
+            if orig_tokens not in seen_tokens:
+                user_kw_tokens.append(list(orig_tokens))
+                seen_tokens.add(orig_tokens)
+        else:
+            # 원본이 공백 없는 합성어 ("튼살크림") → 띄어쓰기 변형의 토큰 페어 허용
+            # 의미없는 분할 페어도 일부 포함될 수 있지만 false positive 매칭 가능성 낮음
             for variant in variants:
-                src_tokens = tuple(
+                if " " not in variant:
+                    continue
+                vtokens = tuple(
                     t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
                 )
-                if len(src_tokens) >= 2 and src_tokens not in seen_tokens:
-                    user_kw_tokens.append(list(src_tokens))
-                    seen_tokens.add(src_tokens)
+                if len(vtokens) >= 2 and vtokens not in seen_tokens:
+                    user_kw_tokens.append(list(vtokens))
+                    seen_tokens.add(vtokens)
 
+    if mode == "keywords":
+        for kw in user_keywords:
+            _process_keyword(kw)
     else:   # category 모드
         cat_kws = category_presets.get(target_category, [])
         for kw in cat_kws:
-            variants = generate_space_variants(kw)
-            for variant in variants:
-                search_kw_pool.add(variant.lower())
-                for token in variant.split():
-                    tok = token.strip().lower()
-                    if len(tok) >= 2 and tok not in GENERIC_TOKENS:
-                        search_kw_pool.add(tok)
-            # 카테고리 키워드도 AND 토큰 매칭
-            for variant in variants:
-                kw_tokens = tuple(
-                    t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
-                )
-                if len(kw_tokens) >= 2 and kw_tokens not in seen_tokens:
-                    user_kw_tokens.append(list(kw_tokens))
-                    seen_tokens.add(kw_tokens)
+            _process_keyword(kw)
 
     return search_kw_pool, user_kw_tokens
 
