@@ -1333,7 +1333,10 @@ if len(filtered) > 0:
                             st.rerun()
 
     # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
-    download_col1, download_col2, download_col3 = st.columns([1, 1, 4])
+    # 체크박스 선택 우선:
+    #   - 1개 이상 체크: 체크된 행만 다운로드
+    #   - 미체크: 현재 필터 결과 전체 다운로드
+    download_col1, download_col2, download_col3 = st.columns([1.3, 1, 3.7])
     with download_col1:
         # CSV 내보내기 시 비노출 컬럼 (사용자 요청)
         # 내부용·기술적 컬럼은 영업자에게 불필요
@@ -1350,8 +1353,25 @@ if len(filtered) > 0:
             "_source_file",   # 내부 메타데이터
             "id",             # DB 키
         ]
-        export_df = filtered.drop(
-            columns=[c for c in CSV_EXCLUDE_COLS if c in filtered.columns],
+
+        # 체크박스 선택된 행만 / 없으면 전체
+        # ⚠️ 정규화 양쪽 일관성: selected_brands는 .strip() 적용됨 → 비교 시 양쪽 strip
+        if selected_brands:
+            selected_set = set(selected_brands)
+            export_source = filtered[
+                filtered["브랜드명"].fillna("").astype(str).str.strip().isin(selected_set)
+            ]
+            export_count = len(export_source)
+            download_label = f"⬇️ 선택 {export_count}건 다운로드"
+            file_suffix = f"selected_{export_count}"
+        else:
+            export_source = filtered
+            export_count = len(export_source)
+            download_label = f"⬇️ 전체 {export_count}건 다운로드"
+            file_suffix = "all"
+
+        export_df = export_source.drop(
+            columns=[c for c in CSV_EXCLUDE_COLS if c in export_source.columns],
             errors="ignore",
         )
         # to_csv()는 string 반환 시 encoding 무시 → 직접 BOM 포함 bytes로 변환
@@ -1359,11 +1379,12 @@ if len(filtered) > 0:
         csv_export = export_df.to_csv(index=False).encode("utf-8-sig")
         today_label = datetime.now().strftime("%Y-%m-%d_%H%M")
         st.download_button(
-            label="CSV 다운로드",
+            label=download_label,
             data=csv_export,
-            file_name=f"PICK10_filtered_{today_label}.csv",
+            file_name=f"PICK10_{file_suffix}_{today_label}.csv",
             mime="text/csv",
             use_container_width=True,
+            disabled=(export_count == 0),
         )
     with download_col2:
         fix_clicked_table = st.button(
@@ -1412,11 +1433,15 @@ if len(filtered) > 0:
                 # 헤더 (브랜드명 + 분석 정보 + 우측 삭제 버튼)
                 header_left, header_right = st.columns([5, 1])
                 with header_left:
+                    # 카테고리 = 메인 표와 동일 로직 (classify_category(주력상품))
+                    detail_category = classify_category(
+                        str(sel_full.get("주력상품명", "")).strip()
+                    )
                     st.markdown(
                         f"<div style='font-size: 24px; font-weight: 600; color: #111827;'>{sel_brand}</div>"
                         f"<div style='font-size: 16px; color: #4b5563; margin-top: 6px; line-height: 1.5;'>"
                         f"<b style='color: #374151;'>분석:</b> "
-                        f"{sel_full.get('발견 카테고리', '')} · "
+                        f"{detail_category} · "
                         f"{sel_full.get(size_col, '-')}"
                         f"</div>",
                         unsafe_allow_html=True,
