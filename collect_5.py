@@ -83,15 +83,17 @@ TARGET_CATEGORY = (_args.category or "").strip()
 USER_KEYWORDS = [k.strip() for k in (_args.keywords or "").split(",") if k.strip()]
 
 # 모드 결정
+# ⭐ 2026-05-13 정책 통일: 3가지 모드 모두 점수 컷 0점 (전부 통과)
+#    점수 컷보다 종합몰/시장 필터/매칭으로 정밀 컷
 if USER_KEYWORDS:
     COLLECT_MODE = "keywords"
-    SCORE_THRESHOLD = 0    # 키워드 모드 — 엄격 카테고리 매칭이 메인 필터, 점수 컷 비활성
+    SCORE_THRESHOLD = 0
 elif TARGET_CATEGORY:
     COLLECT_MODE = "category"
-    SCORE_THRESHOLD = 30   # 카테고리 모드 — 엄격 매칭으로 보완, 점수 임계치 약간 낮춤
+    SCORE_THRESHOLD = 0
 else:
     COLLECT_MODE = "auto"
-    SCORE_THRESHOLD = 70   # 자동 모드 — 전체 시장 탐색, 점수 변별력 유지
+    SCORE_THRESHOLD = 0
 
 print(f"   📌 수집 모드: {COLLECT_MODE}")
 print(f"   📌 수집 건수: {TARGET_COUNT}건")
@@ -854,18 +856,28 @@ if COLLECT_MODE == "keywords":
         print(f"   ✓ '{keyword}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 elif COLLECT_MODE == "category":
-    # 모드 2: 단일 카테고리 한정
+    # 모드 2: 단일 카테고리 한정 + 동의어 자동 확장
+    # ⭐ 2026-05-13 강화: 카테고리 키워드도 동의어 확장 적용
     if TARGET_CATEGORY not in CATEGORY_PRESETS:
         print(f"   ❌ 알 수 없는 카테고리: '{TARGET_CATEGORY}'")
         print(f"      허용 카테고리: {', '.join(CATEGORY_PRESETS.keys())}")
         sys.exit(1)
-    keywords = CATEGORY_PRESETS[TARGET_CATEGORY]
-    print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 키워드 {len(keywords)}개로 검색 (sort 다양화)...")
-    for keyword in keywords:
+    base_keywords = CATEGORY_PRESETS[TARGET_CATEGORY]
+
+    # 동의어 자동 확장 (예: "아기 로션" → "베이비 로션", "신생아 로션")
+    expanded_keywords = []
+    for kw in base_keywords:
+        if kw not in expanded_keywords:
+            expanded_keywords.append(kw)
+        for ex in expand_keyword(kw):
+            if ex not in expanded_keywords:
+                expanded_keywords.append(ex)
+
+    print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 {len(base_keywords)}개 키워드 → 동의어 확장 {len(expanded_keywords)}개 × 2 sort × 3 페이지...")
+    for keyword in expanded_keywords:
         keyword_total = 0
-        # Sort 다양화 + 페이지 3개 (속도 최적화)
         for sort_method in ["sim", "date"]:
-            for start_offset in [1, 51, 101]:   # 6 → 3 페이지
+            for start_offset in [1, 51, 101]:
                 items = search_shop(keyword, display=50, start=start_offset, sort=sort_method)
                 if not items:
                     break
@@ -903,24 +915,67 @@ elif COLLECT_MODE == "category":
         print(f"   ✓ '{keywords[0]}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 else:
-    # 모드 1 (기본): 12개 카테고리 전체
-    print(f"🔍 [1/6] {len(CATEGORY_PRESETS)}개 카테고리 × 2개 키워드로 검색 → 후보 풀 모음...")
+    # 모드 1 (기본): 자동 — 10개 카테고리 전체 시장 발굴
+    # ⭐ 2026-05-13 강화 (정책 통일):
+    #   - 카테고리당 2개 키워드 → 동의어 자동 확장으로 4-6개 키워드
+    #   - sort sim+date 다양화 + 페이지 1~3 확대
+    #   - 블로그/카페 마이닝 [1.5/6]에서 추가
+    print(f"🔍 [1/6] {len(CATEGORY_PRESETS)}개 카테고리 × 키워드 (동의어 확장) × 2 sort × 3 페이지...")
     for cat_name, keywords in CATEGORY_PRESETS.items():
         cat_total = 0
-        for keyword in keywords[:2]:
-            items = search_shop(keyword, display=10)
-            ss_items = [
-                it for it in items
-                if "smartstore.naver.com" in it.get("link", "")
-            ]
-            for rank, item in enumerate(ss_items, 1):
-                item["_keyword"] = keyword
-                item["_category_preset"] = cat_name
-                item["_rank"] = rank
-                candidates.append(item)
-            cat_total += len(ss_items)
-            time.sleep(0.15)
-        print(f"   ✓ {cat_name:18s} → 키워드 {len(keywords[:2])}개 → 스마트스토어 {cat_total}건")
+        # 카테고리당 첫 2개 키워드 + 각 키워드의 동의어 확장
+        # (전체 키워드는 너무 많음 → 대표 2개만 + 동의어로 폭 확보)
+        selected_keywords = []
+        for kw in keywords[:2]:
+            selected_keywords.append(kw)
+            # 동의어 확장 (예: "아기 로션" → "베이비 로션", "신생아 로션")
+            for ex in expand_keyword(kw):
+                if ex != kw and ex not in selected_keywords:
+                    selected_keywords.append(ex)
+                    if len(selected_keywords) >= 6:   # 카테고리당 최대 6개
+                        break
+            if len(selected_keywords) >= 6:
+                break
+
+        for keyword in selected_keywords:
+            # sort 다양화 + 페이지 확대
+            for sort_method in ["sim", "date"]:
+                for start_offset in [1, 51, 101]:
+                    items = search_shop(keyword, display=50, start=start_offset, sort=sort_method)
+                    if not items:
+                        break
+                    ss_items = [
+                        it for it in items
+                        if "smartstore.naver.com" in it.get("link", "")
+                    ]
+                    for rank, item in enumerate(ss_items, start_offset):
+                        item["_keyword"] = keyword
+                        item["_category_preset"] = cat_name
+                        item["_rank"] = rank
+                        candidates.append(item)
+                    cat_total += len(ss_items)
+                    time.sleep(0.05)
+        print(f"   ✓ {cat_name:18s} → 키워드 {len(selected_keywords)}개(확장 포함) → {cat_total}건")
+
+    # 자동 모드도 블로그 + 카페 마이닝 추가
+    print(f"\n🔎 [1.5/6] 블로그 + 카페 마이닝 — 카테고리당 대표 키워드 1개...")
+    for cat_name, keywords in CATEGORY_PRESETS.items():
+        if not keywords:
+            continue
+        rep_keyword = keywords[0]   # 카테고리 대표 키워드
+        blog_brands = mine_brands_from_blog(rep_keyword, max_brands=10)
+        for item in blog_brands:
+            item["_keyword"] = f"{rep_keyword} (블로그)"
+            item["_category_preset"] = cat_name
+            item["_rank"] = 99
+            candidates.append(item)
+        cafe_brands = mine_brands_from_cafe(rep_keyword, max_brands=10)
+        for item in cafe_brands:
+            item["_keyword"] = f"{rep_keyword} (카페)"
+            item["_category_preset"] = cat_name
+            item["_rank"] = 99
+            candidates.append(item)
+        print(f"   ✓ {cat_name:18s} → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 print(f"\n   ✅ 총 후보 풀: {len(candidates)}건\n")
 
@@ -963,14 +1018,11 @@ print(f"   ✅ {len(candidates)}건 → {len(unique_candidates)}건")
 print(f"      (이번 실행 중복 {dup_removed}건 + 이전 수집 {already_collected_skipped}건 제외)\n")
 
 
-# ── [3.5/6] 시장 타깃 크로스체크 (B+C 필터, A는 keyword/category 모드에서 건너뜀) ──
-# 자동 모드: A+B+C 모두 적용 (시장 좁히기용)
-# 키워드/카테고리 모드: B+C만 적용 (사용자가 이미 시장 의도 명시)
-#   → "튼살크림" 검색은 이미 임산부 시장이라 A 영유아 키워드 강제 불필요
-if COLLECT_MODE in ("keywords", "category"):
-    print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (B 대기업 컷 / C 다른시장 차단 — A 건너뜀: 사용자 의도 명확)...")
-else:
-    print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (A 영유아 필수 / B 대기업 컷 / C 다른시장 차단)...")
+# ── [3.5/6] 시장 타깃 크로스체크 (B 대기업 컷 / C 부정 키워드 차단) ──
+# ⭐ 2026-05-13 정책 통일: 모든 모드 A(영유아 키워드 필수) 건너뜀
+#    이유: 사용자가 직접 검색하는 워크플로우라 시장 의도는 검색 키워드로 표현됨.
+#    "튼살크림" 같은 specific 키워드 검색 시 A 강제는 false negative 양산.
+print(f"🎯 [3.5/6] 시장 타깃 크로스체크 (B 대기업 컷 / C 다른시장 차단 — A 영유아 키워드 건너뜀)...")
 fit_candidates = []
 fail_log = {"a": [], "b": [], "c": []}
 
@@ -979,8 +1031,8 @@ for c in unique_candidates:
     title = clean_html_tags(c.get("title", ""))
     result, reason = market_fit_check(brand, title)
 
-    # 키워드/카테고리 모드: A 탈락은 무시 (시장 의도 이미 명확)
-    if result == "a" and COLLECT_MODE in ("keywords", "category"):
+    # 모든 모드 A 탈락은 무시 (시장 의도는 검색 키워드로 표현)
+    if result == "a":
         fit_candidates.append(c)   # A 통과로 처리
     elif result == "ok":
         fit_candidates.append(c)
@@ -1022,15 +1074,28 @@ print()
 # passed (70점+ 통과 전체)에서 시작해서 5건 채울 때까지 진행
 print(f"🔬 [5/6] 디테일 수집 + 대기업 자동 제외 (카페 50만+ 자동 컷)...")
 
-# 키워드/카테고리 모드: 매칭 컨텍스트 한 번만 빌드 → 5-1.3, 5-1.6에서 재사용
-# 자동 모드는 N/A (5-1.3은 Naver 카테고리1 기반, 5-1.6 검사 X)
+# 매칭 컨텍스트 한 번만 빌드 → 5-1.3 (모든 모드), 5-1.6 (키워드 모드만) 재사용
+# ⭐ 2026-05-13 통일: 자동 모드도 사용자 키워드 관련도 기반 종합몰 컷 적용
+#   - 자동: 카테고리별 처리 → 후보의 _category_preset 키워드 사용 (동적 빌드)
+#   - 카테고리: TARGET_CATEGORY 키워드 (정적 빌드)
+#   - 키워드: USER_KEYWORDS (정적 빌드)
 search_kw_pool_strict = set()
 user_kw_tokens = []
+auto_mode_contexts = {}   # 자동 모드용: 카테고리별 컨텍스트 캐시
+
 if COLLECT_MODE in ("keywords", "category"):
     search_kw_pool_strict, user_kw_tokens = _build_keyword_match_context(
         COLLECT_MODE, USER_KEYWORDS, TARGET_CATEGORY, CATEGORY_PRESETS
     )
     print(f"   ℹ️ 키워드 매칭 풀: {len(search_kw_pool_strict)}개 + AND 토큰 {len(user_kw_tokens)}쌍")
+elif COLLECT_MODE == "auto":
+    # 자동 모드: 카테고리별로 컨텍스트 사전 빌드 (후보별 lookup 빠르게)
+    for cat_name in CATEGORY_PRESETS.keys():
+        pool, tokens = _build_keyword_match_context(
+            "category", [], cat_name, CATEGORY_PRESETS
+        )
+        auto_mode_contexts[cat_name] = (pool, tokens)
+    print(f"   ℹ️ 자동 모드 카테고리별 매칭 풀 {len(auto_mode_contexts)}개 빌드 완료")
 
 results = []
 big_company_skipped = []   # 대기업으로 제외된 셀러 기록
@@ -1056,57 +1121,38 @@ for sel in passed:
         and "smartstore.naver.com" in it.get("link", "")
     ]
 
-    # 5-1.3) 종합몰 자동 제외 — 모드별 다른 기준
-    # 자동 모드:    Naver 카테고리1 영유아 50% 미만 OR 카테고리 8종+
-    # 키워드/카테고리: 상품 제목에 영유아/산모 타깃 키워드 30% 미만 포함
-    #   (Naver 카테고리1보다 정확 — 산모 전문 브랜드도 카테고리는 다양할 수 있어서)
+    # 5-1.3) 종합몰/무관 셀러 자동 제외 — 통일 정책
+    # ⭐ 2026-05-13 정책 통일: 모든 모드 "사용자 키워드 관련 상품 30%+" 기준
+    #   - 자동: 후보 _category_preset의 카테고리 키워드 사용 (auto_mode_contexts)
+    #   - 카테고리: TARGET_CATEGORY 키워드 (search_kw_pool_strict)
+    #   - 키워드: USER_KEYWORDS (search_kw_pool_strict)
     own_brand_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
     ]
     if len(own_brand_items) >= 5:
-        is_general_mall = False
-
+        # 매칭 컨텍스트 결정 (모드별)
         if COLLECT_MODE == "auto":
-            # 자동 모드: Naver 카테고리1 기반
-            cat1_counts = {}
-            for it in own_brand_items:
-                cat1 = it.get("category1", "").strip()
-                if cat1:
-                    cat1_counts[cat1] = cat1_counts.get(cat1, 0) + 1
-
-            if cat1_counts:
-                total_items = sum(cat1_counts.values())
-                BABY_CATS = {"출산/육아"}
-                baby_count = sum(cnt for cat, cnt in cat1_counts.items() if cat in BABY_CATS)
-                baby_ratio = baby_count / total_items
-                diversity = len(cat1_counts)
-
-                if baby_ratio < 0.5 or diversity >= 8:
-                    is_general_mall = True
-                    print(f"        🚫 종합몰 자동 제외 "
-                          f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
+            # 자동 모드: 후보가 발견된 카테고리의 컨텍스트 사용
+            cat_preset = sel.get("_category_preset", "")
+            pool, tokens = auto_mode_contexts.get(cat_preset, (set(), []))
         else:
-            # 키워드/카테고리 모드: 사용자 키워드 직접 관련 상품 비율 기반
-            # ⭐ 2026-05-13: MARKET_FIT_KEYWORDS 통합 제거
-            #   기존: 영유아 시장 키워드 30% 포함 → 통과 (종합몰도 통과되는 문제)
-            #   변경: 사용자 키워드(튼살크림 등)와 직접 관련된 상품 30%+ 필수
-            #         → "다양한 영유아 제품 다 파는 종합몰" 정확히 컷
-            match_count = 0
-            for it in own_brand_items:
-                title = clean_html_tags(it.get("title", ""))
-                matched, _ = _is_keyword_match(
-                    title, search_kw_pool_strict, user_kw_tokens
-                )
-                if matched:
-                    match_count += 1
-            target_ratio = match_count / len(own_brand_items)
+            pool, tokens = search_kw_pool_strict, user_kw_tokens
 
-            if target_ratio < 0.3:
-                is_general_mall = True
-                print(f"        🚫 종합몰/무관 셀러 자동 제외 "
-                      f"(사용자 키워드 관련 상품 {target_ratio:.0%}, "
-                      f"{match_count}/{len(own_brand_items)}개) → 다음 후보로")
+        is_general_mall = False
+        match_count = 0
+        for it in own_brand_items:
+            title = clean_html_tags(it.get("title", ""))
+            matched, _ = _is_keyword_match(title, pool, tokens)
+            if matched:
+                match_count += 1
+        target_ratio = match_count / len(own_brand_items)
+
+        if target_ratio < 0.3:
+            is_general_mall = True
+            print(f"        🚫 종합몰/무관 셀러 자동 제외 "
+                  f"(사용자 키워드 관련 상품 {target_ratio:.0%}, "
+                  f"{match_count}/{len(own_brand_items)}개) → 다음 후보로")
 
         if is_general_mall:
             time.sleep(0.3)
@@ -1130,14 +1176,11 @@ for sel in passed:
         time.sleep(0.3)
         continue   # 5건에 안 포함
 
-    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 10 상품 중 1개라도 사용자 키워드 직접 매칭 필수
-    # ⭐ 2026-05-13 강화 (5차) — 종합몰/무관 셀러 정확 컷:
-    #   - MARKET_FIT_KEYWORDS 통합 제거 (false positive 원인)
-    #   - GENERIC 토큰(크림/로션/임산부/산모 등) 단독 매칭 제외
-    #   - search_kw_pool_strict + user_kw_tokens 공용 컨텍스트 사용
-    # 정책: "사용자 키워드 직접 관련"만 인정. 시장 컨텍스트만으로는 통과 X.
-    if COLLECT_MODE in ("keywords", "category"):
-        # 메인 라인 매칭 검사 (헬퍼 함수로 통일)
+    # 5-1.6) 메인 라인 매칭 — 키워드 모드만 적용 ⭐ 2026-05-13 정책 통일
+    # 자동/카테고리 모드: 사용자가 직접 키워드 입력하지 않으므로 메인 라인 매칭 X
+    #                    (5-1.3 종합몰 컷이 카테고리 키워드로 이미 충분)
+    # 키워드 모드만: 사용자가 입력한 키워드가 top 10에 1개+ 매칭 필수
+    if COLLECT_MODE == "keywords":
         has_matching_product = False
         matched_product = ""
         matched_keyword = ""
