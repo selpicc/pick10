@@ -118,6 +118,7 @@ from market_filter import (
     MARKET_FIT_KEYWORDS,
     BIG_COMPANY_BLOCKLIST,
     NEGATIVE_KEYWORDS,
+    GENERIC_TOKENS,            # 일반어 (단독 매칭 제외용)
     market_fit_check,
     classify_category,
     expand_keyword,
@@ -233,6 +234,114 @@ def _mine_brands_from_source(keyword: str, source: str, max_brands: int = 15) ->
 
 def clean_html_tags(text: str) -> str:
     return re.sub(r"<[^>]+>", "", text or "")
+
+
+# ─────────────────────────────────────────────────────────────────
+# 키워드 매칭 컨텍스트 (5-1.3 종합몰 컷 + 5-1.6 메인 라인 매칭 공용)
+# 사용자 키워드 직접 관련만 인정 — MARKET_FIT_KEYWORDS 통합 X
+#
+# 매칭 전략:
+#   1. Substring 매칭: search_kw_pool 안의 키워드가 제목에 포함 → OK
+#      (사용자 키워드 + 확장 동의어 + 띄어쓰기 변형, GENERIC 단독 토큰 제외)
+#   2. AND 토큰 매칭: 사용자 키워드 분리 토큰 모두 제목에 포함 → OK
+#      예: "임산부 로션" → ("임산부", "로션") 둘 다 있으면 매칭
+# ─────────────────────────────────────────────────────────────────
+def _build_keyword_match_context(
+    mode: str,
+    user_keywords: list,
+    target_category: str,
+    category_presets: dict,
+) -> tuple:
+    """매칭 컨텍스트 빌드 — 한 번만 구성하고 5-1.3, 5-1.6 모두에서 재사용.
+
+    반환:
+      (search_kw_pool: set, user_kw_tokens: list[list[str]])
+
+    search_kw_pool 구성:
+      - 사용자 키워드 원본 + 띄어쓰기 변형 (모두 substring 매칭 대상)
+      - 확장 동의어 + 동의어 띄어쓰기 변형
+      - 토큰 중 GENERIC_TOKENS에 속하지 않은 것만 (false positive 방지)
+
+    user_kw_tokens 구성:
+      - 사용자 키워드 + 확장 동의어를 토큰 분리 (2자+ 토큰만)
+      - 토큰 모두 제목에 있어야 매칭 (AND 매칭용)
+    """
+    search_kw_pool = set()
+    user_kw_tokens = []
+    seen_tokens = set()
+
+    if mode == "keywords":
+        for kw in user_keywords:
+            # 원본 + 띄어쓰기 변형 (substring 매칭)
+            for variant in generate_space_variants(kw):
+                search_kw_pool.add(variant.lower())
+            # 원본 토큰 — GENERIC 제외
+            for token in kw.split():
+                tok = token.strip().lower()
+                if len(tok) >= 2 and tok not in GENERIC_TOKENS:
+                    search_kw_pool.add(tok)
+            # 확장 동의어 + 동의어 토큰
+            expanded = expand_keyword(kw)
+            for ex in expanded:
+                for variant in generate_space_variants(ex):
+                    search_kw_pool.add(variant.lower())
+                for token in ex.split():
+                    tok = token.strip().lower()
+                    if len(tok) >= 2 and tok not in GENERIC_TOKENS:
+                        search_kw_pool.add(tok)
+
+            # AND 매칭용 토큰 세트 (원본 + 확장 동의어 모두)
+            for src in [kw] + expanded:
+                src_tokens = tuple(
+                    t.strip().lower() for t in src.split() if len(t.strip()) >= 2
+                )
+                if len(src_tokens) >= 2 and src_tokens not in seen_tokens:
+                    user_kw_tokens.append(list(src_tokens))
+                    seen_tokens.add(src_tokens)
+
+    else:   # category 모드
+        cat_kws = category_presets.get(target_category, [])
+        for kw in cat_kws:
+            for variant in generate_space_variants(kw):
+                search_kw_pool.add(variant.lower())
+            for token in kw.split():
+                tok = token.strip().lower()
+                if len(tok) >= 2 and tok not in GENERIC_TOKENS:
+                    search_kw_pool.add(tok)
+            kw_tokens = tuple(
+                t.strip().lower() for t in kw.split() if len(t.strip()) >= 2
+            )
+            if len(kw_tokens) >= 2 and kw_tokens not in seen_tokens:
+                user_kw_tokens.append(list(kw_tokens))
+                seen_tokens.add(kw_tokens)
+
+    return search_kw_pool, user_kw_tokens
+
+
+def _is_keyword_match(title: str, search_kw_pool: set, user_kw_tokens: list) -> tuple:
+    """제목이 사용자 키워드/토큰과 매칭되는지 검사.
+
+    반환: (matched: bool, matched_keyword: str)
+
+    매칭 우선순위:
+      1. Substring 직접 매칭 (정규화 양쪽 적용 — 공백 차이 무시)
+      2. 다중 토큰 AND 매칭 (사용자 키워드 토큰 모두 포함)
+    """
+    title_raw = title.lower()
+    title_no_space = title_raw.replace(" ", "")
+
+    # 1) Substring 직접 매칭
+    for kw in search_kw_pool:
+        kw_no_space = kw.replace(" ", "")
+        if kw in title_raw or (kw_no_space and kw_no_space in title_no_space):
+            return True, kw
+
+    # 2) AND 토큰 매칭
+    for tokens in user_kw_tokens:
+        if all(tok in title_raw or tok in title_no_space for tok in tokens):
+            return True, f"[{' + '.join(tokens)}] 토큰분리"
+
+    return False, ""
 
 
 def load_collected_brands() -> set:
@@ -908,6 +1017,16 @@ print()
 # passed (70점+ 통과 전체)에서 시작해서 5건 채울 때까지 진행
 print(f"🔬 [5/6] 디테일 수집 + 대기업 자동 제외 (카페 50만+ 자동 컷)...")
 
+# 키워드/카테고리 모드: 매칭 컨텍스트 한 번만 빌드 → 5-1.3, 5-1.6에서 재사용
+# 자동 모드는 N/A (5-1.3은 Naver 카테고리1 기반, 5-1.6 검사 X)
+search_kw_pool_strict = set()
+user_kw_tokens = []
+if COLLECT_MODE in ("keywords", "category"):
+    search_kw_pool_strict, user_kw_tokens = _build_keyword_match_context(
+        COLLECT_MODE, USER_KEYWORDS, TARGET_CATEGORY, CATEGORY_PRESETS
+    )
+    print(f"   ℹ️ 키워드 매칭 풀: {len(search_kw_pool_strict)}개 + AND 토큰 {len(user_kw_tokens)}쌍")
+
 results = []
 big_company_skipped = []   # 대기업으로 제외된 셀러 기록
 processed_brands = set()   # 같은 브랜드 중복 처리 방지
@@ -963,20 +1082,26 @@ for sel in passed:
                     print(f"        🚫 종합몰 자동 제외 "
                           f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
         else:
-            # 키워드/카테고리 모드: 타깃 키워드 포함율 기반
-            # 상품 제목에 영유아/산모 키워드(MARKET_FIT_KEYWORDS) 30% 이상 포함되어야
-            target_count = 0
+            # 키워드/카테고리 모드: 사용자 키워드 직접 관련 상품 비율 기반
+            # ⭐ 2026-05-13: MARKET_FIT_KEYWORDS 통합 제거
+            #   기존: 영유아 시장 키워드 30% 포함 → 통과 (종합몰도 통과되는 문제)
+            #   변경: 사용자 키워드(튼살크림 등)와 직접 관련된 상품 30%+ 필수
+            #         → "다양한 영유아 제품 다 파는 종합몰" 정확히 컷
+            match_count = 0
             for it in own_brand_items:
-                title = clean_html_tags(it.get("title", "")).lower()
-                if any(kw.lower() in title for kw in MARKET_FIT_KEYWORDS):
-                    target_count += 1
-            target_ratio = target_count / len(own_brand_items)
+                title = clean_html_tags(it.get("title", ""))
+                matched, _ = _is_keyword_match(
+                    title, search_kw_pool_strict, user_kw_tokens
+                )
+                if matched:
+                    match_count += 1
+            target_ratio = match_count / len(own_brand_items)
 
             if target_ratio < 0.3:
                 is_general_mall = True
-                print(f"        🚫 종합몰 자동 제외 "
-                      f"(타깃 키워드 포함율 {target_ratio:.0%}, "
-                      f"{target_count}/{len(own_brand_items)}개) → 다음 후보로")
+                print(f"        🚫 종합몰/무관 셀러 자동 제외 "
+                      f"(사용자 키워드 관련 상품 {target_ratio:.0%}, "
+                      f"{match_count}/{len(own_brand_items)}개) → 다음 후보로")
 
         if is_general_mall:
             time.sleep(0.3)
@@ -1000,113 +1125,30 @@ for sel in passed:
         time.sleep(0.3)
         continue   # 5건에 안 포함
 
-    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 10 상품 중 1개라도 검색 키워드 부분 매칭 필수
-    # 이유: 키워드 모드도 무관 브랜드(바퀴벌레약 등) 차단 필요
-    # 매칭 방식: 3중 전략 (substring + AND 토큰 + 시장 컨텍스트)
-    # ⭐ 2026-05-13 강화 (4차):
-    #   - top 5 → top 10 (메인 라인 범위 확대)
-    #   - 띄어쓰기 변형 자동 생성 ("튼살크림" ↔ "튼살 크림" 양쪽 매칭)
-    #   - 확장 키워드 토큰화 + MARKET_FIT_KEYWORDS 통합
-    #   - ★ 다중 토큰 AND 매칭 ("임산부 로션" → "임산부 마사지 로션", "임산부용 보디 로션" 매칭)
+    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 10 상품 중 1개라도 사용자 키워드 직접 매칭 필수
+    # ⭐ 2026-05-13 강화 (5차) — 종합몰/무관 셀러 정확 컷:
+    #   - MARKET_FIT_KEYWORDS 통합 제거 (false positive 원인)
+    #   - GENERIC 토큰(크림/로션/임산부/산모 등) 단독 매칭 제외
+    #   - search_kw_pool_strict + user_kw_tokens 공용 컨텍스트 사용
+    # 정책: "사용자 키워드 직접 관련"만 인정. 시장 컨텍스트만으로는 통과 X.
     if COLLECT_MODE in ("keywords", "category"):
-        # 다중 토큰 AND 매칭 세트 (관련도 매칭)
-        # 예: "임산부 로션" → ("임산부", "로션") → 제목에 두 토큰 모두 있으면 매칭
-        # 사용자 의도: "임산부 ~~~ 로션" 같이 토큰이 떨어져 있어도 잡고 싶음
-        user_kw_tokens = []
-        seen_tokens = set()
-
-        if COLLECT_MODE == "keywords":
-            search_kw_pool = set()
-            for kw in USER_KEYWORDS:
-                # 원본 + 띄어쓰기 변형
-                for variant in generate_space_variants(kw):
-                    search_kw_pool.add(variant.lower())
-                # 원본 토큰
-                for token in kw.split():
-                    if len(token) >= 2:
-                        search_kw_pool.add(token.lower())
-                # 확장 동의어 + 동의어 띄어쓰기 변형 + 토큰
-                expanded = expand_keyword(kw)
-                for ex in expanded:
-                    for variant in generate_space_variants(ex):
-                        search_kw_pool.add(variant.lower())
-                    for token in ex.split():
-                        if len(token) >= 2:
-                            search_kw_pool.add(token.lower())
-
-                # ⭐ 다중 토큰 AND 매칭용 토큰 세트 (원본 + 확장 동의어 모두)
-                # "임산부 로션" → ("임산부", "로션")
-                # "산모 로션" (확장) → ("산모", "로션")
-                # "임부 로션" (확장) → ("임부", "로션")
-                for src in [kw] + expanded:
-                    src_tokens = tuple(
-                        t.strip().lower() for t in src.split() if len(t.strip()) >= 2
-                    )
-                    if len(src_tokens) >= 2 and src_tokens not in seen_tokens:
-                        user_kw_tokens.append(list(src_tokens))
-                        seen_tokens.add(src_tokens)
-        else:
-            cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
-            search_kw_pool = set()
-            for kw in cat_kws:
-                for variant in generate_space_variants(kw):
-                    search_kw_pool.add(variant.lower())
-                for token in kw.split():
-                    if len(token) >= 2:
-                        search_kw_pool.add(token.lower())
-                # 카테고리 키워드도 다중 토큰 AND 매칭 적용
-                kw_tokens = tuple(
-                    t.strip().lower() for t in kw.split() if len(t.strip()) >= 2
-                )
-                if len(kw_tokens) >= 2 and kw_tokens not in seen_tokens:
-                    user_kw_tokens.append(list(kw_tokens))
-                    seen_tokens.add(kw_tokens)
-
-        # ⭐ 시장 컨텍스트 키워드 통합 (MARKET_FIT_KEYWORDS — 자동 확장된 세트)
-        # 안전: 다른 시장 키워드는 MARKET_FIT_KEYWORDS에 없으므로 false positive 낮음
-        for mkt_kw in MARKET_FIT_KEYWORDS:
-            if len(mkt_kw) >= 2:
-                search_kw_pool.add(mkt_kw.lower())
-
-        # 브랜드 top 10 상품(메인 라인) — 3중 매칭 전략으로 검사
-        # 우선순위: 1) substring 직접 매칭 → 2) AND 토큰 매칭 → 3) (없음)
+        # 메인 라인 매칭 검사 (헬퍼 함수로 통일)
         has_matching_product = False
         matched_product = ""
         matched_keyword = ""
         for item in brand_items[:10]:
-            title_raw = clean_html_tags(item.get("title", "")).lower()
-            title_no_space = title_raw.replace(" ", "")
-
-            # 1) Substring 직접 매칭 (search_kw_pool)
-            for kw in search_kw_pool:
-                kw_no_space = kw.replace(" ", "")
-                if kw in title_raw or (kw_no_space and kw_no_space in title_no_space):
-                    has_matching_product = True
-                    matched_product = item.get("title", "")[:40]
-                    matched_keyword = kw
-                    break
-            if has_matching_product:
-                break
-
-            # 2) ⭐ 다중 토큰 AND 매칭 (관련도 매칭)
-            # 예: 사용자 "임산부 로션" → 토큰 ("임산부", "로션")
-            #     제목 "임산부 마사지 보디 로션 200ml"
-            #     → "임산부" ✓ + "로션" ✓ → 매칭
-            # 예: "임산부 손소독제" → "임산부" ✓ + "로션" ✗ → 매칭 X (정상)
-            for tokens in user_kw_tokens:
-                if all(
-                    tok in title_raw or tok in title_no_space
-                    for tok in tokens
-                ):
-                    has_matching_product = True
-                    matched_product = item.get("title", "")[:40]
-                    matched_keyword = f"[{' + '.join(tokens)}] 토큰분리"
-                    break
-            if has_matching_product:
+            title = clean_html_tags(item.get("title", ""))
+            matched, kw = _is_keyword_match(
+                title, search_kw_pool_strict, user_kw_tokens
+            )
+            if matched:
+                has_matching_product = True
+                matched_product = item.get("title", "")[:40]
+                matched_keyword = kw
                 break
 
         if not has_matching_product:
-            print(f"        🚫 메인 라인(top 10)에 검색 키워드/토큰/시장 키워드 매칭 X → 다음 후보로")
+            print(f"        🚫 메인 라인(top 10)에 사용자 키워드 매칭 X → 다음 후보로")
             time.sleep(0.3)
             continue
         else:
