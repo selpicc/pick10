@@ -170,23 +170,15 @@ def search_shop(query: str, display: int = 20, start: int = 1, sort: str = "sim"
     return search_naver("shop", query, display, start, sort).get("items", [])
 
 
-def mine_brands_from_blog(keyword: str, max_brands: int = 30) -> list:
-    """Naver 블로그에서 추천/후기 글 → Smart Store URL 추출 → mallName 식별
-
-    블로그 마이닝 흐름:
-      1. "{keyword} 추천", "{keyword} 후기" 등으로 블로그 검색
-      2. 글 description에서 smartstore.naver.com/{storeId} URL 추출
-      3. storeId → search_shop(storeId)로 mallName 식별
-      4. 후보 풀에 추가 (search_shop 결과와 동일 형식)
-    """
+def mine_brands_from_blog(keyword: str, max_brands: int = 15) -> list:
+    """Naver 블로그에서 추천/후기 글 → Smart Store URL 추출 → mallName 식별 (속도 최적화)"""
     found_store_ids = set()
-    suffixes = ["추천", "후기", "인기", "베스트"]
+    suffixes = ["추천", "후기"]   # 4 → 2 (속도 우선)
     EXCLUDE = {"main", "search", "category", "popup"}
 
-    # 1차: 블로그에서 Smart Store URL 추출
     for suffix in suffixes:
         query = f"{keyword} {suffix}"
-        result = search_naver("blog", query, display=30)
+        result = search_naver("blog", query, display=20)   # 30 → 20
         for item in result.get("items", []):
             text = (item.get("title", "") + " " + item.get("description", ""))
             text = clean_html_tags(text)
@@ -197,20 +189,17 @@ def mine_brands_from_blog(keyword: str, max_brands: int = 30) -> list:
                         break
             if len(found_store_ids) >= max_brands * 2:
                 break
-        time.sleep(0.15)
+        time.sleep(0.05)
 
-    # 2차: 각 storeId → 실제 상품 검색해서 mallName 추출
     brand_candidates = []
     for store_id in list(found_store_ids)[:max_brands]:
-        # storeId로 검색해서 그 셀러의 상품 1개 가져옴
-        items = search_shop(store_id, display=5)
+        items = search_shop(store_id, display=3)   # 5 → 3
         for item in items:
             if (item.get("link", "").find(f"smartstore.naver.com/{store_id}") >= 0
                 or item.get("link", "").find(f"/{store_id}") >= 0):
-                # 이 셀러의 상품 확인
                 brand_candidates.append(item)
                 break
-        time.sleep(0.1)
+        time.sleep(0.05)
 
     return brand_candidates
 
@@ -676,16 +665,14 @@ if COLLECT_MODE == "keywords":
     print(f"\n🔍 [1/6] 사용자 키워드 {len(USER_KEYWORDS)}개 → 확장 {len(expanded_keywords)}개로 검색...")
 
     for keyword in expanded_keywords:
-        # 키워드 기반 자동 카테고리 추정 (예: "아기 로션" → "베이비 스킨케어")
         kw_cat = classify_category(keyword)
         if kw_cat == "기타":
-            kw_cat = keyword   # 분류 실패 시 키워드 그대로 사용
+            kw_cat = keyword
 
         keyword_total = 0
-        # Sort 다양화 (sim + date) — 관련성순 + 최신순으로 다양한 셀러 발굴
-        # 페이지네이션 6 페이지 × display 50 × sort 2 = 키워드당 최대 600 결과
+        # Sort 다양화 (sim + date) + 페이지 3개 (1~150위) — 속도 vs 풀 균형
         for sort_method in ["sim", "date"]:
-            for start_offset in [1, 51, 101, 151, 201, 251]:
+            for start_offset in [1, 51, 101]:   # 6 → 3 페이지 (절반)
                 items = search_shop(keyword, display=50, start=start_offset, sort=sort_method)
                 if not items:
                     break
@@ -699,7 +686,7 @@ if COLLECT_MODE == "keywords":
                     item["_rank"] = rank
                     candidates.append(item)
                 keyword_total += len(ss_items)
-                time.sleep(0.1)
+                time.sleep(0.05)   # 0.1 → 0.05 (대기 시간 절반)
         print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건  (카테고리: {kw_cat})")
 
     # 블로그 마이닝 — 추천/후기 글에서 Smart Store 셀러 추가 발굴
@@ -726,9 +713,9 @@ elif COLLECT_MODE == "category":
     print(f"🔍 [1/6] '{TARGET_CATEGORY}' 카테고리 키워드 {len(keywords)}개로 검색 (sort 다양화)...")
     for keyword in keywords:
         keyword_total = 0
-        # Sort 다양화 + 페이지네이션 확대
+        # Sort 다양화 + 페이지 3개 (속도 최적화)
         for sort_method in ["sim", "date"]:
-            for start_offset in [1, 51, 101, 151, 201, 251]:
+            for start_offset in [1, 51, 101]:   # 6 → 3 페이지
                 items = search_shop(keyword, display=50, start=start_offset, sort=sort_method)
                 if not items:
                     break
@@ -742,7 +729,7 @@ elif COLLECT_MODE == "category":
                     item["_rank"] = rank
                     candidates.append(item)
                 keyword_total += len(ss_items)
-                time.sleep(0.1)
+                time.sleep(0.05)
         print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건")
 
     # 카테고리 모드도 블로그 마이닝 (단, 첫 키워드만 — 너무 많아질 수 있음)
