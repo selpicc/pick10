@@ -267,6 +267,48 @@ def _build_extended_market_fit_keywords() -> set:
 MARKET_FIT_KEYWORDS = _build_extended_market_fit_keywords()
 
 
+def expand_keyword_synonym_only(keyword: str) -> list:
+    """단어 동의어 그룹 치환만 — 매칭 풀 구성용 (PRODUCT_SYNONYMS 제외).
+
+    expand_keyword와 차이:
+      - PRODUCT_SYNONYMS 사용 X (상품 동의어는 의미적으로 약간 다른 단어)
+      - baby/mom 단어 그룹만 치환 (자연스러운 단어 단위 동의어)
+
+    예시:
+      "신생아 로션" → ["신생아 로션", "아기 로션", "베이비 로션",
+                       "유아 로션", "영아 로션", "아이 로션", "영유아 로션"]
+      "임산부 비타민" → ["임산부 비타민", "산모 비타민", "임부 비타민",
+                          "수유 비타민", "산후 비타민"]
+      "튼살크림"     → ["튼살크림"] (PRODUCT_SYNONYMS "스트레치마크" 등 제외)
+
+    사용처: collect_5.py의 _build_keyword_match_context (5-1.6 메인 라인 매칭)
+    """
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return []
+    expanded = {keyword}
+
+    # baby 단어 그룹 치환 (예: "신생아" → "아기", "베이비", "유아"...)
+    baby_words = KEYWORD_SYNONYMS["baby"]
+    for word in baby_words:
+        if word in keyword:
+            for replace in baby_words:
+                if replace != word:
+                    expanded.add(keyword.replace(word, replace))
+            break   # 한 그룹만 치환
+
+    # mom 단어 그룹 치환 (예: "임산부" → "산모", "임부", "수유"...)
+    mom_words = KEYWORD_SYNONYMS["mom"]
+    for word in mom_words:
+        if word in keyword:
+            for replace in mom_words:
+                if replace != word:
+                    expanded.add(keyword.replace(word, replace))
+            break
+
+    return list(expanded)
+
+
 def expand_keyword(keyword: str) -> list:
     """사용자 키워드를 동의어로 확장.
 

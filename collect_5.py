@@ -124,6 +124,7 @@ from market_filter import (
     market_fit_check,
     classify_category,
     expand_keyword,
+    expand_keyword_synonym_only,   # 매칭 풀 구성용 (PRODUCT_SYNONYMS 제외)
     generate_space_variants,   # 띄어쓰기 변형 자동 생성
 )
 
@@ -281,47 +282,62 @@ def _build_keyword_match_context(
     def _process_keyword(kw: str):
         """단일 키워드 처리 — search_kw_pool + user_kw_tokens 동시 채움.
 
-        ⭐ 2026-05-13 버그 수정:
-          기존: 띄어쓰기 변형의 split된 토큰을 모두 search_kw_pool/user_kw_tokens에 추가
-            → "신생아 로션"의 의미없는 변형 "신생 아로션"의 토큰 "신생", "아로션"이
-               풀에 들어가 false positive 양산
-          수정: 변형 자체는 substring 매칭용으로만 추가, 토큰 분리는 원본 키워드만
-                (단, 원본이 공백 없는 합성어이면 변형 토큰 허용 — "튼살크림" → "튼살 크림")
+        ⭐ 2026-05-13 강화 (baby/mom 동의어 그룹 통합):
+          "신생아 로션" 입력 시 → "아기 로션", "베이비 로션", "유아 로션" 등
+          자연스러운 단어 동의어도 매칭 풀에 포함 (사용자 요청).
+
+          단, PRODUCT_SYNONYMS의 상품 동의어는 제외 (사용자 명시 키워드와 의미 차이):
+          - "튼살크림" → "스트레치마크" 매칭 X
+          - "신생아" ↔ "아기" 매칭 O
+
+        정책 (단어 동의어):
+          - keywords 모드: expand_keyword_synonym_only로 baby/mom 그룹 치환
+          - category 모드: 카테고리 키워드는 그대로 (이미 명시적 키워드 셋)
         """
-        variants = generate_space_variants(kw)
+        # 1. 매칭 대상 키워드 변형 모음 — 원본 + baby/mom 동의어 치환
+        if mode == "keywords":
+            keyword_variants_set = set(expand_keyword_synonym_only(kw))
+        else:
+            keyword_variants_set = {kw}
+        # 원본은 항상 포함
+        keyword_variants_set.add(kw)
 
-        # 1. Substring 매칭용 — 변형 전체를 풀에 (공백 차이 무관)
-        for variant in variants:
-            search_kw_pool.add(variant.lower())
+        # 2. Substring 매칭 풀 — 각 변형 + 그 변형의 띄어쓰기 변형
+        all_space_variants = set()
+        for syn_kw in keyword_variants_set:
+            for variant in generate_space_variants(syn_kw):
+                search_kw_pool.add(variant.lower())
+                all_space_variants.add(variant)
 
-        # 2. 원본 키워드의 토큰만 search_kw_pool에 단독 추가
+        # 3. 원본 키워드의 토큰만 search_kw_pool에 단독 추가
         #    GENERIC 단독 차단 (예: "신생아", "로션" 단독 매칭 X)
         for token in kw.split():
             tok = token.strip().lower()
             if len(tok) >= 2 and tok not in GENERIC_TOKENS:
                 search_kw_pool.add(tok)
 
-        # 3. AND 토큰 매칭용 — 의미있는 토큰 페어만
-        orig_tokens = tuple(
-            t.strip().lower() for t in kw.split() if len(t.strip()) >= 2
-        )
-        if len(orig_tokens) >= 2:
-            # 원본이 이미 공백 분리됨 → 그 토큰 페어만 사용 (의미 보장)
-            if orig_tokens not in seen_tokens:
-                user_kw_tokens.append(list(orig_tokens))
-                seen_tokens.add(orig_tokens)
-        else:
-            # 원본이 공백 없는 합성어 ("튼살크림") → 띄어쓰기 변형의 토큰 페어 허용
-            # 의미없는 분할 페어도 일부 포함될 수 있지만 false positive 매칭 가능성 낮음
-            for variant in variants:
-                if " " not in variant:
-                    continue
-                vtokens = tuple(
-                    t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
-                )
-                if len(vtokens) >= 2 and vtokens not in seen_tokens:
-                    user_kw_tokens.append(list(vtokens))
-                    seen_tokens.add(vtokens)
+        # 4. AND 토큰 매칭용 — 각 동의어 변형의 토큰 페어
+        # 예: "신생아 로션" → ("신생아", "로션"), ("아기", "로션"),
+        #     ("베이비", "로션"), ("유아", "로션") 등 모두 AND 매칭 후보
+        for syn_kw in keyword_variants_set:
+            syn_tokens = tuple(
+                t.strip().lower() for t in syn_kw.split() if len(t.strip()) >= 2
+            )
+            if len(syn_tokens) >= 2:
+                if syn_tokens not in seen_tokens:
+                    user_kw_tokens.append(list(syn_tokens))
+                    seen_tokens.add(syn_tokens)
+            else:
+                # 공백 없는 합성어 ("튼살크림") → 띄어쓰기 변형의 토큰 페어
+                for variant in generate_space_variants(syn_kw):
+                    if " " not in variant:
+                        continue
+                    vtokens = tuple(
+                        t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
+                    )
+                    if len(vtokens) >= 2 and vtokens not in seen_tokens:
+                        user_kw_tokens.append(list(vtokens))
+                        seen_tokens.add(vtokens)
 
     if mode == "keywords":
         for kw in user_keywords:
