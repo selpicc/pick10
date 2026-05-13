@@ -1398,6 +1398,7 @@ if len(filtered) > 0:
         )
 
         # 컬럼 순서 재배치 (사용자 가독성 우선)
+        #   - 수집일 → 맨 왼쪽
         #   - 카테고리 → 브랜드명 바로 오른쪽
         #   - 스마트스토어 관심고객수 → 스마트스토어 주소 바로 왼쪽
         # 영업자가 표를 좌→우로 읽을 때 자연스러운 순서:
@@ -1414,7 +1415,16 @@ if len(filtered) > 0:
             cols.insert(insert_at, target)
             return cols
 
+        def _move_to_front(cols: list, target: str) -> list:
+            """target 컬럼을 맨 왼쪽(0번째)으로 이동. 없으면 그대로."""
+            if target not in cols:
+                return cols
+            cols = [c for c in cols if c != target]
+            cols.insert(0, target)
+            return cols
+
         cols = list(export_df.columns)
+        cols = _move_to_front(cols, "수집일")                                       # ⭐ 수집일 맨 왼쪽
         cols = _move_column(cols, "카테고리", "브랜드명", "after")
         cols = _move_column(cols, "스마트스토어 관심고객수", "스마트스토어 주소", "before")
         export_df = export_df[cols]
