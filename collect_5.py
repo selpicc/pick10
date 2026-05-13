@@ -173,13 +173,39 @@ def search_shop(query: str, display: int = 20, start: int = 1, sort: str = "sim"
 
 def mine_brands_from_blog(keyword: str, max_brands: int = 15) -> list:
     """Naver 블로그에서 추천/후기 글 → Smart Store URL 추출 → mallName 식별 (속도 최적화)"""
+    return _mine_brands_from_source(keyword, source="blog", max_brands=max_brands)
+
+
+def mine_brands_from_cafe(keyword: str, max_brands: int = 15) -> list:
+    """Naver 카페에서 추천/후기 글 → Smart Store URL 추출 → mallName 식별
+
+    영유아/임산부 시장 핵심 풀:
+      맘카페 입소문이 가장 신뢰성 높은 유기적 추천 소스
+      블로그(광고 가능성)보다 더 진짜 사용자 후기
+    """
+    return _mine_brands_from_source(keyword, source="cafearticle", max_brands=max_brands)
+
+
+def _mine_brands_from_source(keyword: str, source: str, max_brands: int = 15) -> list:
+    """Naver 검색 소스(blog/cafearticle)에서 셀러 발굴 — 통합 헬퍼.
+
+    Args:
+        keyword: 검색 키워드 (예: "튼살크림")
+        source: "blog" 또는 "cafearticle"
+        max_brands: 최대 발굴 브랜드 수
+
+    동작:
+      1. "{keyword} 추천", "{keyword} 후기" 검색 (해당 소스)
+      2. 글 본문에서 smartstore.naver.com/{storeId} 정규식 추출
+      3. 각 storeId로 쇼핑 API 재검색 → 상품 정보 확보
+    """
     found_store_ids = set()
-    suffixes = ["추천", "후기"]   # 4 → 2 (속도 우선)
+    suffixes = ["추천", "후기"]
     EXCLUDE = {"main", "search", "category", "popup"}
 
     for suffix in suffixes:
         query = f"{keyword} {suffix}"
-        result = search_naver("blog", query, display=20)   # 30 → 20
+        result = search_naver(source, query, display=20)
         for item in result.get("items", []):
             text = (item.get("title", "") + " " + item.get("description", ""))
             text = clean_html_tags(text)
@@ -194,7 +220,7 @@ def mine_brands_from_blog(keyword: str, max_brands: int = 15) -> list:
 
     brand_candidates = []
     for store_id in list(found_store_ids)[:max_brands]:
-        items = search_shop(store_id, display=3)   # 5 → 3
+        items = search_shop(store_id, display=3)
         for item in items:
             if (item.get("link", "").find(f"smartstore.naver.com/{store_id}") >= 0
                 or item.get("link", "").find(f"/{store_id}") >= 0):
@@ -690,19 +716,28 @@ if COLLECT_MODE == "keywords":
                 time.sleep(0.05)   # 0.1 → 0.05 (대기 시간 절반)
         print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건  (카테고리: {kw_cat})")
 
-    # 블로그 마이닝 — 추천/후기 글에서 Smart Store 셀러 추가 발굴
-    print(f"\n🔎 [1.5/6] 블로그 마이닝 — 추천/후기 글에서 셀러 추가 발굴...")
+    # 블로그 + 카페 마이닝 — 추천/후기 글에서 Smart Store 셀러 추가 발굴
+    # ⭐ 카페 마이닝 추가 (2026-05-13): 영유아/임산부 시장 핵심 풀 (맘카페 입소문)
+    print(f"\n🔎 [1.5/6] 블로그 + 카페 마이닝 — 추천/후기 글에서 셀러 추가 발굴...")
     for keyword in USER_KEYWORDS:   # 원본 키워드만 (확장 X — API 부담)
         kw_cat = classify_category(keyword)
         if kw_cat == "기타":
             kw_cat = keyword
-        blog_brands = mine_brands_from_blog(keyword, max_brands=30)
+        # 블로그 마이닝
+        blog_brands = mine_brands_from_blog(keyword, max_brands=15)
         for item in blog_brands:
             item["_keyword"] = f"{keyword} (블로그)"
             item["_category_preset"] = kw_cat
             item["_rank"] = 99   # 블로그 발굴은 별도 랭크
             candidates.append(item)
-        print(f"   ✓ '{keyword}' 블로그 발굴 → {len(blog_brands)}건")
+        # 카페 마이닝 (맘카페 입소문 — 가장 신뢰성 높음)
+        cafe_brands = mine_brands_from_cafe(keyword, max_brands=15)
+        for item in cafe_brands:
+            item["_keyword"] = f"{keyword} (카페)"
+            item["_category_preset"] = kw_cat
+            item["_rank"] = 99
+            candidates.append(item)
+        print(f"   ✓ '{keyword}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 elif COLLECT_MODE == "category":
     # 모드 2: 단일 카테고리 한정
@@ -733,16 +768,25 @@ elif COLLECT_MODE == "category":
                 time.sleep(0.05)
         print(f"   ✓ '{keyword:18s}' → 스마트스토어 {keyword_total}건")
 
-    # 카테고리 모드도 블로그 마이닝 (단, 첫 키워드만 — 너무 많아질 수 있음)
+    # 카테고리 모드도 블로그 + 카페 마이닝 (단, 첫 키워드만 — 너무 많아질 수 있음)
+    # ⭐ 카페 마이닝 추가 (2026-05-13): 영유아/임산부 시장 핵심 풀 (맘카페 입소문)
     if keywords:
-        print(f"\n🔎 [1.5/6] 블로그 마이닝 (대표 키워드 1개)...")
-        blog_brands = mine_brands_from_blog(keywords[0], max_brands=20)
+        print(f"\n🔎 [1.5/6] 블로그 + 카페 마이닝 (대표 키워드 1개)...")
+        # 블로그 마이닝
+        blog_brands = mine_brands_from_blog(keywords[0], max_brands=15)
         for item in blog_brands:
             item["_keyword"] = f"{keywords[0]} (블로그)"
             item["_category_preset"] = TARGET_CATEGORY
             item["_rank"] = 99
             candidates.append(item)
-        print(f"   ✓ '{keywords[0]}' 블로그 발굴 → {len(blog_brands)}건")
+        # 카페 마이닝
+        cafe_brands = mine_brands_from_cafe(keywords[0], max_brands=15)
+        for item in cafe_brands:
+            item["_keyword"] = f"{keywords[0]} (카페)"
+            item["_category_preset"] = TARGET_CATEGORY
+            item["_rank"] = 99
+            candidates.append(item)
+        print(f"   ✓ '{keywords[0]}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 else:
     # 모드 1 (기본): 12개 카테고리 전체
