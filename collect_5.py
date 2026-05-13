@@ -121,6 +121,7 @@ from market_filter import (
     market_fit_check,
     classify_category,
     expand_keyword,
+    generate_space_variants,   # 띄어쓰기 변형 자동 생성
 )
 
 
@@ -955,48 +956,77 @@ for sel in passed:
         time.sleep(0.3)
         continue   # 5건에 안 포함
 
-    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 20 상품 중 1개라도 검색 키워드 부분 매칭 필수
+    # 5-1.6) 키워드/카테고리 모드: 브랜드 top 10 상품 중 1개라도 검색 키워드 부분 매칭 필수
     # 이유: 키워드 모드도 무관 브랜드(바퀴벌레약 등) 차단 필요
-    # 매칭 방식: 부분 키워드 매칭 (튼살크림 → "튼살"만 있어도 OK)
+    # 매칭 방식: 부분 키워드 매칭 + 시장 컨텍스트 + 띄어쓰기 변형
+    # ⭐ 2026-05-13 강화 (3차):
+    #   - top 5 → top 10 (메인 라인 범위 확대)
+    #   - 띄어쓰기 변형 자동 생성 ("튼살크림" ↔ "튼살 크림" 양쪽 매칭)
+    #   - 확장 키워드 토큰화 + MARKET_FIT_KEYWORDS 통합
     if COLLECT_MODE in ("keywords", "category"):
         if COLLECT_MODE == "keywords":
-            # 사용자 입력 + 확장 동의어 + 부분 키워드
+            # 사용자 입력 + 확장 동의어 + 띄어쓰기 변형 + 토큰화
             search_kw_pool = set()
             for kw in USER_KEYWORDS:
-                for ex in expand_keyword(kw):
-                    search_kw_pool.add(ex.lower())
+                # 원본 + 띄어쓰기 변형 ("튼살크림" → "튼살크림", "튼살 크림", ...)
+                for variant in generate_space_variants(kw):
+                    search_kw_pool.add(variant.lower())
+                # 원본 토큰 (예: "임산부 크림" → "임산부", "크림")
                 for token in kw.split():
                     if len(token) >= 2:
                         search_kw_pool.add(token.lower())
+                # 확장 동의어 + 확장 동의어의 띄어쓰기 변형 + 토큰
+                for ex in expand_keyword(kw):
+                    for variant in generate_space_variants(ex):
+                        search_kw_pool.add(variant.lower())
+                    for token in ex.split():
+                        if len(token) >= 2:
+                            search_kw_pool.add(token.lower())
         else:
             cat_kws = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
-            search_kw_pool = {kw.lower() for kw in cat_kws}
+            search_kw_pool = set()
             for kw in cat_kws:
+                # 카테고리 키워드도 띄어쓰기 변형 적용
+                for variant in generate_space_variants(kw):
+                    search_kw_pool.add(variant.lower())
                 for token in kw.split():
                     if len(token) >= 2:
                         search_kw_pool.add(token.lower())
 
-        # 브랜드 top 5 상품(메인 라인) 중 1개라도 검색 키워드 부분 매칭
-        # Top 5만 검사 → 브랜드의 진짜 메인 비즈니스가 검색 키워드와 관련 있는지 확인
-        # (예: 아기자기랩이 이유식 셀러인데 튼살크림 1개 있어도 top 5 안에 없으면 제외)
+        # ⭐ 시장 컨텍스트 키워드 통합 (MARKET_FIT_KEYWORDS — 자동 확장된 세트)
+        # 이유: 사용자가 "튼살크림" 검색했을 때, 그 브랜드가 "임산부용 바디 로션",
+        #       "산모 마사지오일" 같은 변형 상품도 메인 라인에 있을 수 있음.
+        # 안전: 다른 시장 키워드는 MARKET_FIT_KEYWORDS에 없으므로 false positive 낮음
+        for mkt_kw in MARKET_FIT_KEYWORDS:
+            if len(mkt_kw) >= 2:
+                search_kw_pool.add(mkt_kw.lower())
+
+        # 브랜드 top 10 상품(메인 라인) 중 1개라도 검색 키워드 부분 매칭
+        # Top 10 → 메인 라인 검사 범위 확대 (top 5는 너무 좁아 미달 발생)
+        # 비교 시 양쪽 정규화 (공백 차이 무시) — 더 robust한 매칭
         has_matching_product = False
         matched_product = ""
-        for item in brand_items[:5]:   # top 20 → top 5로 축소 (엄격)
-            title = clean_html_tags(item.get("title", "")).lower()
+        matched_keyword = ""
+        for item in brand_items[:10]:   # top 5 → top 10 확대
+            title_raw = clean_html_tags(item.get("title", "")).lower()
+            title_no_space = title_raw.replace(" ", "")
             for kw in search_kw_pool:
-                if kw in title:
+                kw_no_space = kw.replace(" ", "")
+                # 양쪽 정규화 비교 — "튼살크림" vs "튼살 크림" 양쪽 매칭
+                if kw in title_raw or (kw_no_space and kw_no_space in title_no_space):
                     has_matching_product = True
                     matched_product = item.get("title", "")[:40]
+                    matched_keyword = kw
                     break
             if has_matching_product:
                 break
 
         if not has_matching_product:
-            print(f"        🚫 메인 라인(top 5)에 검색 키워드 관련 상품 없음 → 다음 후보로")
+            print(f"        🚫 메인 라인(top 10)에 검색 키워드/시장 키워드 매칭 X → 다음 후보로")
             time.sleep(0.3)
             continue
         else:
-            print(f"        ✓ 메인 라인 매칭: {matched_product}")
+            print(f"        ✓ 메인 라인 매칭: '{matched_keyword}' in {matched_product}")
 
     flagship_price = int(flagship.get("lprice", 0))
 
