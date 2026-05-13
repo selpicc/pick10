@@ -1396,6 +1396,28 @@ if len(filtered) > 0:
         export_df = export_df.rename(
             columns={k: v for k, v in CSV_RENAME.items() if k in export_df.columns}
         )
+
+        # 컬럼 순서 재배치 (사용자 가독성 우선)
+        #   - 카테고리 → 브랜드명 바로 오른쪽
+        #   - 스마트스토어 관심고객수 → 스마트스토어 주소 바로 왼쪽
+        # 영업자가 표를 좌→우로 읽을 때 자연스러운 순서:
+        #   [수집일 · 브랜드명 · 카테고리 · ... · 스마트스토어 관심고객수 · 스마트스토어 주소 · ...]
+        def _move_column(cols: list, target: str, anchor: str, position: str) -> list:
+            """target 컬럼을 anchor 컬럼의 'before' 또는 'after' 위치로 이동.
+            둘 중 하나라도 없으면 변경 없이 반환 (safe-fallback).
+            """
+            if target not in cols or anchor not in cols or target == anchor:
+                return cols
+            cols = [c for c in cols if c != target]   # 일단 제거
+            idx = cols.index(anchor)
+            insert_at = idx + 1 if position == "after" else idx
+            cols.insert(insert_at, target)
+            return cols
+
+        cols = list(export_df.columns)
+        cols = _move_column(cols, "카테고리", "브랜드명", "after")
+        cols = _move_column(cols, "스마트스토어 관심고객수", "스마트스토어 주소", "before")
+        export_df = export_df[cols]
         # to_csv()는 string 반환 시 encoding 무시 → 직접 BOM 포함 bytes로 변환
         # BOM(Byte Order Mark) 있어야 Excel이 UTF-8 인식 → 한글 깨짐 방지
         csv_export = export_df.to_csv(index=False).encode("utf-8-sig")
