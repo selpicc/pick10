@@ -170,13 +170,20 @@ def clean_html_tags(text: str) -> str:
 def load_collected_brands() -> set:
     """Supabase sellers 테이블에서 이미 수집된 브랜드명 모음.
     누적 DB 역할 — 이미 영업 시도된 셀러는 다음 실행에서 자동 제외.
+
+    ⚠️ strip() 필수 — DB와 candidates의 brand_name 공백 차이로
+       중복 제외 실패하던 버그 수정 (어제 수집한 게 오늘 또 INSERT 되는 문제)
     """
     sb = get_supabase_client()
     if not sb:
         return set()
     try:
         result = sb.table(TABLE_NAME).select("brand_name").execute()
-        return {row["brand_name"] for row in result.data if row.get("brand_name")}
+        return {
+            row["brand_name"].strip()
+            for row in result.data
+            if row.get("brand_name") and row["brand_name"].strip()
+        }
     except Exception:
         return set()
 
