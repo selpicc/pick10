@@ -900,14 +900,14 @@ for sel in passed:
         and "smartstore.naver.com" in it.get("link", "")
     ]
 
-    # 5-1.3) 종합몰 자동 제외 — 자동 모드만 적용
-    # 키워드/카테고리 모드는 건너뜀 (화장품 회사가 튼살크림 파는 케이스 차단 X)
-    # 사용자가 명시적으로 키워드/카테고리 발굴한 경우 = 종합몰이라도 OK
+    # 5-1.3) 종합몰 자동 제외 — 모드별 다른 기준
+    # 자동 모드:    영유아 50% 미만 OR 카테고리 8종+ → 종합몰
+    # 키워드/카테고리: 카테고리 5종+ 만 (영유아 비율 X — 화장품 브랜드도 통과)
     own_brand_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
     ]
-    if COLLECT_MODE == "auto" and len(own_brand_items) >= 5:
+    if len(own_brand_items) >= 5:
         cat1_counts = {}
         for it in own_brand_items:
             cat1 = it.get("category1", "").strip()
@@ -921,8 +921,18 @@ for sel in passed:
             baby_ratio = baby_count / total_items
             diversity = len(cat1_counts)
 
-            # 자동 모드 → 종합몰 차단 (영유아 50% 미만 OR 카테고리 8종 이상으로 완화)
-            if baby_ratio < 0.5 or diversity >= 8:
+            is_general_mall = False
+            if COLLECT_MODE == "auto":
+                # 자동 모드: 영유아 50% 미만 OR 카테고리 8종+
+                if baby_ratio < 0.5 or diversity >= 8:
+                    is_general_mall = True
+            else:
+                # 키워드/카테고리 모드: 카테고리 5종+ (다양성 기준만)
+                # 화장품 회사처럼 2~3종은 통과, 진짜 종합몰만 차단
+                if diversity >= 5:
+                    is_general_mall = True
+
+            if is_general_mall:
                 print(f"        🚫 종합몰 자동 제외 "
                       f"(영유아 {baby_ratio:.0%}, 카테고리 {diversity}종) → 다음 후보로")
                 time.sleep(0.3)
