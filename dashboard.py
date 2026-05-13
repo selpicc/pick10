@@ -1358,14 +1358,14 @@ if len(filtered) > 0:
         # CSV 컬럼명을 셀러 디테일 라벨과 통일 (혼동 방지)
         # 디테일 패널에서 사용하는 라벨 = CSV 헤더로 동일하게
         CSV_RENAME = {
-            # 수기 입력 컬럼 ("(수기)" 접미사 제거)
+            # 수기 입력 컬럼 (디테일 라벨과 동일)
             "영업 상태 (수기)":    "영업 상태",
-            "전화 (수기)":         "연락처",       # ⭐ 전화 → 연락처
+            "전화 (수기)":         "연락처",                    # ⭐ 전화 → 연락처
             "이메일 (수기)":       "이메일",
-            "관심고객수 (수기)":   "관심고객수",
+            "관심고객수 (수기)":   "스마트스토어 관심고객수",   # ⭐ 출처 명시
             "활동 메모 (수기)":    "활동 메모",
             "상호 (수기)":         "상호",
-            "대표 (수기)":         "대표",
+            "대표 (수기)":         "대표자 성함",                # ⭐ 의미 명확
             # 자동 컬럼 (디테일 라벨과 동일하게)
             "주력상품명":               "주력 상품",
             "마케팅 활동 단계 (자동)":  "마케팅 활동",
@@ -1558,12 +1558,13 @@ if len(filtered) > 0:
                     )
                 with edit_col2:
                     new_count = st.text_input(
-                        "관심고객수",
+                        "스마트스토어 관심고객수",
                         value=str(sel_full.get("관심고객수 (수기)", "")),
+                        placeholder="예) 1,234",
                         key=f"count_{sel_brand}",
                     )
 
-                # 상호 / 대표 (신규)
+                # 상호 / 대표자 성함 (신규)
                 edit_col_a, edit_col_b = st.columns(2)
                 with edit_col_a:
                     new_company = st.text_input(
@@ -1574,7 +1575,7 @@ if len(filtered) > 0:
                     )
                 with edit_col_b:
                     new_ceo = st.text_input(
-                        "대표",
+                        "대표자 성함",
                         value=str(sel_full.get("대표 (수기)", "")),
                         placeholder="대표자 성함",
                         key=f"ceo_{sel_brand}",
