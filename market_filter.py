@@ -455,7 +455,8 @@ PRODUCT_HINTS = {
 def classify_category(product_title: str) -> str:
     """주력상품명 → 10개 카테고리 중 하나로 자동 분류.
 
-    1차: CATEGORY_KEYWORDS 정확 매칭 (정의 순서대로)
+    1차: CATEGORY_KEYWORDS 전체 검사 → 가장 긴(구체적) 키워드 매칭 카테고리 선택
+         (이전 방식: 첫 매칭 카테고리 → 부정확. "수유쿠션 분유" → "분유" 먼저 매칭 X)
     2차: PRODUCT_HINTS + 영유아/임산부 키워드 fallback
     3차: '기타' 반환 (어떤 패턴도 매칭 X)
     """
@@ -463,7 +464,19 @@ def classify_category(product_title: str) -> str:
         return "기타"
     text = product_title.lower()
 
-    # 1차: 정확 매칭
+    # 1차: 모든 카테고리 키워드 검사 후 가장 긴 매칭 선택 (specificity 우선)
+    best_match_length = 0
+    best_match_category = None
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in text and len(kw) > best_match_length:
+                best_match_length = len(kw)
+                best_match_category = category
+
+    if best_match_category:
+        return best_match_category
+
+    # 1차 매칭 없으면 기존 로직 유지
     for category, keywords in CATEGORY_KEYWORDS.items():
         for kw in keywords:
             if kw.lower() in text:
