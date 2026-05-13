@@ -673,19 +673,26 @@ else:   # 키워드 입력
 
 if collect_clicked:
     # ────────────────────────────────────────────────
-    # 1단계: 시장 미적합 브랜드 자동 정리 (조용히 실행, 영업 진행 중 자동 보호)
+    # ⚠️ 자동 미적합 정리 로직 제거 (2026-05-13)
+    # 이유: market_fit_check는 substring 비교 + 영유아 키워드 필수라
+    #       정상 브랜드도 잘못 부적합 판정될 수 있음
+    #       (예: "프라젠트라" — 브랜드명/주력상품명에 영유아 키워드 없으면 A 탈락)
+    # 결과: 사용자가 검토할 기회도 없이 신규 수집 직후 자동 삭제됨
+    # 해결: 정리는 사용자가 명시적으로 트리거 (디테일 패널의 "🗑️ 이 셀러 삭제"
+    #       또는 메인 표 체크박스 선택 → 일괄 삭제 사용)
     # ────────────────────────────────────────────────
-    try:
-        with st.spinner("기존 브랜드 검토 중..."):
-            scan = scan_unfit_brands()
-            del_cands = scan["delete_candidates"]
-            if del_cands:
-                delete_unfit_brands(del_cands)
-    except Exception:
-        pass   # 정리 실패해도 수집은 계속 진행
+    # try:
+    #     with st.spinner("기존 브랜드 검토 중..."):
+    #         scan = scan_unfit_brands()
+    #         del_cands = scan["delete_candidates"]
+    #         if del_cands:
+    #             delete_unfit_brands(del_cands)
+    # except Exception:
+    #     pass
 
     # ────────────────────────────────────────────────
-    # 2단계: 수집 (모드별 인자 전달 — collect_5.py에 [3.5/6] A+B+C 필터 내장)
+    # 수집 (모드별 인자 전달 — collect_5.py에 [3.5/6] A+B+C 필터 내장)
+    # collect_5.py 내부 필터는 신규 수집 후보에만 적용 → 기존 DB 영향 X
     # ────────────────────────────────────────────────
     # 모드별 명령줄 인자 구성
     cmd_args = [sys.executable, "collect_5.py", "--count", str(collect_n)]
