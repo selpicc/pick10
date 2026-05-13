@@ -257,14 +257,20 @@ def _build_keyword_match_context(
     반환:
       (search_kw_pool: set, user_kw_tokens: list[list[str]])
 
-    search_kw_pool 구성:
-      - 사용자 키워드 원본 + 띄어쓰기 변형 (모두 substring 매칭 대상)
-      - 확장 동의어 + 동의어 띄어쓰기 변형
-      - 토큰 중 GENERIC_TOKENS에 속하지 않은 것만 (false positive 방지)
+    ⭐ 2026-05-13 정책 (사용자 명시):
+      "내가 입력한 키워드가 있는 브랜드만 발굴"
+      → 확장 동의어(스트레치마크/임부 크림/산모 크림 등) 매칭 제거
+      → 사용자가 직접 입력한 키워드와 그 띄어쓰기 변형만 인정
 
-    user_kw_tokens 구성:
-      - 사용자 키워드 + 확장 동의어를 토큰 분리 (2자+ 토큰만)
-      - 토큰 모두 제목에 있어야 매칭 (AND 매칭용)
+    search_kw_pool 구성 (substring 매칭):
+      - 사용자 키워드 원본 (예: "튼살크림")
+      - 띄어쓰기 변형 (예: "튼살 크림")
+      - GENERIC 아닌 토큰 (예: "튼살"은 OK / "크림"은 X — 단독 매칭 차단)
+
+    user_kw_tokens 구성 (AND 매칭):
+      - 사용자 키워드 모든 변형의 토큰 분리
+      - 예: "튼살크림" → ("튼살", "크림") AND 매칭
+      - 효과: "튼살 케어 보디 크림" 같은 변형도 매칭
     """
     search_kw_pool = set()
     user_kw_tokens = []
@@ -272,28 +278,24 @@ def _build_keyword_match_context(
 
     if mode == "keywords":
         for kw in user_keywords:
-            # 원본 + 띄어쓰기 변형 (substring 매칭)
-            for variant in generate_space_variants(kw):
+            # 원본 + 띄어쓰기 변형 (substring 매칭 대상)
+            variants = generate_space_variants(kw)
+            for variant in variants:
                 search_kw_pool.add(variant.lower())
-            # 원본 토큰 — GENERIC 제외
-            for token in kw.split():
-                tok = token.strip().lower()
-                if len(tok) >= 2 and tok not in GENERIC_TOKENS:
-                    search_kw_pool.add(tok)
-            # 확장 동의어 + 동의어 토큰
-            expanded = expand_keyword(kw)
-            for ex in expanded:
-                for variant in generate_space_variants(ex):
-                    search_kw_pool.add(variant.lower())
-                for token in ex.split():
+                # 변형의 토큰 추출 — GENERIC 제외
+                # "튼살크림" 변형의 "튼살" 같은 specific 토큰 단독 매칭은 OK
+                # "임산부 로션" 변형의 "임산부"/"로션" 단독 매칭은 차단
+                for token in variant.split():
                     tok = token.strip().lower()
                     if len(tok) >= 2 and tok not in GENERIC_TOKENS:
                         search_kw_pool.add(tok)
 
-            # AND 매칭용 토큰 세트 (원본 + 확장 동의어 모두)
-            for src in [kw] + expanded:
+            # AND 토큰 매칭용 — 원본 + 띄어쓰기 변형에서 2개+ 토큰 추출
+            # "튼살크림" 변형 "튼살 크림" → ("튼살", "크림") AND 매칭
+            # "임산부 로션" 원본 → ("임산부", "로션") AND 매칭
+            for variant in variants:
                 src_tokens = tuple(
-                    t.strip().lower() for t in src.split() if len(t.strip()) >= 2
+                    t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
                 )
                 if len(src_tokens) >= 2 and src_tokens not in seen_tokens:
                     user_kw_tokens.append(list(src_tokens))
@@ -302,18 +304,21 @@ def _build_keyword_match_context(
     else:   # category 모드
         cat_kws = category_presets.get(target_category, [])
         for kw in cat_kws:
-            for variant in generate_space_variants(kw):
+            variants = generate_space_variants(kw)
+            for variant in variants:
                 search_kw_pool.add(variant.lower())
-            for token in kw.split():
-                tok = token.strip().lower()
-                if len(tok) >= 2 and tok not in GENERIC_TOKENS:
-                    search_kw_pool.add(tok)
-            kw_tokens = tuple(
-                t.strip().lower() for t in kw.split() if len(t.strip()) >= 2
-            )
-            if len(kw_tokens) >= 2 and kw_tokens not in seen_tokens:
-                user_kw_tokens.append(list(kw_tokens))
-                seen_tokens.add(kw_tokens)
+                for token in variant.split():
+                    tok = token.strip().lower()
+                    if len(tok) >= 2 and tok not in GENERIC_TOKENS:
+                        search_kw_pool.add(tok)
+            # 카테고리 키워드도 AND 토큰 매칭
+            for variant in variants:
+                kw_tokens = tuple(
+                    t.strip().lower() for t in variant.split() if len(t.strip()) >= 2
+                )
+                if len(kw_tokens) >= 2 and kw_tokens not in seen_tokens:
+                    user_kw_tokens.append(list(kw_tokens))
+                    seen_tokens.add(kw_tokens)
 
     return search_kw_pool, user_kw_tokens
 
