@@ -1349,10 +1349,28 @@ if len(filtered) > 0:
             "updated_at",
             "수집 모드",
             "관심고객수 (자동)",
+            "리뷰수 (수기)",   # 영업자에게 불필요
             "_단계명",        # 내부 정규화용
             "_source_file",   # 내부 메타데이터
             "id",             # DB 키
         ]
+
+        # CSV 컬럼명을 셀러 디테일 라벨과 통일 (혼동 방지)
+        # 디테일 패널에서 사용하는 라벨 = CSV 헤더로 동일하게
+        CSV_RENAME = {
+            # 수기 입력 컬럼 ("(수기)" 접미사 제거)
+            "영업 상태 (수기)":    "영업 상태",
+            "전화 (수기)":         "연락처",       # ⭐ 전화 → 연락처
+            "이메일 (수기)":       "이메일",
+            "관심고객수 (수기)":   "관심고객수",
+            "활동 메모 (수기)":    "활동 메모",
+            "상호 (수기)":         "상호",
+            "대표 (수기)":         "대표",
+            # 자동 컬럼 (디테일 라벨과 동일하게)
+            "주력상품명":               "주력 상품",
+            "마케팅 활동 단계 (자동)":  "마케팅 활동",
+            "마케팅 채널별 노출 (자동)": "마케팅 노출",
+        }
 
         # 체크박스 선택된 행만 / 없으면 전체
         # ⚠️ 정규화 양쪽 일관성: selected_brands는 .strip() 적용됨 → 비교 시 양쪽 strip
@@ -1373,6 +1391,10 @@ if len(filtered) > 0:
         export_df = export_source.drop(
             columns=[c for c in CSV_EXCLUDE_COLS if c in export_source.columns],
             errors="ignore",
+        )
+        # 컬럼명 통일 (디테일 라벨과 일치)
+        export_df = export_df.rename(
+            columns={k: v for k, v in CSV_RENAME.items() if k in export_df.columns}
         )
         # to_csv()는 string 반환 시 encoding 무시 → 직접 BOM 포함 bytes로 변환
         # BOM(Byte Order Mark) 있어야 Excel이 UTF-8 인식 → 한글 깨짐 방지
@@ -1541,6 +1563,23 @@ if len(filtered) > 0:
                         key=f"count_{sel_brand}",
                     )
 
+                # 상호 / 대표 (신규)
+                edit_col_a, edit_col_b = st.columns(2)
+                with edit_col_a:
+                    new_company = st.text_input(
+                        "상호",
+                        value=str(sel_full.get("상호 (수기)", "")),
+                        placeholder="사업자등록증 상의 상호",
+                        key=f"company_{sel_brand}",
+                    )
+                with edit_col_b:
+                    new_ceo = st.text_input(
+                        "대표",
+                        value=str(sel_full.get("대표 (수기)", "")),
+                        placeholder="대표자 성함",
+                        key=f"ceo_{sel_brand}",
+                    )
+
                 edit_col3, edit_col4 = st.columns(2)
                 with edit_col3:
                     new_email = st.text_input(
@@ -1579,6 +1618,8 @@ if len(filtered) > 0:
                     new_values = {
                         "영업 상태 (수기)": new_status,
                         "관심고객수 (수기)": new_count,
+                        "상호 (수기)":      new_company,
+                        "대표 (수기)":      new_ceo,
                         "이메일 (수기)": new_email,
                         "전화 (수기)": new_phone,
                         "활동 메모 (수기)": new_memo,
