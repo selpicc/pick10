@@ -121,6 +121,7 @@ from market_filter import (
     BIG_COMPANY_BLOCKLIST,
     NEGATIVE_KEYWORDS,
     GENERIC_TOKENS,            # 일반어 (단독 매칭 제외용)
+    CATEGORY_KEYWORDS,         # 카테고리별 핵심 키워드 (extract_product_keyword 개선용)
     market_fit_check,
     classify_category,
     expand_keyword,
@@ -492,8 +493,8 @@ def _process_one_candidate(
         )
         print(f"        스토어 URL: 검색 페이지 최후 fallback ({store_debug})")
 
-    # 5-3) 상품 키워드
-    product_keyword = extract_product_keyword(flagship_title)
+    # 5-3) 상품 키워드 — ⭐ 브랜드명 전달 (자기 자신 추출 방지)
+    product_keyword = extract_product_keyword(flagship_title, brand_name=brand_name)
 
     # 5-3.5) 관심고객수
     follower_count = fetch_follower_count(store_url)
@@ -664,26 +665,47 @@ def build_real_product_url(store_url: str, product_id: str) -> str:
     return ""
 
 
-def extract_product_keyword(title: str) -> str:
-    """주력 상품명에서 가장 의미있는 상품 키워드 추출
+def extract_product_keyword(title: str, brand_name: str = "") -> str:
+    """주력 상품명에서 마케팅 검색용 키워드 추출.
 
-    전략:
-      1. [의료기기] / (15g) 같은 부가정보 제거
-      2. 토큰화
-      3. SKIP_MODIFIERS 제외 (사이즈/시장/일반 수식어)
-      4. 남은 단어 중 가장 긴(고유한) 것 선택
+    ⭐ 2026-05-13 개선 (정확도 ↑):
+      1. 브랜드명 임시 제거 (자기 자신 추출 방지)
+         예: "프라젠트라 아토프라덤..." → 브랜드 빼고 처리
+              결과 키워드에 "프라젠트라" 안 들어감 (최종 검색 시 다시 합침)
+      2. 부가정보 제거 (대괄호·괄호·용량)
+      3. 카테고리 핵심 키워드 우선 매칭 (크림/로션/유모차 등)
+      4. + Specific 명사 (가장 긴 고유 명사)
+      5. 조합 반환: "아토프라덤 크림" 형태
 
-    예: "빅사이즈 임산부 원피스 반팔 베이글주름원피스"
-        → 수식어 제외 → ["원피스", "베이글주름원피스"]
-        → 가장 긴 단어 → "베이글주름원피스" ✅
+    예시:
+      "프라젠트라 아토프라덤 베이비 케어 크림 200ml" + brand="프라젠트라"
+        → 브랜드 제거: "아토프라덤 베이비 케어 크림 200ml"
+        → 수식어 제외: ["아토프라덤", "크림"]
+        → 카테고리 매칭: "크림" (베이비 스킨케어 카테고리)
+        → Specific: "아토프라덤"
+        → 결과: "아토프라덤 크림"
 
-    예: "에디슨 유아 젓가락 셀프케어 세트"
-        → 수식어 제외 → ["에디슨", "젓가락", "셀프케어"]
-        → 가장 긴 단어 → "셀프케어"
+      "에디슨 유아 젓가락 셀프케어 세트" + brand="에디슨"
+        → 브랜드 제거: "유아 젓가락 셀프케어 세트"
+        → 수식어 제외: ["젓가락", "셀프케어"]
+        → 카테고리 매칭: "젓가락" (수유용품)
+        → Specific: "셀프케어"
+        → 결과: "셀프케어 젓가락"
+
+    최종 검색 쿼리 형태 (calculate_marketing_grade에서):
+        "{brand_name} {추출된 키워드}"
+        예: "프라젠트라 아토프라덤 크림"
     """
     if not title:
         return ""
     text = clean_html_tags(title)
+
+    # ⭐ Step 1: 브랜드명 임시 제거 (자기 자신 추출 방지)
+    # 최종 검색 쿼리는 calculate_marketing_grade에서 다시 brand_name + 결과 합침
+    if brand_name:
+        text = text.replace(brand_name, "")
+
+    # Step 2: 부가정보 제거
     text = re.sub(r"\[[^\]]*\]", "", text)   # [의료기기] 등
     text = re.sub(r"\([^)]*\)", "", text)    # (300ml) 등
     text = " ".join(text.split())            # 공백 정리
@@ -707,17 +729,54 @@ def extract_product_keyword(title: str) -> str:
         "베이비", "유아", "아기", "신생아", "영아", "영유아",
         "임산부", "산모", "임부", "수유", "출산", "임신", "산후",
         "임산부용", "유아용", "신생아용", "키즈", "주니어",
+        # ⭐ 추가 일반 수식어 (2026-05-13)
+        "케어", "관리", "보습", "수분", "진정",
+        "부드러운", "촉촉한", "산뜻한", "순한", "안전한",
+        "무자극", "민감", "건성", "지성", "복합",
+        "전용", "고급",
     }
 
-    # 수식어 제외
-    filtered = [w for w in words if w not in SKIP_MODIFIERS]
+    # Step 3: 토큰화 + 수식어/용량 패턴 제외
+    filtered = []
+    for w in words:
+        if w in SKIP_MODIFIERS:
+            continue
+        if re.match(r"^\d+(\.\d+)?[a-zA-Z가-힣]*$", w):   # 200ml, 5kg, 100 등 용량
+            continue
+        if len(w) < 2:
+            continue
+        filtered.append(w)
+
     if not filtered:
-        # 모두 수식어면 첫 단어로 fallback
         return words[0]
 
-    # 가장 긴 (고유한) 단어 선택 — 한국어 상품명은 보통 끝부분이 상품 본체
-    filtered.sort(key=len, reverse=True)
-    return filtered[0]
+    # ⭐ Step 4: 카테고리 핵심 키워드 매칭 우선 (단일 단어만)
+    # 원본 title 기준으로 카테고리 분류 후, 그 카테고리의 단일 단어 키워드 매칭
+    category = classify_category(title)
+    cat_keywords = CATEGORY_KEYWORDS.get(category, [])
+
+    cat_match = None
+    for kw in cat_keywords:
+        # 단일 단어 키워드만 (예: "크림", "로션", "유모차")
+        # 복합 키워드 (예: "임산부 크림")는 제외
+        if " " not in kw and kw in filtered:
+            cat_match = kw
+            break
+
+    # Step 5: Specific 명사 추출 (가장 긴 단어, 카테고리 매칭 제외)
+    specific_candidates = [w for w in filtered if w != cat_match]
+    specific_candidates.sort(key=len, reverse=True)
+    specific = specific_candidates[0] if specific_candidates else None
+
+    # Step 6: 조합
+    if specific and cat_match:
+        return f"{specific} {cat_match}"   # "아토프라덤 크림"
+    elif specific:
+        return specific   # "아토프라덤"
+    elif cat_match:
+        return cat_match   # "크림"
+    else:
+        return filtered[0]
 
 
 def resolve_real_store_url(link: str, max_retries: int = 2) -> tuple:
@@ -883,43 +942,62 @@ def fetch_follower_count(store_url: str) -> int:
 def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "", follower_count: int = 0) -> dict:
     """3채널 검색 노출량 → 상/중/하 + 규모
 
-    노이즈 제거 핵심 — 브랜드명 + 시장 컨텍스트 조합으로 검색:
-      예: "에디슨" 단독 → 토마스 에디슨(과학자) 글 다 잡혀 → 부정확
-      예: "에디슨 베이비" 조합 → 그 브랜드의 베이비 시장 활동만 측정 ✅
+    ⭐ 2026-05-13 개선:
+      검색 쿼리: "{brand_name} {search_keyword}" (메인 쿼리 1개)
+        예: "프라젠트라 아토프라덤 크림"
 
-    검색 쿼리 구성:
-      - 메인: "{brand_name} {시장 컨텍스트}"
-              시장 컨텍스트는 카테고리에서 자동 추론 (임산부 / 베이비)
-      - SNS: "{brand_name} {시장 컨텍스트} 인스타"
+      - search_keyword = extract_product_keyword 결과 (브랜드명 제외된 키워드)
+      - Naver 자동 처리: 띄어쓰기·순서·사이단어 변형 모두 자동 매칭
+      - 단일 쿼리 1회 검색 (블로그·카페 각 1회) — 중복 카운트 X
+      - Fallback: 데이터 부족 시 시장 컨텍스트로 재검색
+
+    노이즈 제거 핵심 — 브랜드명 + 주력상품 조합으로 검색:
+      예: "에디슨" 단독 → 토마스 에디슨(과학자) 글 다 잡혀 → 부정확
+      예: "에디슨 셀프케어 젓가락" → 그 브랜드 상품 마케팅만 정확 측정 ✅
 
     채널 구성 (3채널):
       - 블로그: Naver 블로그 검색 결과 수
       - 카페: Naver 카페 검색 결과 수 (가장 신뢰성 높음, 유기적 입소문)
       - SNS: Naver에서 "{쿼리} 인스타" 멘션 (인스타그램 프록시)
     """
-    # 시장 컨텍스트 결정 (카테고리 기반)
+    # 시장 컨텍스트 결정 (카테고리 기반) — Fallback용
     if any(k in category for k in ["임산부", "산모", "출산", "산후"]):
         market_context = "임산부"
     else:
         market_context = "베이비"
 
-    # 검색 쿼리: 브랜드명 + 시장 컨텍스트
-    # (search_keyword는 보조 정보로만 사용 — 노이즈 원인이 될 수 있음)
-    if brand_name:
+    # ⭐ 메인 쿼리: 브랜드명 + 추출된 주력상품 키워드
+    # search_keyword는 extract_product_keyword 결과 (브랜드명 제외됨)
+    if brand_name and search_keyword:
+        query_main = f"{brand_name} {search_keyword}"
+        # 예: "프라젠트라 아토프라덤 크림"
+    elif brand_name:
+        # 주력상품 키워드 추출 실패 시 시장 컨텍스트로 fallback
         query_main = f"{brand_name} {market_context}"
     else:
-        # 브랜드명 없으면 fallback (드문 케이스)
+        # 브랜드명 없으면 (드문 케이스)
         query_main = f"{search_keyword} {market_context}"
 
+    # 메인 검색 (블로그·카페 각 1회씩 — Naver 자동 처리에 신뢰)
     blog = search_naver("blog", query_main, 1).get("total", 0)
     cafe = search_naver("cafearticle", query_main, 1).get("total", 0)
-    # SNS(인스타그램) 노출 — Naver 블로그+카페에서 "인스타" 멘션 합산
-    sns_blog = search_naver("blog", f"{query_main} 인스타", 1).get("total", 0)
-    sns_cafe = search_naver("cafearticle", f"{query_main} 인스타", 1).get("total", 0)
-    sns = sns_blog + sns_cafe
-
-    # 실제 검색에 사용된 쿼리 (DB에 저장용)
     used_query = query_main
+
+    # ⭐ Fallback: 메인 쿼리 결과가 너무 적을 시 시장 컨텍스트로 재검색
+    # 작은 브랜드·신규 상품은 specific 매칭 부족할 수 있음
+    if blog + cafe < 200 and brand_name and search_keyword:
+        fallback_query = f"{brand_name} {market_context}"
+        blog_fb = search_naver("blog", fallback_query, 1).get("total", 0)
+        cafe_fb = search_naver("cafearticle", fallback_query, 1).get("total", 0)
+        if blog_fb + cafe_fb > blog + cafe:
+            blog = blog_fb
+            cafe = cafe_fb
+            used_query = fallback_query
+
+    # SNS(인스타그램) 노출 — 실제 사용된 쿼리 기준 (그대로 유지)
+    sns_blog = search_naver("blog", f"{used_query} 인스타", 1).get("total", 0)
+    sns_cafe = search_naver("cafearticle", f"{used_query} 인스타", 1).get("total", 0)
+    sns = sns_blog + sns_cafe
 
     # 점수 계산 — 3채널 가중치 (카페 가장 중요)
     score = (
