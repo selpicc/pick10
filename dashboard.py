@@ -714,7 +714,7 @@ if collect_clicked:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=300,
+                timeout=600,   # 5분 → 10분 (Fallback + 확장 라운드 시간 여유)
                 cwd=script_dir,
             )
             # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
