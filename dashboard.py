@@ -1676,21 +1676,42 @@ if len(filtered) > 0:
 
                 # 자동 수집된 정보 표시 (참고용) — 주소 제외 (2026-05-26)
                 # ⭐ 빈 값은 "🔍 미확인" 표기 (수기 확인 필요 명시)
+                # ⭐ 출처 표시 정확화 — "공정위 DB" 단일 라벨 → 실제 사용된 소스
                 if auto_company_name:
                     def _fmt(val):
                         v = str(val).strip()
                         return v if v and v not in ("-", "None") else "🔍 미확인"
 
+                    # 실제 사용된 출처 (공정위DB / Naver/Google / 공식홈페이지)
+                    auto_sources = str(sel_full.get("사업자정보 출처 (자동)", "")).strip()
+                    auto_confidence = str(sel_full.get("사업자정보 신뢰도 (자동)", "")).strip()
+
+                    # 신뢰도 색상 매핑
+                    confidence_emoji = {
+                        "높음": "🟢", "중간": "🟡", "낮음": "🔴",
+                    }.get(auto_confidence, "⚪")
+
+                    source_label = (
+                        f"{confidence_emoji} 출처: {auto_sources}"
+                        if auto_sources else "⚪ 출처: 미상"
+                    )
+
                     st.markdown(
                         f"<div style='background: #f0fdf4; border: 1px solid #86efac; "
                         f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
-                        f"<b style='color: #166534;'>✅ 공정위 DB 자동 수집 정보</b><br>"
+                        f"<b style='color: #166534;'>✅ 자동 수집 정보</b> "
+                        f"<span style='color: #14532d; font-size: 11px; margin-left: 6px;'>"
+                        f"({source_label} · 신뢰도: {auto_confidence or '미상'})</span><br>"
                         f"<span style='color: #14532d;'>"
                         f"상호: {auto_company_name} · "
                         f"대표: {_fmt(sel_full.get('대표 (자동)', ''))} · "
                         f"전화: {_fmt(sel_full.get('전화 (자동)', ''))}<br>"
                         f"이메일: {_fmt(sel_full.get('이메일 (자동)', ''))}"
                         f"</span>"
+                        f"<div style='margin-top: 6px; padding-top: 6px; "
+                        f"border-top: 1px dashed #86efac; color: #15803d; font-size: 11px;'>"
+                        f"💡 공정위DB는 정확도 매우 높음. 검색 보완값(Naver/Google)은 수기 검증 권장."
+                        f"</div>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )

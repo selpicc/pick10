@@ -160,12 +160,55 @@ def score_email(email: str) -> int:
     return 50
 
 
-def pick_best_email(candidates: list) -> str:
+def _is_domain_matching_brand(email: str, brand_name: str) -> bool:
+    """이메일 도메인이 브랜드명과 매칭되는지 검사.
+
+    ⭐ 2026-05-26 추가: "판옵티콘" 브랜드 + "support@poolix.io" 같은
+    무관 도메인 매칭 방지.
+
+    매칭 기준:
+      - 한글 브랜드 → 영문 변환 추측 (가장 흔한 패턴)
+      - 도메인 일부에 브랜드명 키워드 포함
+      - 한글 브랜드명의 일부 음절 포함
+    """
+    if not email or "@" not in email or not brand_name:
+        return False
+    domain = email.split("@")[1].lower()
+    # 최상위 도메인 제거: "plagentra.kr" → "plagentra"
+    domain_main = domain.split(".")[0]
+
+    brand_clean = brand_name.lower().strip()
+    # "주식회사" 등 회사 접두사 제거
+    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)",
+                   "유)", "(재)", "재단법인", "협동조합"]:
+        brand_clean = brand_clean.replace(prefix, "")
+    brand_clean = brand_clean.strip().replace(" ", "")
+
+    if not brand_clean:
+        return False
+
+    # 한글 브랜드 → 도메인에 일부 음절 매칭 시도 (한글 → 영문 직접 비교 어려움)
+    # 도메인이 브랜드명 키워드 포함하면 OK (영문 도메인 케이스)
+    if brand_clean in domain_main or domain_main in brand_clean:
+        return True
+
+    # 한글 음절 1개라도 포함 (영문 도메인은 보통 한글 X → False)
+    # 단, 영문 브랜드명 케이스 처리
+    if all(ord(c) < 128 for c in brand_clean):   # 영문 브랜드
+        # 영문 브랜드와 도메인 부분 일치 (3자 이상)
+        if len(brand_clean) >= 3 and brand_clean[:3] in domain_main:
+            return True
+
+    return False
+
+
+def pick_best_email(candidates: list, brand_name: str = "") -> str:
     """후보 이메일 리스트에서 가장 적합한 것 선택 (점수 기준).
 
     - 블랙리스트 도메인(@naver.com 등) 제외
     - is_valid_email() 통과만
     - score_email() 점수 최고값 반환
+    - ⭐ brand_name 제공 시 도메인-브랜드 매칭 가산점 (판옵티콘↔poolix 같은 무관 메일 차단)
     """
     if not candidates:
         return ""
@@ -178,12 +221,28 @@ def pick_best_email(candidates: list) -> str:
             continue
         if not is_valid_email(email):
             continue
-        valid.append((score_email(email), email))
+
+        score = score_email(email)
+        # ⭐ 도메인-브랜드 매칭 가산/감산 (브랜드명 있을 때만)
+        if brand_name:
+            if _is_domain_matching_brand(email, brand_name):
+                score += 50   # 매칭되면 보너스
+            else:
+                score -= 30   # 무관하면 감산 (완전 배제는 X, 점수만 낮춤)
+
+        valid.append((score, email))
     if not valid:
         return ""
     # 점수 내림차순 정렬, 동점이면 짧은 이메일 우선 (덜 generic)
     valid.sort(key=lambda x: (-x[0], len(x[1])))
-    return valid[0][1]
+
+    # ⭐ 최고점이 너무 낮으면(브랜드 무관 + low priority 메일) 미선택
+    best_score, best_email = valid[0]
+    if brand_name and best_score < 20:
+        # 점수 20점 미만 = 브랜드 무관 + 일반/시스템 메일 → 신뢰도 낮음, 미선택
+        return ""
+
+    return best_email
 
 
 def extract_emails_from_html(html: str) -> list:
@@ -659,6 +718,7 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
                 text_only = re.sub(r"\s+", " ", text_only)
 
                 # ─── CEO 패턴 (footer) ───
+                # ⭐ extract_ceo_from_text()와 동일 blacklist 사용 (통일)
                 if not info.get("ceo"):
                     m = re.search(
                         r"(?:CEO|대표(?:이사|자|자명|자성명)?)\s*[:\s]?\s*([가-힣]{2,4})(?=\s|[<,.\)])",
@@ -666,8 +726,10 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
                     )
                     if m:
                         name = m.group(1).strip()
-                        if name not in {"이사", "대표", "회사", "직책", "사장"}:
-                            info["ceo"] = name
+                        # 빠른 검증: 함수 호출로 blacklist 일관 적용
+                        verified = extract_ceo_from_text(f"대표 {name}")
+                        if verified:
+                            info["ceo"] = verified
 
                 # ─── 전화 패턴 (footer) ───
                 if not info.get("phone"):
@@ -717,11 +779,14 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
                 continue
 
         # ⭐ 모든 사이트 이메일 후보 중 베스트 선택 (customer/cs > info > webmaster)
+        # ⭐ brand_name 전달 → 도메인-브랜드 매칭 검증
         if all_email_candidates and not info.get("email"):
-            best = pick_best_email(all_email_candidates)
+            best = pick_best_email(all_email_candidates, brand_name=brand_name)
             if best:
                 info["email"] = best
                 print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 중 베스트 선택: {best}")
+            else:
+                print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 있었으나 브랜드 매칭 X → 미선택")
 
         if info:
             print(f"           [디버그] 공식 홈페이지 추출: {list(info.keys())}")
@@ -780,8 +845,8 @@ def search_email_via_naver(brand_name: str) -> Optional[str]:
             except Exception:
                 continue
 
-    # ⭐ 베스트 이메일 선택 (customer/cs/info 우선)
-    best = pick_best_email(all_candidates)
+    # ⭐ 베스트 이메일 선택 (customer/cs/info 우선) + 도메인-브랜드 매칭 검증
+    best = pick_best_email(all_candidates, brand_name=brand_name)
     return best if best else None
 
 
@@ -795,12 +860,30 @@ def extract_ceo_from_text(text: str) -> str:
     패턴:
       - "대표 OOO", "대표이사 OOO", "대표자 OOO"
       - "OOO 대표", "OOO 대표이사"
+
+    ⭐ 2026-05-26: blacklist 대폭 확장 — 회사 정보 페이지 라벨 단어 제거
+      예: "대표 / 설립일 / 사업자번호" 같은 라벨 나열 텍스트에서
+          "설립일"이 사람 이름으로 오인되던 문제 해결
     """
     if not text:
         return ""
-    # 일반 단어 제외 (false positive 방지)
-    blacklist = {"대표", "이사", "본사", "회사", "사장", "정보", "소개",
-                 "직원", "팀장", "기자", "사람", "고객", "주식", "회원"}
+    # ⭐ 일반 단어 + 회사 정보 라벨 모두 제외 (false positive 방지)
+    blacklist = {
+        # 기존
+        "대표", "이사", "본사", "회사", "사장", "정보", "소개",
+        "직원", "팀장", "기자", "사람", "고객", "주식", "회원",
+        # ⭐ 회사 정보 페이지 라벨 (자주 매칭되는 false positive)
+        "설립일", "설립", "등록일", "등록", "생년월일", "생년",
+        "주소", "전화", "전번", "팩스", "사업자", "사업장",
+        "이메일", "메일", "상호", "법인", "법인명",
+        "업종", "업태", "종목", "분류", "코드",
+        "통신", "판매", "신고", "번호", "센터", "센타",
+        "담당", "담당자", "관리", "관리자", "운영자",
+        "성명", "성함", "이름", "직책", "직위",
+        "기업", "조직", "단체", "기관", "협회",
+        "위치", "지역", "지점", "지사", "본점",
+        "은행", "계좌", "결제",
+    }
 
     patterns = [
         r"대표(?:이사|자)?[:\s]+([가-힣]{2,4})(?=\s|[,.\)\]<>])",
@@ -944,9 +1027,9 @@ def search_business_via_naver_extended(brand_name: str, business_number: str = "
     info["ceo"] = extract_ceo_from_text(all_text)
     info["phone"] = extract_phone_from_text(all_text)
 
-    # 이메일도 추출 (블로그·카페에 종종 노출)
+    # 이메일도 추출 (블로그·카페에 종종 노출) — 도메인-브랜드 매칭 검증
     emails_in_text = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", all_text)
-    best_email = pick_best_email(emails_in_text)
+    best_email = pick_best_email(emails_in_text, brand_name=brand_name)
     if best_email:
         info["email"] = best_email
 
@@ -1016,9 +1099,9 @@ def search_business_via_google(brand_name: str, business_number: str = "") -> di
     info["ceo"] = extract_ceo_from_text(all_text)
     info["phone"] = extract_phone_from_text(all_text)
 
-    # 이메일 (Google snippet에 노출 자주 됨)
+    # 이메일 (Google snippet에 노출 자주 됨) — 도메인-브랜드 매칭 검증
     emails_in_text = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", all_text)
-    best_email = pick_best_email(emails_in_text)
+    best_email = pick_best_email(emails_in_text, brand_name=brand_name)
     if best_email:
         info["email"] = best_email
 
