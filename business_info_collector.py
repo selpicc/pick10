@@ -512,43 +512,88 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
             f"{brand_name} 공식 홈페이지",
             f"{brand_name} 공식몰",
             f"{brand_name} 쇼핑몰",
-            f"{brand_name} mall",
             f"{brand_name} 공식 사이트",
-            f"{brand_name} 이메일",   # ⭐ 이메일 키워드로 검색 → 이메일 정보 포함 페이지
+            f"{brand_name} 이메일",
+            f"{brand_name} 고객센터",   # ⭐ footer 이메일 잡기 좋은 키워드
+            f"{brand_name} cs",          # ⭐ 영문 CS 페이지
         ]
 
-        api_url = "https://openapi.naver.com/v1/search/webkr.json"
-        headers = {
+        # 무관 사이트 도메인 (Naver/Google 둘 다 사용)
+        SKIP_DOMAINS = [
+            "smartstore.naver.com", "blog.naver.com",
+            "cafe.naver.com", "shopping.naver.com",
+            "post.naver.com", "search.naver.com",
+            "map.naver.com", "image.naver.com",
+            "kakao.com", "tistory.com", "youtube.com",
+            "instagram.com", "facebook.com", "twitter.com",
+            "wikipedia.org", "namu.wiki",
+            "saramin.co.kr", "jobkorea.co.kr", "wanted.co.kr",
+            "coupang.com", "11st.co.kr", "gmarket.co.kr",
+            "auction.co.kr", "ssg.com", "lotteon.com",
+        ]
+
+        def _is_valid_homepage(url: str) -> bool:
+            """후보 URL이 공식 홈페이지로 적합한지 검사."""
+            if not url or not url.startswith("http"):
+                return False
+            return not any(skip in url.lower() for skip in SKIP_DOMAINS)
+
+        candidate_urls = []
+
+        # ─── 1단계: 네이버 웹 검색 ───
+        naver_api = "https://openapi.naver.com/v1/search/webkr.json"
+        naver_headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
         }
-
-        # 모든 검색 키워드에서 후보 URL 모으기
-        candidate_urls = []
-        for query in search_queries:   # 6개 키워드 모두 시도
+        for query in search_queries:
             try:
-                params = {"query": query, "display": 5}
-                response = requests.get(api_url, headers=headers, params=params, timeout=10)
+                response = requests.get(
+                    naver_api, headers=naver_headers,
+                    params={"query": query, "display": 5}, timeout=10,
+                )
                 if response.status_code == 200:
                     items = response.json().get("items", [])
                     for item in items[:5]:
                         url = item.get("link", "")
-                        # 무관 사이트 제외 (Naver 자체 서비스 등)
-                        if any(skip in url for skip in [
-                            "smartstore.naver.com", "blog.naver.com",
-                            "cafe.naver.com", "shopping.naver.com",
-                            "post.naver.com", "search.naver.com",
-                            "kakao.com", "tistory.com", "youtube.com",
-                            "instagram.com", "facebook.com",
-                        ]):
-                            continue
-                        if url not in candidate_urls:
+                        if _is_valid_homepage(url) and url not in candidate_urls:
                             candidate_urls.append(url)
                 time.sleep(0.1)
             except Exception:
                 continue
 
-        print(f"           [디버그] 후보 공식 홈페이지 URL: {len(candidate_urls)}개")
+        # ⭐ ─── 2단계: Google 검색으로 영문 도메인 보강 (방안 핵심) ───
+        # 한글 브랜드명 → 영문 도메인 케이스 (프라젠트라 → plagentra.kr) 잡기
+        # Google이 네이버보다 영문 도메인 매칭 훨씬 잘 함
+        if GOOGLE_API_KEY and GOOGLE_CX:
+            google_queries = [
+                f"{brand_name} 공식몰",
+                f"{brand_name} 공식 사이트",
+                f"{brand_name} cs 고객센터",   # ⭐ footer/CS 페이지 직접 노출
+            ]
+            for gquery in google_queries:
+                try:
+                    g_resp = requests.get(
+                        "https://www.googleapis.com/customsearch/v1",
+                        params={
+                            "key": GOOGLE_API_KEY,
+                            "cx": GOOGLE_CX,
+                            "q": gquery,
+                            "num": 5,
+                        },
+                        timeout=10,
+                    )
+                    if g_resp.status_code == 200:
+                        for item in g_resp.json().get("items", []):
+                            url = item.get("link", "")
+                            if _is_valid_homepage(url) and url not in candidate_urls:
+                                candidate_urls.append(url)
+                    time.sleep(0.15)
+                except Exception:
+                    continue
+
+        print(f"           [디버그] 후보 공식 홈페이지 URL: {len(candidate_urls)}개 "
+              f"(Naver+Google 통합)")
 
         # ⭐ 상위 8개 사이트 시도 (이전 5개 → 8개)
         all_email_candidates = []   # 사이트별 후보 모아서 마지막에 베스트 선택
@@ -648,8 +693,13 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
 
                 # ─── 이메일 추출 — ⭐ 모든 후보 모아서 전체 사이트에서 베스트 선택 ───
                 # 1) footer 패턴 (E-mail customer@...)
+                # ⭐ 구분자 확장 (2026-05-26): "E-MAIL.", "EMAIL,", "이메일·" 등 모두 매칭
+                #   기존: \s*[:\s]?\s*  → 콜론/공백만
+                #   변경: \s*[:.\,\-·│|]?\s*  → 점/콤마/하이픈/중점/세로선 등 footer 구분자
+                #   추가 라벨: "메일", "Mail", "@" 단독, "고객센터 메일"
                 for m in re.finditer(
-                    r"(?:E-?mail|이메일|EMAIL|메일주소|문의메일)\s*[:\s]?\s*"
+                    r"(?:E[-\s]?mail|이메일|EMAIL|MAIL|메일주소|문의메일|문의\s*메일|"
+                    r"고객\s*메일|상담\s*메일|메일)\s*[:.\,\-·│|]?\s*"
                     r"([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
                     text_only, re.IGNORECASE,
                 ):
