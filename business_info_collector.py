@@ -366,12 +366,30 @@ def fetch_ftc_telecom_seller_info(
 # Phase 3: 이메일 다층 수집
 # ─────────────────────────────────────────────────────────────────
 def find_email_from_homepage(brand_name: str) -> Optional[str]:
-    """공식 홈페이지에서 이메일 자동 추출.
+    """공식 홈페이지에서 이메일 자동 추출 (기존 호환)."""
+    info = find_business_info_from_homepage(brand_name)
+    return info.get("email") if info else None
 
-    Naver 웹 검색으로 공식 홈페이지 발견 → 페이지 fetch → 이메일 정규식 추출
+
+def find_business_info_from_homepage(brand_name: str) -> dict:
+    """공식 홈페이지에서 사업자 정보 종합 추출.
+
+    ⭐ 2026-05-26 강화:
+      이전: 이메일만 추출
+      변경: 이메일·대표·전화·주소 모두 추출
+
+    동작:
+      1. Naver 웹 검색으로 공식 홈페이지 후보 찾기
+      2. 후보 페이지 fetch (메인 + /contact, /about 페이지)
+      3. 각 페이지에서 정보 정규식 추출
+
+    반환:
+      {"email": "...", "ceo": "...", "phone": "...", "address": "..."}
     """
     if not brand_name or not NAVER_CLIENT_ID:
-        return None
+        return {}
+
+    info = {}
 
     try:
         # Naver 웹 검색 (공식 홈페이지 후보)
@@ -384,7 +402,7 @@ def find_email_from_homepage(brand_name: str) -> Optional[str]:
 
         response = requests.get(api_url, headers=headers, params=params, timeout=10)
         if response.status_code != 200:
-            return None
+            return {}
 
         items = response.json().get("items", [])
 
@@ -399,27 +417,94 @@ def find_email_from_homepage(brand_name: str) -> Optional[str]:
                 continue
 
             try:
-                page = requests.get(url, headers=HTTP_HEADERS, timeout=10)
-                if page.status_code != 200:
+                # 메인 페이지 + 일반적인 사업자 정보 페이지들 시도
+                base_url = url.rstrip("/")
+                pages_to_try = [
+                    url,
+                    f"{base_url}/contact",
+                    f"{base_url}/about",
+                    f"{base_url}/company",
+                    f"{base_url}/info",
+                ]
+
+                combined_text = ""
+                for page_url in pages_to_try:
+                    try:
+                        page = requests.get(page_url, headers=HTTP_HEADERS, timeout=8)
+                        if page.status_code == 200:
+                            combined_text += page.text + "\n"
+                            # 메인 페이지에서 contact/about 링크 찾기 (보너스)
+                            for link_match in re.finditer(
+                                r'href=["\']([^"\']*(?:contact|about|company|info|cs|footer)[^"\']*)["\']',
+                                page.text, re.IGNORECASE,
+                            ):
+                                sub_link = link_match.group(1)
+                                if not sub_link.startswith("http"):
+                                    sub_link = base_url + ("/" + sub_link.lstrip("/"))
+                                if sub_link not in pages_to_try:
+                                    try:
+                                        sub_page = requests.get(sub_link, headers=HTTP_HEADERS, timeout=6)
+                                        if sub_page.status_code == 200:
+                                            combined_text += sub_page.text + "\n"
+                                            break   # 첫 contact/about 페이지만
+                                    except Exception:
+                                        pass
+                            break   # 메인 페이지 1개만 처리하면 충분
+                        time.sleep(0.1)
+                    except Exception:
+                        continue
+
+                if not combined_text:
                     continue
 
-                # 이메일 정규식 추출
+                # HTML 태그 제거하고 텍스트만
+                text_only = re.sub(r"<[^>]+>", " ", combined_text)
+                text_only = re.sub(r"\s+", " ", text_only)
+
+                # 이메일 추출 (이미 검증된 로직)
                 emails = re.findall(
                     r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
-                    page.text,
+                    text_only,
                 )
                 for email in emails:
                     email_lower = email.lower()
                     if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                        if is_valid_email(email):
-                            return email
+                        if is_valid_email(email) and not info.get("email"):
+                            info["email"] = email
+                            break
+
+                # 대표자 추출
+                if not info.get("ceo"):
+                    ceo = extract_ceo_from_text(text_only)
+                    if ceo:
+                        info["ceo"] = ceo
+
+                # 전화 추출
+                if not info.get("phone"):
+                    phone = extract_phone_from_text(text_only)
+                    if phone:
+                        info["phone"] = phone
+
+                # 주소 추출
+                if not info.get("address"):
+                    address = extract_address_from_text(text_only)
+                    if address:
+                        info["address"] = address
+
+                # 정보 충분히 모았으면 break
+                if len([k for k in ["email", "ceo", "phone", "address"] if info.get(k)]) >= 3:
+                    break
+
             except Exception:
                 continue
 
-    except Exception:
-        pass
+        if info:
+            print(f"           [디버그] 공식 홈페이지 추출: {list(info.keys())}")
 
-    return None
+    except Exception as e:
+        print(f"           [디버그] 공식 홈페이지 검색 예외: {e}")
+
+    return info
 
 
 def search_email_via_naver(brand_name: str) -> Optional[str]:
@@ -701,24 +786,35 @@ def search_business_via_google(brand_name: str, business_number: str = "") -> di
 
 
 def collect_extended_business_info(brand_name: str, business_number: str = "") -> dict:
-    """확장 사업자 정보 수집 — Naver + Google 통합.
+    """확장 사업자 정보 수집 — 공식 홈페이지 + Naver + Google 통합.
 
-    Phase 4: 공정위 API에 없는 정보 (대표/전화/주소) 자동 수집.
-    Naver 검색 강화 → Google 검색 (Naver 못 찾은 정보만)
+    ⭐ 2026-05-26 강화:
+      Phase 4a: 공식 홈페이지 (대표/전화/주소/이메일) — 가장 정확
+      Phase 4b: Naver 검색 강화 (홈페이지 못 찾은 정보 보완)
+      Phase 4c: Google 검색 (Naver도 못 찾은 정보만)
     """
     info = {}
 
-    # 1차: Naver 검색 강화
-    print(f"           [Phase 4] Naver 확장 검색 시작...")
-    naver_info = search_business_via_naver_extended(brand_name, business_number)
-    for k, v in naver_info.items():
+    # 1차: 공식 홈페이지 ⭐ (가장 정확, 모든 정보 시도)
+    print(f"           [Phase 4a] 공식 홈페이지 추출 시작...")
+    homepage_info = find_business_info_from_homepage(brand_name)
+    for k, v in homepage_info.items():
         if v and not info.get(k):
             info[k] = v
 
-    # 2차: Google (Naver 못 찾은 정보만 보완)
+    # 2차: Naver 검색 강화 (보완)
     missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
     if missing:
-        print(f"           [Phase 4] Google 검색 시작 (보완할 필드: {missing})...")
+        print(f"           [Phase 4b] Naver 확장 검색 시작 (보완: {missing})...")
+        naver_info = search_business_via_naver_extended(brand_name, business_number)
+        for k, v in naver_info.items():
+            if v and not info.get(k):
+                info[k] = v
+
+    # 3차: Google (마지막 보완)
+    missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
+    if missing:
+        print(f"           [Phase 4c] Google 검색 시작 (보완: {missing})...")
         google_info = search_business_via_google(brand_name, business_number)
         for k, v in google_info.items():
             if v and not info.get(k):

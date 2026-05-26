@@ -1680,6 +1680,53 @@ if len(filtered) > 0:
                         unsafe_allow_html=True,
                     )
 
+                # ⭐ 검색 도우미 링크 (2026-05-26 추가)
+                # 자동 수집 못한 전화·이메일을 영업자가 빠르게 찾도록 검색 페이지 링크 제공
+                # 우선순위: 자동 수집된 상호명 > 브랜드명
+                search_keyword = auto_company_name or sel_brand
+                if search_keyword:
+                    import urllib.parse as _urlp
+                    sk_encoded = _urlp.quote(search_keyword)
+                    st.markdown(
+                        "<div style='background: #eff6ff; border: 1px solid #bfdbfe; "
+                        "border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; font-size: 12px;'>"
+                        f"<b style='color: #1e40af;'>🔍 검색 도우미</b> "
+                        f"— '{search_keyword}' 전화·이메일 수동 검색"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    helper_col1, helper_col2, helper_col3, helper_col4 = st.columns(4)
+                    with helper_col1:
+                        st.link_button(
+                            "🏢 사람인",
+                            f"https://www.saramin.co.kr/zf_user/search/company?searchword={sk_encoded}",
+                            use_container_width=True,
+                            help="사람인에서 회사 검색 → 대표·주소·전화 확인",
+                        )
+                    with helper_col2:
+                        st.link_button(
+                            "📋 잡코리아",
+                            f"https://www.jobkorea.co.kr/Search/?stext={sk_encoded}",
+                            use_container_width=True,
+                            help="잡코리아에서 회사 검색",
+                        )
+                    with helper_col3:
+                        st.link_button(
+                            "🔵 네이버",
+                            f"https://search.naver.com/search.naver?query={sk_encoded}+대표+연락처",
+                            use_container_width=True,
+                            help="네이버에서 대표·연락처 검색",
+                        )
+                    with helper_col4:
+                        st.link_button(
+                            "🌐 구글",
+                            f"https://www.google.com/search?q={sk_encoded}+대표+연락처",
+                            use_container_width=True,
+                            help="구글에서 대표·연락처 검색",
+                        )
+
+                st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
+
                 # 사업자정보 수집 버튼 클릭 처리
                 # 4단계 통합 수집:
                 #   1. 공정위 API (상호·사업자번호·통신판매업번호)
