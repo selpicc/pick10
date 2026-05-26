@@ -223,12 +223,14 @@ def pick_best_email(candidates: list, brand_name: str = "") -> str:
             continue
 
         score = score_email(email)
-        # ⭐ 도메인-브랜드 매칭 가산/감산 (브랜드명 있을 때만)
+        # ⭐ 2026-05-26 강화: 도메인-브랜드 매칭 더 엄격
+        # 한글 브랜드 ↔ 영문 도메인 매칭 어려움 인정 →
+        # 매칭 안 될 때 잘못된 정보보다 미수집(빈 값) 우선
         if brand_name:
             if _is_domain_matching_brand(email, brand_name):
-                score += 50   # 매칭되면 보너스
+                score += 50   # 매칭되면 강력 보너스
             else:
-                score -= 30   # 무관하면 감산 (완전 배제는 X, 점수만 낮춤)
+                score -= 60   # ⭐ 미매칭 감산 강화 (-30 → -60)
 
         valid.append((score, email))
     if not valid:
@@ -236,10 +238,12 @@ def pick_best_email(candidates: list, brand_name: str = "") -> str:
     # 점수 내림차순 정렬, 동점이면 짧은 이메일 우선 (덜 generic)
     valid.sort(key=lambda x: (-x[0], len(x[1])))
 
-    # ⭐ 최고점이 너무 낮으면(브랜드 무관 + low priority 메일) 미선택
+    # ⭐ 임계값 50점 — support@choandkang(100-60=40) 같은 미매칭 케이스 차단
+    # 한글 브랜드는 영문 도메인 매칭 거의 불가 → 미수집(빈 값) 됨
+    # 진짜 영업 메일은 사용자가 수기 입력 (정확도 100%)
     best_score, best_email = valid[0]
-    if brand_name and best_score < 20:
-        # 점수 20점 미만 = 브랜드 무관 + 일반/시스템 메일 → 신뢰도 낮음, 미선택
+    if brand_name and best_score < 50:
+        # 50점 미만 = 도메인 미매칭 → 신뢰도 부족, 미선택
         return ""
 
     return best_email
@@ -1369,27 +1373,16 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     time.sleep(0.3)
 
     # ───────────────────────────────────────────────
-    # Phase 2: 공정위 통신판매사업자 DB
+    # ⭐ 2026-05-26: Phase 2 (공정위 DB) 제거
+    # 공정위 DB는 본사 정보(사업자번호, 본사 대표, 본사 전화)라
+    # 영업 컨택(브랜드 공식몰 CS)과 완전히 별개 → 호출 안 함
     # ───────────────────────────────────────────────
-    if PUBLIC_DATA_API_KEY:
-        info2 = fetch_ftc_telecom_seller_info(
-            business_number=result.get("business_number", ""),
-            company_name=result.get("company_name", "") or brand_name,
-        )
-        if info2:
-            for k in ["company_name", "ceo", "business_number", "phone", "email"]:
-                if info2.get(k) and not result[k]:
-                    result[k] = info2[k]
-            if any(info2.get(k) for k in ["company_name", "ceo", "business_number", "email"]):
-                result["sources"].append("공정위DB")
-                print(f"           ✓ 공정위 DB: 정보 보완 (이메일={info2.get('email', '')})")
-        time.sleep(0.3)
 
     # ───────────────────────────────────────────────
-    # Phase 3: 이메일 다층 수집 (이메일 없을 때만)
+    # Phase 3: 공식 홈페이지 + Naver 검색 (이메일 없을 때만)
     # ───────────────────────────────────────────────
     if not result["email"] and brand_name:
-        # 3-1) 공식 홈페이지
+        # 3-1) 공식 홈페이지 (브랜드 공식몰 footer)
         email = find_email_from_homepage(brand_name)
         if email:
             result["email"] = email
