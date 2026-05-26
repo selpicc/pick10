@@ -1597,25 +1597,13 @@ if len(filtered) > 0:
 
                 st.markdown("")
 
-                # 수기 편집 영역
-                edit_col1, edit_col2 = st.columns(2)
-                with edit_col1:
-                    current_status = str(sel_full.get("영업 상태 (수기)", ""))
-                    if current_status not in SALES_STATUS_OPTIONS:
-                        current_status = ""
-                    new_status = st.selectbox(
-                        "영업 상태",
-                        SALES_STATUS_OPTIONS,
-                        index=SALES_STATUS_OPTIONS.index(current_status),
-                        key=f"status_{sel_brand}",
-                    )
-                with edit_col2:
-                    new_count = st.text_input(
-                        "스마트스토어 관심고객수",
-                        value=str(sel_full.get("관심고객수 (수기)", "")),
-                        placeholder="예) 1,234",
-                        key=f"count_{sel_brand}",
-                    )
+                # ⭐ 2026-05-26: 영업상태/관심고객수 위치 조정
+                #   - 스마트스토어 관심고객수 → 제거 (자동 컬럼만 사용)
+                #   - 영업상태 → 활동메모 위로 이동 (하단으로 재배치)
+                # current_status는 하단 selectbox에서 사용
+                current_status = str(sel_full.get("영업 상태 (수기)", ""))
+                if current_status not in SALES_STATUS_OPTIONS:
+                    current_status = ""
 
                 # ⭐ 사업자등록번호 입력 + 자동 수집 버튼 (2026-05-26 추가)
                 # 사용자가 사업자번호 한 줄만 입력하면 → 공정위 API로 상호·대표·전화·주소 자동 채움
@@ -1834,6 +1822,14 @@ if len(filtered) > 0:
                         key=f"phone_{sel_brand}",
                     )
 
+                # ⭐ 영업 상태 (하단 재배치) — 활동메모 바로 위
+                new_status = st.selectbox(
+                    "영업 상태",
+                    SALES_STATUS_OPTIONS,
+                    index=SALES_STATUS_OPTIONS.index(current_status),
+                    key=f"status_{sel_brand}",
+                )
+
                 new_memo = st.text_area(
                     "활동 메모",
                     value=str(sel_full.get("활동 메모 (수기)", "")),
@@ -1855,9 +1851,9 @@ if len(filtered) > 0:
                     st.caption("저장 안 하고 다른 셀러로 이동하면 변경분 사라져요")
 
                 if save_clicked:
+                    # ⭐ 2026-05-26: 관심고객수 (수기) 제거 — UI에서 빠짐
                     new_values = {
                         "영업 상태 (수기)": new_status,
-                        "관심고객수 (수기)": new_count,
                         "상호 (수기)":      new_company,
                         "대표 (수기)":      new_ceo,
                         "사업자번호 (수기)": new_biz_num,   # ⭐ 사업자번호 저장
