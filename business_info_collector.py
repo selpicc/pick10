@@ -45,7 +45,32 @@ EMAIL_BLACKLIST_DOMAINS = [
     "@naver.com", "@gmail.com", "@daum.net", "@hanmail.net",
     "@hotmail.com", "@yahoo.com", "@outlook.com",
     "example", "noreply", "no-reply", "donotreply",
+    "sentry.io", "wixpress.com", "intercom.io",
 ]
+
+
+def is_valid_email(email: str) -> bool:
+    """이메일 유효성 추가 검증 (해시값·UUID 등 가짜 이메일 차단)"""
+    if not email or "@" not in email:
+        return False
+    local, _, domain = email.partition("@")
+    # 로컬 파트 검증
+    if len(local) < 2 or len(local) > 40:
+        return False
+    # 16진수 해시값 같은 거 제외 (32자 이상 + 모두 16진수)
+    if len(local) >= 16 and all(c in "0123456789abcdefABCDEF" for c in local):
+        return False
+    # 도메인 검증
+    if "." not in domain or len(domain) < 4:
+        return False
+    # 일반 도메인 확장자 확인
+    valid_tlds = (
+        ".com", ".kr", ".net", ".co.kr", ".or.kr", ".org",
+        ".io", ".biz", ".info", ".store", ".shop", ".me",
+    )
+    if not any(domain.lower().endswith(tld) for tld in valid_tlds):
+        return False
+    return True
 
 # 시·도 패턴 (주소 추출용)
 ADDRESS_REGION = (
@@ -168,8 +193,9 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
             email_lower = email.lower()
             # 일반 메일 서비스·테스트 메일 제외
             if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                info["email"] = email
-                break
+                if is_valid_email(email):
+                    info["email"] = email
+                    break
 
         # 디버그: 추출 결과 요약
         print(f"           [디버그] 정규식 매칭 결과:")
@@ -364,7 +390,8 @@ def find_email_from_homepage(brand_name: str) -> Optional[str]:
                 for email in emails:
                     email_lower = email.lower()
                     if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                        return email
+                        if is_valid_email(email):
+                            return email
             except Exception:
                 continue
 
@@ -408,7 +435,8 @@ def search_email_via_naver(brand_name: str) -> Optional[str]:
                 for email in emails:
                     email_lower = email.lower()
                     if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                        return email
+                        if is_valid_email(email):
+                            return email
             time.sleep(0.1)
         except Exception:
             continue
