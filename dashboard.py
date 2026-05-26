@@ -1628,285 +1628,41 @@ if len(filtered) > 0:
                 if current_status not in SALES_STATUS_OPTIONS:
                     current_status = ""
 
-                # ⭐ 사업자등록번호 입력 + 자동 수집 버튼 (2026-05-26 추가)
-                # 사용자가 사업자번호 한 줄만 입력하면 → 공정위 API로 상호·대표·전화·주소 자동 채움
-                current_biz_num = (
-                    str(sel_full.get("사업자번호 (수기)", "")).strip()
-                    or str(sel_full.get("사업자번호 (자동)", "")).strip()
-                )
-                auto_company_name = str(sel_full.get("상호 (자동)", "")).strip()
-
-                # 자동 수집 정보가 비어있고 사업자번호도 없으면 → 빨간 강조 안내
-                needs_biz_input = (not current_biz_num) and (not auto_company_name)
-
-                if needs_biz_input:
-                    st.markdown(
-                        "<div style='background: #fef2f2; border: 2px solid #ef4444; "
-                        "border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;'>"
-                        "<div style='color: #dc2626; font-weight: 600; font-size: 14px;'>"
-                        "⚠️ 사업자등록번호 입력 필요"
-                        "</div>"
-                        "<div style='color: #7f1d1d; font-size: 12px; margin-top: 4px;'>"
-                        "사업자번호 입력 후 [🔍 사업자정보 수집] 버튼 클릭 → "
-                        "상호·대표·전화·주소 자동 입력"
-                        "</div>"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-
-                biz_col_input, biz_col_btn = st.columns([2.5, 1.5])
-                with biz_col_input:
-                    new_biz_num = st.text_input(
-                        "사업자등록번호 📌" if needs_biz_input else "사업자등록번호",
-                        value=current_biz_num,
-                        placeholder="예) 123-45-67890 또는 1234567890",
-                        help="입력 후 옆 [사업자정보 수집] 버튼 클릭 → 공정위 DB에서 정보 자동 수집",
-                        key=f"biz_num_{sel_brand}",
-                    )
-                with biz_col_btn:
-                    st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
-                    collect_biz_clicked = st.button(
-                        "🔍 사업자정보 수집",
-                        type="primary" if (new_biz_num.strip() and not auto_company_name) else "secondary",
-                        use_container_width=True,
-                        key=f"collect_biz_{sel_brand}",
-                        disabled=not new_biz_num.strip(),
-                        help="공정위 통신판매사업자 DB에서 상호·대표·전화·주소 자동 수집",
-                    )
-
-                # ⭐ 2026-05-26: 자동수집 정보 2박스 분리
-                # 박스 1: 🏢 본사 정보 (공정위 DB · 참고용)
-                # 박스 2: 📞 영업 컨택 (브랜드 공식몰 · 실제 사용)
+                # ⭐ 2026-05-26 단순화 — 사용자 요청
+                # 제거: 본사 정보 박스, 사업자등록번호 입력, 🔍 수집 버튼, 상호/대표자 입력
+                # 유지: 영업 컨택 박스 (자동 수집 결과만 표시), 이메일/연락처 수기 편집
+                #
+                # 자동수집은 collect_5.py (신규 셀러 수집 시점)에서 일어남
+                # 디테일 패널은 결과 확인 + 수동 편집 전용
                 def _fmt(val):
                     v = str(val).strip()
                     return v if v and v not in ("-", "None") else "🔍 미확인"
 
-                # ─── 박스 1: 본사 정보 (공정위 DB · 참고용) ───
-                # 우선순위: DB의 본사 컬럼 → session_state → sel_full의 자동 컬럼 (호환)
-                hq_saved = st.session_state.get(f"hq_info_{sel_brand}", {})
-                hq_company = (
-                    str(sel_full.get("본사 상호 (자동)", "")).strip()
-                    or hq_saved.get("company_name", "")
-                    or str(sel_full.get("상호 (자동)", "")).strip()
-                )
-                hq_ceo = (
-                    str(sel_full.get("본사 대표 (자동)", "")).strip()
-                    or hq_saved.get("ceo", "")
-                    or str(sel_full.get("대표 (자동)", "")).strip()
-                )
-                hq_phone = (
-                    str(sel_full.get("본사 전화 (자동)", "")).strip()
-                    or hq_saved.get("phone", "")
-                )
-                if hq_company:
-                    st.markdown(
-                        f"<div style='background: #f9fafb; border: 1px solid #d1d5db; "
-                        f"border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px;'>"
-                        f"<b style='color: #4b5563;'>🏢 본사 정보 "
-                        f"<span style='font-size: 11px; color: #6b7280; font-weight: normal;'>"
-                        f"(공정위 DB · 사업자등록증 기준)</span></b><br>"
-                        f"<span style='color: #374151;'>"
-                        f"상호: {hq_company} · "
-                        f"대표: {_fmt(hq_ceo)} · "
-                        f"본사 전화: {_fmt(hq_phone)}"
-                        f"</span>"
-                        f"</div>",
-                        unsafe_allow_html=True,
-                    )
+                # ─── 영업 컨택 박스 (자동 수집 결과 — 메일/전화 발송 대상) ───
+                # 이메일 또는 전화 자동값이 있을 때만 표시
+                contact_email_raw = str(sel_full.get('이메일 (자동)', '')).strip()
+                contact_phone_raw = str(sel_full.get('전화 (자동)', '')).strip()
 
-                # ─── 박스 2: 영업 컨택 (브랜드 공식몰 · 실제 사용) ───
-                if auto_company_name:
-                    # 출처/신뢰도
+                if contact_email_raw or contact_phone_raw:
                     auto_sources = str(sel_full.get("사업자정보 출처 (자동)", "")).strip()
                     auto_confidence = str(sel_full.get("사업자정보 신뢰도 (자동)", "")).strip()
                     confidence_emoji = {
                         "높음": "🟢", "중간": "🟡", "낮음": "🔴",
                     }.get(auto_confidence, "⚪")
 
-                    # 영업 컨택용 전화/이메일 (브랜드 공식몰 우선)
-                    contact_phone = _fmt(sel_full.get('전화 (자동)', ''))
-                    contact_email = _fmt(sel_full.get('이메일 (자동)', ''))
-
                     st.markdown(
                         f"<div style='background: #ecfdf5; border: 2px solid #10b981; "
                         f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
                         f"<b style='color: #047857;'>📞 영업 컨택 "
                         f"<span style='font-size: 11px; color: #065f46; font-weight: normal;'>"
-                        f"(브랜드 공식몰 · 실제 발송 대상)</span></b> "
+                        f"(자동 수집 · 메일/전화 발송 대상)</span></b> "
                         f"<span style='color: #064e3b; font-size: 11px; margin-left: 6px;'>"
-                        f"{confidence_emoji} 출처: {auto_sources or '미상'} · 신뢰도: {auto_confidence or '미상'}</span><br>"
+                        f"{confidence_emoji} 출처: {auto_sources or '미상'}</span><br>"
                         f"<span style='color: #064e3b;'>"
-                        f"CS 전화: {contact_phone} · CS 이메일: {contact_email}"
+                        f"CS 전화: {_fmt(contact_phone_raw)} · CS 이메일: {_fmt(contact_email_raw)}"
                         f"</span>"
-                        f"<div style='margin-top: 6px; padding-top: 6px; "
-                        f"border-top: 1px dashed #10b981; color: #065f46; font-size: 11px;'>"
-                        f"💡 영업 메일/전화는 본사가 아닌 이 정보로 발송. "
-                        f"브랜드 공식몰을 못 찾으면 본사 정보로 보완."
-                        f"</div>"
                         f"</div>",
                         unsafe_allow_html=True,
-                    )
-
-                st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
-
-                # 사업자정보 수집 버튼 클릭 처리
-                # ⭐ 2026-05-26 전면 재설계 (브랜드 중심)
-                # 기존: 본사명("주식회사판옵티콘")으로 검색 → 본사 정보만 수집 ❌
-                # 변경: 브랜드명("산모애")으로 검색 → 브랜드 공식몰의 영업 컨택 수집 ✅
-                #
-                # 본사 정보(공정위 DB) = 참고용
-                # 영업 컨택(브랜드 공식몰) = 실제 사용 (메일·전화 발송 대상)
-                if collect_biz_clicked and new_biz_num.strip():
-                    with st.spinner(
-                        "🔍 공정위 본사정보 + 브랜드 공식몰 영업컨택 검색 중... (10-30초)"
-                    ):
-                        try:
-                            from business_info_collector import (
-                                fetch_ftc_telecom_seller_info,
-                                collect_extended_business_info,
-                            )
-
-                            # 1차: 공정위 API (본사 정보 — 사업자번호 기반)
-                            # 본사 상호 / 본사 대표 / 본사 전화 — 참고용
-                            hq_info = fetch_ftc_telecom_seller_info(
-                                business_number=new_biz_num.strip()
-                            )
-
-                            # 2차: ⭐ 브랜드명 기반 영업 컨택 정보 수집
-                            # 본사명이 아닌 브랜드명(sel_brand)으로 검색
-                            # → 브랜드 공식몰의 footer CS 정보 추출
-                            contact_info = collect_extended_business_info(
-                                brand_name=sel_brand,   # ⭐ 핵심: 브랜드명으로 검색
-                                business_number=new_biz_num.strip(),
-                            )
-
-                            # ⭐ 통합 우선순위 변경
-                            # email/phone(영업 컨택): 브랜드 공식몰 우선, 공정위 보조
-                            # company_name(상호): 공정위(본사명) 우선 (사업자등록증 기준)
-                            # ceo(대표): 공정위 우선
-                            merged = {
-                                "company_name": (
-                                    hq_info.get("company_name", "") or
-                                    contact_info.get("company_name", "")
-                                ),
-                                "ceo": (
-                                    hq_info.get("ceo", "") or
-                                    contact_info.get("ceo", "")
-                                ),
-                                "business_number": new_biz_num.strip(),
-                                # ⭐ 전화/이메일은 브랜드 공식몰 우선 (영업 컨택)
-                                "phone": (
-                                    contact_info.get("phone", "") or
-                                    hq_info.get("phone", "")
-                                ),
-                                "email": (
-                                    contact_info.get("email", "") or
-                                    hq_info.get("email", "")
-                                ),
-                            }
-
-                            if merged and any(merged.get(k) for k in
-                                              ["company_name", "ceo", "phone", "email"]):
-                                # 출처 표시 (어디서 가져왔는지 명확화)
-                                sources = []
-                                if contact_info.get("phone") or contact_info.get("email"):
-                                    sources.append("브랜드공식몰")
-                                if hq_info.get("company_name"):
-                                    sources.append("공정위DB")
-
-                                # ⭐ 본사 정보를 session_state에 저장 (UI 표시용)
-                                # DB 컬럼 추가 전 임시 — 브라우저 세션 동안 유지
-                                # 컬럼 추가 후 영구 저장으로 전환 예정
-                                st.session_state[f"hq_info_{sel_brand}"] = {
-                                    "company_name": hq_info.get("company_name", ""),
-                                    "ceo":          hq_info.get("ceo", ""),
-                                    "phone":        hq_info.get("phone", ""),
-                                    "business_number": hq_info.get("business_number", ""),
-                                }
-
-                                # 자동 수집 정보를 DB에 업데이트 — 주소 제외
-                                # ⭐ "상호/대표/전화/이메일 (자동)" = 영업 컨택 (브랜드 공식몰 우선)
-                                # ⭐ "본사 ... (자동)" = 본사 정보 (공정위 DB 기준, 참고용)
-                                update_data = {
-                                    "사업자번호 (수기)": new_biz_num.strip(),
-                                    "상호 (자동)": merged.get("company_name", ""),
-                                    "대표 (자동)": merged.get("ceo", ""),
-                                    "사업자번호 (자동)": merged.get(
-                                        "business_number", new_biz_num.strip()
-                                    ),
-                                    "전화 (자동)": merged.get("phone", ""),
-                                    "이메일 (자동)": merged.get("email", ""),
-                                    "사업자정보 출처 (자동)": ", ".join(sources),
-                                    "사업자정보 신뢰도 (자동)": (
-                                        "높음" if len(sources) >= 2 else "중간"
-                                    ),
-                                    # ⭐ 본사 정보 (공정위 DB · DB 컬럼 추가 필수)
-                                    "본사 상호 (자동)": hq_info.get("company_name", ""),
-                                    "본사 대표 (자동)": hq_info.get("ceo", ""),
-                                    "본사 전화 (자동)": hq_info.get("phone", ""),
-                                }
-
-                                # ⭐ 2026-05-26: 수기 필드 4개 자동 채움
-                                # 사용자가 이미 입력한 값은 보존, 빈 값일 때만 자동값으로 채움
-                                # → 빨간 박스(상호/대표/이메일/연락처)에 자동 기재
-                                def _is_empty(val):
-                                    return not str(val or "").strip()
-
-                                manual_fill_map = [
-                                    ("상호 (수기)",   "company_name"),
-                                    ("대표 (수기)",   "ceo"),
-                                    ("이메일 (수기)", "email"),
-                                    ("전화 (수기)",   "phone"),
-                                ]
-                                for manual_col, merged_key in manual_fill_map:
-                                    current_val = sel_full.get(manual_col, "")
-                                    auto_val = merged.get(merged_key, "")
-                                    if _is_empty(current_val) and auto_val:
-                                        update_data[manual_col] = auto_val
-                                if save_one_brand(sel_brand, update_data):
-                                    filled = sum(
-                                        1 for k in ["company_name", "ceo", "phone", "email"]
-                                        if merged.get(k)
-                                    )
-                                    st.success(
-                                        f"✅ {filled}개 항목 자동 수집 완료! "
-                                        f"(출처: {', '.join(sources)}) 화면 갱신 중..."
-                                    )
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                else:
-                                    st.error("저장 실패. Supabase 연결 확인.")
-                            else:
-                                st.warning(
-                                    "⚠️ 사업자 정보 찾기 실패. "
-                                    "사업자번호 확인 또는 수기 입력 권장."
-                                )
-                        except Exception as e:
-                            st.error(f"❌ 수집 오류: {e}")
-
-                st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
-
-                # 상호 / 대표자 성함 (신규)
-                edit_col_a, edit_col_b = st.columns(2)
-                with edit_col_a:
-                    new_company = st.text_input(
-                        "상호",
-                        value=(
-                            str(sel_full.get("상호 (수기)", "")).strip()
-                            or str(sel_full.get("상호 (자동)", "")).strip()
-                        ),
-                        placeholder="사업자등록증 상의 상호 (자동 채워질 수 있음)",
-                        key=f"company_{sel_brand}",
-                    )
-                with edit_col_b:
-                    new_ceo = st.text_input(
-                        "대표자 성함",
-                        value=(
-                            str(sel_full.get("대표 (수기)", "")).strip()
-                            or str(sel_full.get("대표 (자동)", "")).strip()
-                        ),
-                        placeholder="대표자 성함 (자동 채워질 수 있음)",
-                        key=f"ceo_{sel_brand}",
                     )
 
                 edit_col3, edit_col4 = st.columns(2)
@@ -1960,12 +1716,10 @@ if len(filtered) > 0:
                     st.caption("저장 안 하고 다른 셀러로 이동하면 변경분 사라져요")
 
                 if save_clicked:
-                    # ⭐ 2026-05-26: 관심고객수 (수기) 제거 — UI에서 빠짐
+                    # ⭐ 2026-05-26: UI에서 제거된 필드들 (상호/대표/사업자번호/관심고객수) 저장 안 함
+                    # 기존 DB 데이터는 유지 (덮어쓰지 않음)
                     new_values = {
                         "영업 상태 (수기)": new_status,
-                        "상호 (수기)":      new_company,
-                        "대표 (수기)":      new_ceo,
-                        "사업자번호 (수기)": new_biz_num,   # ⭐ 사업자번호 저장
                         "이메일 (수기)": new_email,
                         "전화 (수기)": new_phone,
                         "활동 메모 (수기)": new_memo,
