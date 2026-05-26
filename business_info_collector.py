@@ -786,39 +786,64 @@ def search_business_via_google(brand_name: str, business_number: str = "") -> di
 
 
 def collect_extended_business_info(brand_name: str, business_number: str = "") -> dict:
-    """확장 사업자 정보 수집 — 공식 홈페이지 + Naver + Google 통합.
+    """확장 사업자 정보 수집 — 공식 홈페이지 + Naver + Google 끝까지 시도.
 
-    ⭐ 2026-05-26 강화:
-      Phase 4a: 공식 홈페이지 (대표/전화/주소/이메일) — 가장 정확
-      Phase 4b: Naver 검색 강화 (홈페이지 못 찾은 정보 보완)
-      Phase 4c: Google 검색 (Naver도 못 찾은 정보만)
+    ⭐ 2026-05-26 정책:
+      Phase 4a: 공식 홈페이지 ⭐ 최우선 (대표/전화/주소/이메일)
+                → 공식 홈페이지가 있고 정보 충분하면 여기서 완료
+      Phase 4b: Naver 검색 강화 (홈페이지 부족·없을 때)
+      Phase 4c: Google 검색 (그래도 부족하면 Google 사이트 검색)
+
+    "데이터 찾을 때까지 자동 시도" — 검색 도우미 없이 자동 완성.
     """
     info = {}
+    sources_tried = []
 
-    # 1차: 공식 홈페이지 ⭐ (가장 정확, 모든 정보 시도)
+    # 1차: 공식 홈페이지 ⭐ 최우선
     print(f"           [Phase 4a] 공식 홈페이지 추출 시작...")
     homepage_info = find_business_info_from_homepage(brand_name)
+    if homepage_info:
+        sources_tried.append("공식홈페이지")
     for k, v in homepage_info.items():
         if v and not info.get(k):
             info[k] = v
 
-    # 2차: Naver 검색 강화 (보완)
-    missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
+    # 누락된 필드 확인
+    missing = [k for k in ["ceo", "phone", "address", "email"] if not info.get(k)]
+
+    # 2차: Naver 검색 강화 (홈페이지 부족하면)
     if missing:
         print(f"           [Phase 4b] Naver 확장 검색 시작 (보완: {missing})...")
         naver_info = search_business_via_naver_extended(brand_name, business_number)
+        if naver_info:
+            sources_tried.append("Naver검색")
         for k, v in naver_info.items():
             if v and not info.get(k):
                 info[k] = v
 
-    # 3차: Google (마지막 보완)
+    # 3차: Naver 검색 — 이메일 보완 (별도 함수)
+    if not info.get("email"):
+        print(f"           [Phase 4b-2] Naver 검색으로 이메일 찾기...")
+        naver_email = search_email_via_naver(brand_name)
+        if naver_email:
+            info["email"] = naver_email
+            if "Naver검색" not in sources_tried:
+                sources_tried.append("Naver검색")
+
+    # 4차: Google 검색 (마지막 보완)
     missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
     if missing:
         print(f"           [Phase 4c] Google 검색 시작 (보완: {missing})...")
         google_info = search_business_via_google(brand_name, business_number)
+        if google_info:
+            sources_tried.append("Google검색")
         for k, v in google_info.items():
             if v and not info.get(k):
                 info[k] = v
+
+    if sources_tried:
+        print(f"           [Phase 4 완료] 시도된 소스: {sources_tried}, "
+              f"수집 항목: {len([k for k in info if info.get(k)])}개")
 
     return info
 
