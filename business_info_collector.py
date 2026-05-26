@@ -251,22 +251,25 @@ def fetch_ftc_telecom_seller_info(
         # End Point: https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service
         # 메서드: /getMllBsInfoDetail_3 (통신판매사업자 등록상세 조회)
         # 일일 트래픽: 10,000회
+        # ⚠️ 이 API는 사업자번호(brno) 또는 인허가관리번호(prmmiMnno)로만 검색 가능
+        #    상호명(bzmnNm) 검색은 X → 별도 "등록현황 API" 활용신청 필요
         api_url = "https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service/getMllBsInfoDetail_3"
         print(f"           [디버그] 공정위 API 호출: {api_url}")
-        print(f"           [디버그] 검색 조건: 사업자번호={business_number}, 상호={company_name}")
+        print(f"           [디버그] 검색 조건: 사업자번호={business_number}")
 
+        # 사업자번호 없으면 검색 불가
+        if not business_number:
+            print(f"           [디버그] 사업자번호 없음 → 공정위 API skip")
+            return {}
+
+        # 정확한 파라미터 이름 (활용가이드 기준)
         params = {
-            "ServiceKey": PUBLIC_DATA_API_KEY,
+            "serviceKey": PUBLIC_DATA_API_KEY,   # 소문자 s 시작 (정정)
             "pageNo": "1",
-            "numOfRows": "5",
-            "resultType": "json",   # JSON 응답 요청
+            "numOfRows": "10",
+            "resultType": "json",
+            "brno": business_number.replace("-", ""),   # 사업자등록번호 (하이픈 제거)
         }
-
-        if business_number:
-            # 사업자번호 (하이픈 제거)
-            params["brno"] = business_number.replace("-", "")
-        elif company_name:
-            params["bzmnNm"] = company_name
 
         response = requests.get(api_url, params=params, timeout=15)
         print(f"           [디버그] 공정위 API 응답: HTTP {response.status_code}")
