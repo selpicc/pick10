@@ -276,10 +276,11 @@ def extract_emails_from_html(html: str) -> list:
 def fetch_smartstore_business_info(store_url: str) -> dict:
     """스마트스토어 셀러 페이지에서 사업자정보 자동 추출.
 
-    동작:
-      1. 메인 페이지 fetch
-      2. 사업자정보 popup/페이지 URL 발견 시 추가 fetch
-      3. 정규식으로 정보 추출
+    ⭐ 2026-05-26 강화:
+      1. 다양한 User-Agent 시도 (HTTP 429 우회)
+      2. 모바일 페이지(m.smartstore.naver.com) fallback
+      3. __NEXT_DATA__ JSON 추출 (SPA 데이터 직접 파싱)
+      4. 정규식 fallback (footer 패턴)
 
     반환:
         {
@@ -296,14 +297,132 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
 
     info = {}
 
+    # ⭐ 다양한 User-Agent (HTTP 429 우회 강화)
+    USER_AGENTS = [
+        # Chrome on macOS
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        # Chrome on Windows (default)
+        HTTP_HEADERS["User-Agent"],
+        # iPhone Safari (모바일)
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    ]
+
     try:
-        # 1. 메인 페이지 fetch
+        # 1. 메인 페이지 fetch (UA 변형으로 retry)
         print(f"           [디버그] 스마트스토어 fetch 시작: {store_url[:60]}")
-        response = requests.get(store_url, headers=HTTP_HEADERS, timeout=15)
-        print(f"           [디버그] HTTP 상태: {response.status_code}, HTML 길이: {len(response.text)}자")
-        if response.status_code != 200:
+        html = ""
+        response = None
+        for idx, ua in enumerate(USER_AGENTS):
+            headers = {**HTTP_HEADERS, "User-Agent": ua}
+            try:
+                response = requests.get(store_url, headers=headers, timeout=15)
+                print(f"           [디버그] UA {idx+1} HTTP: {response.status_code}")
+                if response.status_code == 200:
+                    html = response.text
+                    break
+                elif response.status_code == 429:
+                    time.sleep(0.5)
+                    continue
+            except Exception as e:
+                print(f"           [디버그] UA {idx+1} 실패: {e}")
+                continue
+
+        # 메인 모두 실패 → 모바일 URL fallback
+        if not html:
+            mobile_url = store_url.replace(
+                "smartstore.naver.com", "m.smartstore.naver.com"
+            )
+            print(f"           [디버그] 모바일 fallback: {mobile_url[:60]}")
+            try:
+                response = requests.get(
+                    mobile_url,
+                    headers={**HTTP_HEADERS, "User-Agent": USER_AGENTS[2]},
+                    timeout=15,
+                )
+                if response.status_code == 200:
+                    html = response.text
+            except Exception as e:
+                print(f"           [디버그] 모바일 fallback 실패: {e}")
+
+        if not html:
+            print(f"           [디버그] 스마트스토어 fetch 완전 실패")
             return {}
-        html = response.text
+
+        print(f"           [디버그] HTML 길이: {len(html)}자")
+
+        # ⭐ 2. __NEXT_DATA__ JSON 추출 시도 (스마트스토어 SPA 핵심 데이터)
+        # 성공 시 100% 정확한 사업자 정보 (스마트스토어가 직접 제공)
+        next_data_match = re.search(
+            r'<script[^>]*id=["\']__NEXT_DATA__["\'][^>]*>(\{.+?\})</script>',
+            html, re.DOTALL,
+        )
+        if next_data_match:
+            try:
+                import json
+                data = json.loads(next_data_match.group(1))
+
+                # 깊은 dict 탐색 — 가능한 sellerInfo / businessInfo 키 모두 찾기
+                def _find_seller_info(obj, depth=0):
+                    if depth > 10:   # 무한 재귀 방지
+                        return None
+                    if isinstance(obj, dict):
+                        # 직접 매칭 키
+                        for key in ("sellerInfo", "businessInfo", "storeInfo",
+                                    "seller", "store", "shopInfo"):
+                            if key in obj and isinstance(obj[key], dict):
+                                # 실제 사업자 정보 포함 확인
+                                if any(k in obj[key] for k in
+                                       ("companyName", "businessRegistrationNumber",
+                                        "representativeName", "ceoName")):
+                                    return obj[key]
+                        # 재귀 탐색
+                        for v in obj.values():
+                            result = _find_seller_info(v, depth+1)
+                            if result:
+                                return result
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            result = _find_seller_info(item, depth+1)
+                            if result:
+                                return result
+                    return None
+
+                seller = _find_seller_info(data)
+                if seller:
+                    info = {
+                        "company_name": (
+                            seller.get("companyName") or
+                            seller.get("businessName") or ""
+                        ),
+                        "ceo": (
+                            seller.get("representativeName") or
+                            seller.get("ceoName") or
+                            seller.get("representative") or ""
+                        ),
+                        "business_number": (
+                            seller.get("businessRegistrationNumber") or
+                            seller.get("brno") or
+                            seller.get("businessNumber") or ""
+                        ),
+                        "phone": (
+                            seller.get("phoneNumber") or
+                            seller.get("contactPhone") or
+                            seller.get("telno") or ""
+                        ),
+                        "email": (
+                            seller.get("email") or
+                            seller.get("emailAddress") or
+                            seller.get("contactEmail") or ""
+                        ),
+                    }
+                    info = {k: v for k, v in info.items() if v}
+                    if info:
+                        print(f"           ✅ __NEXT_DATA__ 추출 성공: {list(info.keys())}")
+                        return info
+            except Exception as e:
+                print(f"           [디버그] __NEXT_DATA__ 파싱 실패: {e}")
 
         # 2. 사업자정보 페이지/popup URL 추출 시도
         # 스마트스토어는 사업자정보를 별도 페이지 또는 popup으로 제공
@@ -660,23 +779,48 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
         for item_url in candidate_urls[:8]:
             url = item_url
             try:
-                # 메인 페이지 + 사업자 정보 자주 노출되는 페이지들 ⭐ 추가
+                # 메인 페이지 + 다양한 쇼핑몰 솔루션의 사업자 정보 페이지
+                # ⭐ 2026-05-26 강화: cafe24/godo/imweb/makeshop/sixshop 모두 지원
                 base_url = url.rstrip("/")
                 pages_to_try = [
                     url,
-                    # 일반적인 회사소개·연락
+                    # ─── 공통 (대부분 솔루션) ───
                     f"{base_url}/contact",
                     f"{base_url}/about",
                     f"{base_url}/company",
                     f"{base_url}/info",
                     f"{base_url}/cs",
-                    # ⭐ 약관·개인정보 (사업자정보 풀세트 노출)
                     f"{base_url}/agreement",
                     f"{base_url}/privacy",
-                    # cafe24 표준 약관 경로
+                    f"{base_url}/terms",
                     f"{base_url}/index.html",
+                    # ─── cafe24 표준 경로 ───
                     f"{base_url}/shopinfo/company.html",
                     f"{base_url}/shopinfo/guide.html",
+                    f"{base_url}/shopinfo/agreement.html",
+                    f"{base_url}/shopinfo/privacy.html",
+                    f"{base_url}/order/order_pop_terms.html",
+                    # ─── godo (고도몰) 표준 경로 ───
+                    f"{base_url}/shop/info.php",
+                    f"{base_url}/shop/proc/agreement.php",
+                    f"{base_url}/shop/proc/privacy.php",
+                    # ─── makeshop 표준 경로 ───
+                    f"{base_url}/shopinfo.html",
+                    f"{base_url}/page/agreement.html",
+                    f"{base_url}/page/privacy.html",
+                    # ─── imweb 표준 경로 ───
+                    f"{base_url}/pages/about-us",
+                    f"{base_url}/pages/contact",
+                    f"{base_url}/policy/terms",
+                    f"{base_url}/policy/privacy",
+                    # ─── sixshop / Shopify 등 ───
+                    f"{base_url}/pages/about",
+                    f"{base_url}/pages/contact-us",
+                    f"{base_url}/policies/terms-of-service",
+                    f"{base_url}/policies/privacy-policy",
+                    # ─── 한글 경로 (간혹) ───
+                    f"{base_url}/이용약관",
+                    f"{base_url}/회사소개",
                 ]
 
                 combined_text = ""
