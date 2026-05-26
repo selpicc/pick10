@@ -76,13 +76,16 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
         }
     """
     if not store_url or "smartstore.naver.com" not in store_url:
+        print(f"           [디버그] 스마트스토어 URL X: {store_url[:60]}")
         return {}
 
     info = {}
 
     try:
         # 1. 메인 페이지 fetch
+        print(f"           [디버그] 스마트스토어 fetch 시작: {store_url[:60]}")
         response = requests.get(store_url, headers=HTTP_HEADERS, timeout=15)
+        print(f"           [디버그] HTTP 상태: {response.status_code}, HTML 길이: {len(response.text)}자")
         if response.status_code != 200:
             return {}
         html = response.text
@@ -103,12 +106,16 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
                     info_url = "https://smartstore.naver.com" + info_url
                 else:
                     info_url = store_url.rstrip("/") + "/" + info_url
+            print(f"           [디버그] 사업자정보 페이지 발견: {info_url[:60]}")
             try:
                 info_resp = requests.get(info_url, headers=HTTP_HEADERS, timeout=10)
+                print(f"           [디버그] 사업자정보 페이지 HTTP: {info_resp.status_code}")
                 if info_resp.status_code == 200:
                     info_html = info_resp.text
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"           [디버그] 사업자정보 페이지 fetch 실패: {e}")
+        else:
+            print(f"           [디버그] 사업자정보 페이지 URL 찾기 실패 (메인 페이지에서 추출 시도)")
 
         # 3. 정보 추출 (정규식)
         # 상호 (회사명)
@@ -164,8 +171,18 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
                 info["email"] = email
                 break
 
-    except Exception:
-        pass   # 실패해도 다음 단계 진행
+        # 디버그: 추출 결과 요약
+        print(f"           [디버그] 정규식 매칭 결과:")
+        print(f"               상호: {info.get('company_name', '(매칭 X)')[:30]}")
+        print(f"               대표: {info.get('ceo', '(매칭 X)')[:20]}")
+        print(f"               사업자번호: {info.get('business_number', '(매칭 X)')}")
+        print(f"               전화: {info.get('phone', '(매칭 X)')}")
+        print(f"               이메일: {info.get('email', '(매칭 X)')}")
+        print(f"               전체 이메일 후보 수: {len(emails)}")
+
+    except Exception as e:
+        print(f"           [디버그] 스마트스토어 fetch 예외: {type(e).__name__}: {e}")
+        pass
 
     return info
 
@@ -194,9 +211,11 @@ def fetch_ftc_telecom_seller_info(
       - emlAddr: 전자우편
     """
     if not PUBLIC_DATA_API_KEY:
+        print(f"           [디버그] 공정위 API 키 없음 (skip)")
         return {}   # API 키 없으면 skip
 
     if not business_number and not company_name:
+        print(f"           [디버그] 사업자번호/상호 없음 (skip)")
         return {}
 
     info = {}
@@ -205,6 +224,8 @@ def fetch_ftc_telecom_seller_info(
         # 공정위 통신판매사업자 등록상세 API
         # base URL + 메서드명 (활용가이드 따라 조정 가능)
         api_url = "https://apis.data.go.kr/1130000/MllBsDtl_3Service/getMllBsDtl_3"
+        print(f"           [디버그] 공정위 API 호출: {api_url}")
+        print(f"           [디버그] 검색 조건: 사업자번호={business_number}, 상호={company_name}")
 
         params = {
             "ServiceKey": PUBLIC_DATA_API_KEY,
@@ -220,13 +241,18 @@ def fetch_ftc_telecom_seller_info(
             params["bzmnNm"] = company_name
 
         response = requests.get(api_url, params=params, timeout=15)
+        print(f"           [디버그] 공정위 API 응답: HTTP {response.status_code}")
         if response.status_code != 200:
+            print(f"           [디버그] 응답 본문 일부: {response.text[:200]}")
             return {}
 
         # JSON 응답 시도 (실패하면 XML 가능성)
         try:
             data = response.json()
-        except Exception:
+            print(f"           [디버그] JSON 파싱 성공. 구조: {list(data.keys())[:5]}")
+        except Exception as e:
+            print(f"           [디버그] JSON 파싱 실패 (XML 가능성): {e}")
+            print(f"           [디버그] 응답 본문 일부: {response.text[:200]}")
             return {}
 
         # 응답 구조 — 공공데이터포털 API 표준 형태들 모두 시도
@@ -278,8 +304,12 @@ def fetch_ftc_telecom_seller_info(
             }
             # 빈 값 제거
             info = {k: v for k, v in info.items() if v}
+            print(f"           [디버그] 공정위 추출 결과: {len(info)}개 항목 — {list(info.keys())}")
+        else:
+            print(f"           [디버그] 공정위 API 데이터 없음. 응답 일부: {str(data)[:300]}")
 
-    except Exception:
+    except Exception as e:
+        print(f"           [디버그] 공정위 API 예외: {type(e).__name__}: {e}")
         pass
 
     return info
