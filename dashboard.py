@@ -1628,10 +1628,9 @@ if len(filtered) > 0:
                 if current_status not in SALES_STATUS_OPTIONS:
                     current_status = ""
 
-                # ⭐ 2026-05-26 단순화 — 사용자 요청
-                # 제거: 본사 정보 박스, 사업자등록번호 입력, 🔍 수집 버튼, 상호/대표자 입력
-                # 유지: 영업 컨택 박스 (자동 수집 결과만 표시), 이메일/연락처 수기 편집
-                # 추가: [🔍 영업 컨택 재수집] 버튼 — 브랜드명+스마트스토어 URL 기반
+                # ⭐ 2026-05-26 단순화 (재수집 버튼 제거)
+                # 영업 컨택 자동수집은 신규 셀러 수집 시점(collect_5.py)에서만 일어남
+                # 디테일 패널은 결과 표시 + 수기 편집 전용
                 def _fmt(val):
                     v = str(val).strip()
                     return v if v and v not in ("-", "None") else "🔍 미확인"
@@ -1646,110 +1645,21 @@ if len(filtered) > 0:
                     "높음": "🟢", "중간": "🟡", "낮음": "🔴",
                 }.get(auto_confidence, "⚪")
 
-                # 박스 + 재수집 버튼 가로 배치
-                contact_box_col, contact_btn_col = st.columns([4, 1])
-
-                with contact_box_col:
-                    if contact_email_raw or contact_phone_raw:
-                        st.markdown(
-                            f"<div style='background: #ecfdf5; border: 2px solid #10b981; "
-                            f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
-                            f"<b style='color: #047857;'>📞 영업 컨택 "
-                            f"<span style='font-size: 11px; color: #065f46; font-weight: normal;'>"
-                            f"(자동 수집 · 메일/전화 발송 대상)</span></b> "
-                            f"<span style='color: #064e3b; font-size: 11px; margin-left: 6px;'>"
-                            f"{confidence_emoji} 출처: {auto_sources or '미상'}</span><br>"
-                            f"<span style='color: #064e3b;'>"
-                            f"CS 전화: {_fmt(contact_phone_raw)} · CS 이메일: {_fmt(contact_email_raw)}"
-                            f"</span>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            f"<div style='background: #fef9c3; border: 2px solid #facc15; "
-                            f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
-                            f"<b style='color: #854d0e;'>📞 영업 컨택 (미수집)</b> "
-                            f"<span style='color: #713f12; font-size: 12px; margin-left: 6px;'>"
-                            f"오른쪽 [재수집] 버튼을 눌러 자동 수집을 시도하세요.</span>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-
-                with contact_btn_col:
-                    recollect_clicked = st.button(
-                        "🔍 재수집",
-                        type="secondary",
-                        use_container_width=True,
-                        key=f"recollect_contact_{sel_brand}",
-                        help="브랜드명 + 스마트스토어 URL로 영업 컨택 정보 자동 수집 (10-30초)",
+                if contact_email_raw or contact_phone_raw:
+                    st.markdown(
+                        f"<div style='background: #ecfdf5; border: 2px solid #10b981; "
+                        f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
+                        f"<b style='color: #047857;'>📞 영업 컨택 "
+                        f"<span style='font-size: 11px; color: #065f46; font-weight: normal;'>"
+                        f"(자동 수집 · 메일/전화 발송 대상)</span></b> "
+                        f"<span style='color: #064e3b; font-size: 11px; margin-left: 6px;'>"
+                        f"{confidence_emoji} 출처: {auto_sources or '미상'}</span><br>"
+                        f"<span style='color: #064e3b;'>"
+                        f"CS 전화: {_fmt(contact_phone_raw)} · CS 이메일: {_fmt(contact_email_raw)}"
+                        f"</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
                     )
-
-                # ─── 재수집 버튼 처리 ───
-                if recollect_clicked:
-                    with st.spinner(
-                        "🔍 공식몰 + 스마트스토어 판매자정보 검색 중... (10-30초)"
-                    ):
-                        try:
-                            from business_info_collector import collect_business_info
-
-                            store_url = str(sel_full.get("스마트스토어 주소", "")).strip()
-                            # 통합 수집: 스마트스토어 판매자정보 + 공식몰 footer + Naver/Google
-                            new_info = collect_business_info(
-                                brand_name=sel_brand,
-                                store_url=store_url,
-                            )
-
-                            if new_info and any(new_info.get(k) for k in
-                                                ["company_name", "phone", "email"]):
-                                update_data = {}
-                                if new_info.get("company_name"):
-                                    update_data["상호 (자동)"] = new_info["company_name"]
-                                if new_info.get("ceo"):
-                                    update_data["대표 (자동)"] = new_info["ceo"]
-                                if new_info.get("business_number"):
-                                    update_data["사업자번호 (자동)"] = new_info["business_number"]
-                                if new_info.get("phone"):
-                                    update_data["전화 (자동)"] = new_info["phone"]
-                                if new_info.get("email"):
-                                    update_data["이메일 (자동)"] = new_info["email"]
-
-                                sources = new_info.get("sources", [])
-                                update_data["사업자정보 출처 (자동)"] = ", ".join(sources)
-                                update_data["사업자정보 신뢰도 (자동)"] = (
-                                    new_info.get("confidence", "중간")
-                                )
-
-                                # 수기 필드 4개 자동 채움 (비어있을 때만)
-                                def _is_empty(val):
-                                    return not str(val or "").strip()
-                                fill_map = [
-                                    ("이메일 (수기)", "email"),
-                                    ("전화 (수기)", "phone"),
-                                ]
-                                for manual_col, info_key in fill_map:
-                                    if _is_empty(sel_full.get(manual_col, "")) and new_info.get(info_key):
-                                        update_data[manual_col] = new_info[info_key]
-
-                                if save_one_brand(sel_brand, update_data):
-                                    filled = sum(1 for k in ["phone", "email"]
-                                                 if new_info.get(k))
-                                    st.success(
-                                        f"✅ 영업 컨택 {filled}개 항목 수집 완료! "
-                                        f"(출처: {', '.join(sources)})"
-                                    )
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                else:
-                                    st.error("저장 실패. Supabase 연결 확인.")
-                            else:
-                                st.warning(
-                                    "⚠️ 영업 컨택 정보를 찾지 못했어요. "
-                                    "공식몰이 없거나 footer에 정보가 노출되지 않은 케이스입니다. "
-                                    "이메일·연락처 칸에 직접 입력해주세요."
-                                )
-                        except Exception as e:
-                            st.error(f"❌ 수집 오류: {e}")
 
                 edit_col3, edit_col4 = st.columns(2)
                 with edit_col3:
