@@ -1674,43 +1674,74 @@ if len(filtered) > 0:
                         help="공정위 통신판매사업자 DB에서 상호·대표·전화·주소 자동 수집",
                     )
 
-                # 자동 수집된 정보 표시 (참고용) — 주소 제외 (2026-05-26)
-                # ⭐ 빈 값은 "🔍 미확인" 표기 (수기 확인 필요 명시)
-                # ⭐ 출처 표시 정확화 — "공정위 DB" 단일 라벨 → 실제 사용된 소스
-                if auto_company_name:
-                    def _fmt(val):
-                        v = str(val).strip()
-                        return v if v and v not in ("-", "None") else "🔍 미확인"
+                # ⭐ 2026-05-26: 자동수집 정보 2박스 분리
+                # 박스 1: 🏢 본사 정보 (공정위 DB · 참고용)
+                # 박스 2: 📞 영업 컨택 (브랜드 공식몰 · 실제 사용)
+                def _fmt(val):
+                    v = str(val).strip()
+                    return v if v and v not in ("-", "None") else "🔍 미확인"
 
-                    # 실제 사용된 출처 (공정위DB / Naver/Google / 공식홈페이지)
+                # ─── 박스 1: 본사 정보 (공정위 DB · 참고용) ───
+                # 우선순위: DB의 본사 컬럼 → session_state → sel_full의 자동 컬럼 (호환)
+                hq_saved = st.session_state.get(f"hq_info_{sel_brand}", {})
+                hq_company = (
+                    str(sel_full.get("본사 상호 (자동)", "")).strip()
+                    or hq_saved.get("company_name", "")
+                    or str(sel_full.get("상호 (자동)", "")).strip()
+                )
+                hq_ceo = (
+                    str(sel_full.get("본사 대표 (자동)", "")).strip()
+                    or hq_saved.get("ceo", "")
+                    or str(sel_full.get("대표 (자동)", "")).strip()
+                )
+                hq_phone = (
+                    str(sel_full.get("본사 전화 (자동)", "")).strip()
+                    or hq_saved.get("phone", "")
+                )
+                if hq_company:
+                    st.markdown(
+                        f"<div style='background: #f9fafb; border: 1px solid #d1d5db; "
+                        f"border-radius: 6px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px;'>"
+                        f"<b style='color: #4b5563;'>🏢 본사 정보 "
+                        f"<span style='font-size: 11px; color: #6b7280; font-weight: normal;'>"
+                        f"(공정위 DB · 사업자등록증 기준)</span></b><br>"
+                        f"<span style='color: #374151;'>"
+                        f"상호: {hq_company} · "
+                        f"대표: {_fmt(hq_ceo)} · "
+                        f"본사 전화: {_fmt(hq_phone)}"
+                        f"</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # ─── 박스 2: 영업 컨택 (브랜드 공식몰 · 실제 사용) ───
+                if auto_company_name:
+                    # 출처/신뢰도
                     auto_sources = str(sel_full.get("사업자정보 출처 (자동)", "")).strip()
                     auto_confidence = str(sel_full.get("사업자정보 신뢰도 (자동)", "")).strip()
-
-                    # 신뢰도 색상 매핑
                     confidence_emoji = {
                         "높음": "🟢", "중간": "🟡", "낮음": "🔴",
                     }.get(auto_confidence, "⚪")
 
-                    source_label = (
-                        f"{confidence_emoji} 출처: {auto_sources}"
-                        if auto_sources else "⚪ 출처: 미상"
-                    )
+                    # 영업 컨택용 전화/이메일 (브랜드 공식몰 우선)
+                    contact_phone = _fmt(sel_full.get('전화 (자동)', ''))
+                    contact_email = _fmt(sel_full.get('이메일 (자동)', ''))
 
                     st.markdown(
-                        f"<div style='background: #f0fdf4; border: 1px solid #86efac; "
+                        f"<div style='background: #ecfdf5; border: 2px solid #10b981; "
                         f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
-                        f"<b style='color: #166534;'>✅ 자동 수집 정보</b> "
-                        f"<span style='color: #14532d; font-size: 11px; margin-left: 6px;'>"
-                        f"({source_label} · 신뢰도: {auto_confidence or '미상'})</span><br>"
-                        f"<span style='color: #14532d;'>"
-                        f"상호: {auto_company_name} · "
-                        f"대표: {_fmt(sel_full.get('대표 (자동)', ''))} · "
-                        f"전화: {_fmt(sel_full.get('전화 (자동)', ''))}<br>"
-                        f"이메일: {_fmt(sel_full.get('이메일 (자동)', ''))}"
+                        f"<b style='color: #047857;'>📞 영업 컨택 "
+                        f"<span style='font-size: 11px; color: #065f46; font-weight: normal;'>"
+                        f"(브랜드 공식몰 · 실제 발송 대상)</span></b> "
+                        f"<span style='color: #064e3b; font-size: 11px; margin-left: 6px;'>"
+                        f"{confidence_emoji} 출처: {auto_sources or '미상'} · 신뢰도: {auto_confidence or '미상'}</span><br>"
+                        f"<span style='color: #064e3b;'>"
+                        f"CS 전화: {contact_phone} · CS 이메일: {contact_email}"
                         f"</span>"
                         f"<div style='margin-top: 6px; padding-top: 6px; "
-                        f"border-top: 1px dashed #86efac; color: #15803d; font-size: 11px;'>"
-                        f"💡 공정위DB는 정확도 매우 높음. 검색 보완값(Naver/Google)은 수기 검증 권장."
+                        f"border-top: 1px dashed #10b981; color: #065f46; font-size: 11px;'>"
+                        f"💡 영업 메일/전화는 본사가 아닌 이 정보로 발송. "
+                        f"브랜드 공식몰을 못 찾으면 본사 정보로 보완."
                         f"</div>"
                         f"</div>",
                         unsafe_allow_html=True,
@@ -1719,14 +1750,15 @@ if len(filtered) > 0:
                 st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
 
                 # 사업자정보 수집 버튼 클릭 처리
-                # 4단계 통합 수집:
-                #   1. 공정위 API (상호·사업자번호·통신판매업번호)
-                #   2. Naver 검색 (대표·전화·주소)
-                #   3. Google 검색 (대표·전화·주소 보완)
-                #   4. 모든 결과 통합 + DB 저장
+                # ⭐ 2026-05-26 전면 재설계 (브랜드 중심)
+                # 기존: 본사명("주식회사판옵티콘")으로 검색 → 본사 정보만 수집 ❌
+                # 변경: 브랜드명("산모애")으로 검색 → 브랜드 공식몰의 영업 컨택 수집 ✅
+                #
+                # 본사 정보(공정위 DB) = 참고용
+                # 영업 컨택(브랜드 공식몰) = 실제 사용 (메일·전화 발송 대상)
                 if collect_biz_clicked and new_biz_num.strip():
                     with st.spinner(
-                        "🔍 공정위 DB + Naver + Google 통합 검색 중... (10-30초)"
+                        "🔍 공정위 본사정보 + 브랜드 공식몰 영업컨택 검색 중... (10-30초)"
                     ):
                         try:
                             from business_info_collector import (
@@ -1734,38 +1766,67 @@ if len(filtered) > 0:
                                 collect_extended_business_info,
                             )
 
-                            # 1차: 공정위 API (상호, 사업자번호)
-                            biz_info = fetch_ftc_telecom_seller_info(
+                            # 1차: 공정위 API (본사 정보 — 사업자번호 기반)
+                            # 본사 상호 / 본사 대표 / 본사 전화 — 참고용
+                            hq_info = fetch_ftc_telecom_seller_info(
                                 business_number=new_biz_num.strip()
                             )
 
-                            # 2차: Naver + Google 확장 검색 (대표/전화/주소)
-                            # 공정위에서 가져온 상호명 사용 (정확)
-                            company_for_search = (
-                                biz_info.get("company_name", "") or sel_brand
-                            )
-                            ext_info = collect_extended_business_info(
-                                brand_name=company_for_search,
+                            # 2차: ⭐ 브랜드명 기반 영업 컨택 정보 수집
+                            # 본사명이 아닌 브랜드명(sel_brand)으로 검색
+                            # → 브랜드 공식몰의 footer CS 정보 추출
+                            contact_info = collect_extended_business_info(
+                                brand_name=sel_brand,   # ⭐ 핵심: 브랜드명으로 검색
                                 business_number=new_biz_num.strip(),
                             )
 
-                            # 통합: 공정위 우선 + 확장 검색 보완
-                            # ⭐ 2026-05-26: 주소(address) 자동수집 제외, 이메일 추가
-                            merged = dict(biz_info)
-                            for k in ["ceo", "phone", "email"]:
-                                if not merged.get(k) and ext_info.get(k):
-                                    merged[k] = ext_info[k]
+                            # ⭐ 통합 우선순위 변경
+                            # email/phone(영업 컨택): 브랜드 공식몰 우선, 공정위 보조
+                            # company_name(상호): 공정위(본사명) 우선 (사업자등록증 기준)
+                            # ceo(대표): 공정위 우선
+                            merged = {
+                                "company_name": (
+                                    hq_info.get("company_name", "") or
+                                    contact_info.get("company_name", "")
+                                ),
+                                "ceo": (
+                                    hq_info.get("ceo", "") or
+                                    contact_info.get("ceo", "")
+                                ),
+                                "business_number": new_biz_num.strip(),
+                                # ⭐ 전화/이메일은 브랜드 공식몰 우선 (영업 컨택)
+                                "phone": (
+                                    contact_info.get("phone", "") or
+                                    hq_info.get("phone", "")
+                                ),
+                                "email": (
+                                    contact_info.get("email", "") or
+                                    hq_info.get("email", "")
+                                ),
+                            }
 
                             if merged and any(merged.get(k) for k in
                                               ["company_name", "ceo", "phone", "email"]):
-                                # 출처 표시
+                                # 출처 표시 (어디서 가져왔는지 명확화)
                                 sources = []
-                                if biz_info.get("company_name"):
+                                if contact_info.get("phone") or contact_info.get("email"):
+                                    sources.append("브랜드공식몰")
+                                if hq_info.get("company_name"):
                                     sources.append("공정위DB")
-                                if ext_info.get("ceo") or ext_info.get("phone") or ext_info.get("email"):
-                                    sources.append("Naver/Google")
+
+                                # ⭐ 본사 정보를 session_state에 저장 (UI 표시용)
+                                # DB 컬럼 추가 전 임시 — 브라우저 세션 동안 유지
+                                # 컬럼 추가 후 영구 저장으로 전환 예정
+                                st.session_state[f"hq_info_{sel_brand}"] = {
+                                    "company_name": hq_info.get("company_name", ""),
+                                    "ceo":          hq_info.get("ceo", ""),
+                                    "phone":        hq_info.get("phone", ""),
+                                    "business_number": hq_info.get("business_number", ""),
+                                }
 
                                 # 자동 수집 정보를 DB에 업데이트 — 주소 제외
+                                # ⭐ "상호/대표/전화/이메일 (자동)" = 영업 컨택 (브랜드 공식몰 우선)
+                                # ⭐ "본사 ... (자동)" = 본사 정보 (공정위 DB 기준, 참고용)
                                 update_data = {
                                     "사업자번호 (수기)": new_biz_num.strip(),
                                     "상호 (자동)": merged.get("company_name", ""),
@@ -1779,6 +1840,10 @@ if len(filtered) > 0:
                                     "사업자정보 신뢰도 (자동)": (
                                         "높음" if len(sources) >= 2 else "중간"
                                     ),
+                                    # ⭐ 본사 정보 (공정위 DB · DB 컬럼 추가 필수)
+                                    "본사 상호 (자동)": hq_info.get("company_name", ""),
+                                    "본사 대표 (자동)": hq_info.get("ceo", ""),
+                                    "본사 전화 (자동)": hq_info.get("phone", ""),
                                 }
 
                                 # ⭐ 2026-05-26: 수기 필드 4개 자동 채움
