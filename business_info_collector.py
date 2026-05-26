@@ -248,8 +248,10 @@ def fetch_ftc_telecom_seller_info(
 
     try:
         # 공정위 통신판매사업자 등록상세 API
-        # base URL + 메서드명 (활용가이드 따라 조정 가능)
-        api_url = "https://apis.data.go.kr/1130000/MllBsDtl_3Service/getMllBsDtl_3"
+        # End Point: https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service
+        # 메서드: /getMllBsInfoDetail_3 (통신판매사업자 등록상세 조회)
+        # 일일 트래픽: 10,000회
+        api_url = "https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service/getMllBsInfoDetail_3"
         print(f"           [디버그] 공정위 API 호출: {api_url}")
         print(f"           [디버그] 검색 조건: 사업자번호={business_number}, 상호={company_name}")
 
