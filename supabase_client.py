@@ -47,6 +47,16 @@ DB_TO_KOR = {
     "manual_marketing_memo":  "마케팅 분석 메모 (수기)",
     "sales_status":           "영업 상태 (수기)",
     "activity_memo":          "활동 메모 (수기)",
+    # ⭐ 사업자 정보 자동 수집 (Phase 1+2+3, 2026-05-13 추가)
+    # 스마트스토어 + 공정위 통신판매 DB + 홈페이지/검색
+    "auto_company_name":      "상호 (자동)",
+    "auto_ceo":               "대표 (자동)",
+    "auto_business_number":   "사업자번호 (자동)",
+    "auto_phone":             "전화 (자동)",
+    "auto_email":             "이메일 (자동)",
+    "auto_address":           "주소 (자동)",
+    "auto_biz_sources":       "사업자정보 출처 (자동)",
+    "auto_biz_confidence":    "사업자정보 신뢰도 (자동)",
 }
 
 # 한글 → 영문 (역매핑)

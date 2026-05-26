@@ -129,6 +129,10 @@ from market_filter import (
     generate_space_variants,   # 띄어쓰기 변형 자동 생성
 )
 
+# 사업자 정보 자동 수집 (Phase 1+2+3)
+# 신규 셀러 수집 시 상호·대표·사업자번호·전화·이메일 자동 추출
+from business_info_collector import collect_business_info
+
 
 RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
@@ -522,7 +526,12 @@ def _process_one_candidate(
         time.sleep(0.3)
         return False
 
-    # 5-6) 결과 추가
+    # 5-5.5) 사업자 정보 자동 수집 (Phase 1+2+3)
+    # 신규 셀러 수집 시점부터 상호·대표·전화·이메일 자동 추출
+    # 무료 (스마트스토어 페이지 + 공정위 DB + 홈페이지/검색)
+    biz_info = collect_business_info(brand_name, store_url)
+
+    # 5-6) 결과 추가 — 자동 수집된 사업자 정보 포함
     results.append({
         "수집일":               datetime.now().strftime("%Y-%m-%d"),
         "Selpic 점수":          sel["_score"],
@@ -545,6 +554,16 @@ def _process_one_candidate(
         ),
         "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
         "관심고객수 (자동)":    follower_count,
+        # ⭐ 자동 수집 사업자 정보 (Phase 1+2+3)
+        "상호 (자동)":               biz_info.get("company_name", ""),
+        "대표 (자동)":               biz_info.get("ceo", ""),
+        "사업자번호 (자동)":         biz_info.get("business_number", ""),
+        "전화 (자동)":               biz_info.get("phone", ""),
+        "이메일 (자동)":             biz_info.get("email", ""),
+        "주소 (자동)":               biz_info.get("address", ""),
+        "사업자정보 출처 (자동)":    ", ".join(biz_info.get("sources", [])),
+        "사업자정보 신뢰도 (자동)":  biz_info.get("confidence", "낮음"),
+        # 수기 입력 컬럼 (사용자 검증·수정용)
         "관심고객수 (수기)":         "",
         "리뷰수 (수기)":             "",
         "상호 (수기)":               "",
