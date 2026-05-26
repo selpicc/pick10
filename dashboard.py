@@ -732,6 +732,20 @@ if collect_clicked:
             c_fail = _grab(r"C 탈락.*?:\s*(\d+)건")
             flagship_fail = stdout.count("주력상품 재검사 탈락")
 
+            # ⭐ 디버그용: collect_5.py 출력을 Streamlit Cloud 로그에 전달
+            # subprocess.run의 capture_output 때문에 print가 안 보이는 문제 해결
+            import sys as _sys
+            print("\n" + "=" * 60, file=_sys.stderr)
+            print("📋 [collect_5.py 실행 출력]", file=_sys.stderr)
+            print("=" * 60, file=_sys.stderr)
+            print(stdout, file=_sys.stderr)
+            if result.stderr:
+                print("\n" + "=" * 60, file=_sys.stderr)
+                print("⚠️ [collect_5.py 에러 출력]", file=_sys.stderr)
+                print("=" * 60, file=_sys.stderr)
+                print(result.stderr, file=_sys.stderr)
+            print("=" * 60 + "\n", file=_sys.stderr)
+
             # session_state에 결과 저장 (rerun 후에도 표시 유지)
             st.session_state["last_collect_summary"] = {
                 "success": result.returncode == 0,
