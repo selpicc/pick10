@@ -554,13 +554,12 @@ def _process_one_candidate(
         ),
         "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
         "관심고객수 (자동)":    follower_count,
-        # ⭐ 자동 수집 사업자 정보 (Phase 1+2+3)
+        # ⭐ 자동 수집 사업자 정보 (Phase 1+2+3) — 주소 제외 (2026-05-26)
         "상호 (자동)":               biz_info.get("company_name", ""),
         "대표 (자동)":               biz_info.get("ceo", ""),
         "사업자번호 (자동)":         biz_info.get("business_number", ""),
         "전화 (자동)":               biz_info.get("phone", ""),
         "이메일 (자동)":             biz_info.get("email", ""),
-        "주소 (자동)":               biz_info.get("address", ""),
         "사업자정보 출처 (자동)":    ", ".join(biz_info.get("sources", [])),
         "사업자정보 신뢰도 (자동)":  biz_info.get("confidence", "낮음"),
         # 수기 입력 컬럼 (사용자 검증·수정용)

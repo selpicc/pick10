@@ -1663,7 +1663,7 @@ if len(filtered) > 0:
                         help="공정위 통신판매사업자 DB에서 상호·대표·전화·주소 자동 수집",
                     )
 
-                # 자동 수집된 정보 표시 (참고용)
+                # 자동 수집된 정보 표시 (참고용) — 주소 제외 (2026-05-26)
                 if auto_company_name:
                     st.markdown(
                         f"<div style='background: #f0fdf4; border: 1px solid #86efac; "
@@ -1673,8 +1673,7 @@ if len(filtered) > 0:
                         f"상호: {auto_company_name} · "
                         f"대표: {sel_full.get('대표 (자동)', '-')} · "
                         f"전화: {sel_full.get('전화 (자동)', '-')}<br>"
-                        f"이메일: {sel_full.get('이메일 (자동)', '-')} · "
-                        f"주소: {str(sel_full.get('주소 (자동)', '-'))[:40]}"
+                        f"이메일: {sel_full.get('이메일 (자동)', '-')}"
                         f"</span>"
                         f"</div>",
                         unsafe_allow_html=True,
@@ -1714,21 +1713,22 @@ if len(filtered) > 0:
                             )
 
                             # 통합: 공정위 우선 + 확장 검색 보완
+                            # ⭐ 2026-05-26: 주소(address) 자동수집 제외, 이메일 추가
                             merged = dict(biz_info)
-                            for k in ["ceo", "phone", "address"]:
+                            for k in ["ceo", "phone", "email"]:
                                 if not merged.get(k) and ext_info.get(k):
                                     merged[k] = ext_info[k]
 
                             if merged and any(merged.get(k) for k in
-                                              ["company_name", "ceo", "phone", "address"]):
+                                              ["company_name", "ceo", "phone", "email"]):
                                 # 출처 표시
                                 sources = []
                                 if biz_info.get("company_name"):
                                     sources.append("공정위DB")
-                                if ext_info.get("ceo") or ext_info.get("phone") or ext_info.get("address"):
+                                if ext_info.get("ceo") or ext_info.get("phone") or ext_info.get("email"):
                                     sources.append("Naver/Google")
 
-                                # 자동 수집 정보를 DB에 업데이트
+                                # 자동 수집 정보를 DB에 업데이트 — 주소 제외
                                 update_data = {
                                     "사업자번호 (수기)": new_biz_num.strip(),
                                     "상호 (자동)": merged.get("company_name", ""),
@@ -1738,7 +1738,6 @@ if len(filtered) > 0:
                                     ),
                                     "전화 (자동)": merged.get("phone", ""),
                                     "이메일 (자동)": merged.get("email", ""),
-                                    "주소 (자동)": merged.get("address", ""),
                                     "사업자정보 출처 (자동)": ", ".join(sources),
                                     "사업자정보 신뢰도 (자동)": (
                                         "높음" if len(sources) >= 2 else "중간"
@@ -1746,8 +1745,7 @@ if len(filtered) > 0:
                                 }
                                 if save_one_brand(sel_brand, update_data):
                                     filled = sum(
-                                        1 for k in ["company_name", "ceo", "phone",
-                                                     "address", "email"]
+                                        1 for k in ["company_name", "ceo", "phone", "email"]
                                         if merged.get(k)
                                     )
                                     st.success(

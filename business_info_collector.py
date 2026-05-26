@@ -2,13 +2,22 @@
 사업자 정보 자동 수집 모듈
 =================================================================
 신규 셀러 수집 시 자동으로 사업자 정보 수집:
-  - 상호, 대표자, 사업자번호, 전화번호, 주소
-  - 이메일 (다층 수집)
+  - 상호, 대표자, 사업자번호, 전화번호
+  - 이메일 (다층 수집 — 강화됨)
 
-데이터 소스 (3-tier, 모두 무료):
-  Phase 1: 스마트스토어 사업자정보 페이지 스크래핑 (성공률 90%+)
-  Phase 2: 공정위 통신판매사업자 DB API (이메일 보완 60%+)
-  Phase 3: 이메일 다층 수집 (공식 홈페이지 + Naver 검색)
+⭐ 2026-05-26 업데이트:
+  1. 주소 자동수집 제외 (정확도 미달 — 사용자 요청)
+  2. 이메일 수집 정확도 강화:
+     - 다양한 footer 패턴 추가 (cafe24/godo/imweb 등)
+     - HTML 분리 패턴 인식 (<dt>E-mail</dt><dd>...</dd>)
+     - 이메일 우선순위 점수 (customer/cs > info > webmaster)
+     - 약관/개인정보 페이지 추가 fetch (사업자 정보 자주 노출)
+
+데이터 소스 (4-tier, 모두 무료):
+  Phase 1: 스마트스토어 사업자정보 페이지 스크래핑 (HTTP 429 대비)
+  Phase 2: 공정위 통신판매사업자 DB API (상호·대표·전화)
+  Phase 3: 공식 홈페이지 + 약관 페이지 (이메일 핵심 소스)
+  Phase 4: Naver/Google 확장 검색 (이메일·대표·전화 보완)
 
 각 소스에서 정보 수집 → 가장 신뢰도 높은 정보 선택 → 신뢰도 점수
 =================================================================
@@ -74,11 +83,101 @@ def is_valid_email(email: str) -> bool:
         return False
     return True
 
-# 시·도 패턴 (주소 추출용)
+# 시·도 패턴 (참고용 — 주소는 자동 수집에서 제외됨, 2026-05-26)
 ADDRESS_REGION = (
     r"(?:서울|부산|대구|인천|광주|대전|울산|세종|"
     r"경기|강원|충북|충남|전북|전남|경북|경남|제주)"
 )
+
+
+# ─────────────────────────────────────────────────────────────────
+# ⭐ 이메일 우선순위 점수 (2026-05-26 추가)
+# 한 페이지에서 여러 이메일이 나올 때 가장 적합한 것 선택
+# ─────────────────────────────────────────────────────────────────
+def score_email(email: str) -> int:
+    """이메일을 사업자 대표 이메일로 적합한 정도 점수.
+
+    높을수록 좋음:
+      - customer/cs/contact/help 계열 → 100점 (사업자 대표 메일)
+      - info/sales/order 계열 → 70점
+      - 일반 (브랜드명 도메인) → 50점
+      - admin/webmaster/master → 10점 (시스템 관리 메일, 우선순위 낮음)
+    """
+    if not email or "@" not in email:
+        return 0
+    local = email.lower().split("@")[0]
+
+    # 사용자 응대용 메일 (가장 좋음)
+    PRIME_KEYWORDS = ["customer", "cs", "contact", "help",
+                      "support", "hello", "service"]
+    if any(kw in local for kw in PRIME_KEYWORDS):
+        return 100
+
+    # 영업/주문/문의용
+    SECONDARY_KEYWORDS = ["info", "sales", "order", "biz",
+                          "marketing", "ceo", "office"]
+    if any(kw in local for kw in SECONDARY_KEYWORDS):
+        return 70
+
+    # 시스템 관리용 (낮은 우선순위)
+    LOW_KEYWORDS = ["admin", "webmaster", "master", "root",
+                    "postmaster", "noreply", "no-reply"]
+    if any(kw in local for kw in LOW_KEYWORDS):
+        return 10
+
+    # 그 외 일반 메일 (브랜드명, 사람 이름 등)
+    return 50
+
+
+def pick_best_email(candidates: list) -> str:
+    """후보 이메일 리스트에서 가장 적합한 것 선택 (점수 기준).
+
+    - 블랙리스트 도메인(@naver.com 등) 제외
+    - is_valid_email() 통과만
+    - score_email() 점수 최고값 반환
+    """
+    if not candidates:
+        return ""
+    valid = []
+    for email in candidates:
+        if not email or "@" not in email:
+            continue
+        email_lower = email.lower()
+        if any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
+            continue
+        if not is_valid_email(email):
+            continue
+        valid.append((score_email(email), email))
+    if not valid:
+        return ""
+    # 점수 내림차순 정렬, 동점이면 짧은 이메일 우선 (덜 generic)
+    valid.sort(key=lambda x: (-x[0], len(x[1])))
+    return valid[0][1]
+
+
+def extract_emails_from_html(html: str) -> list:
+    """HTML/텍스트에서 모든 이메일 후보 추출.
+
+    ⭐ HTML 분리 케이스 처리:
+      <dt>E-mail</dt><dd>customer@brand.com</dd>
+      HTML 태그 제거 후 → 'E-mail customer@brand.com' 형태로 매칭 가능
+    """
+    if not html:
+        return []
+    # HTML 태그 제거
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&nbsp;|&amp;", " ", text)
+    text = re.sub(r"\s+", " ", text)
+
+    # 모든 이메일 후보 (중복 제거)
+    emails = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", text)
+    seen = set()
+    unique = []
+    for e in emails:
+        if e.lower() not in seen:
+            seen.add(e.lower())
+            unique.append(e)
+    return unique
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -98,7 +197,6 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
             "ceo": "홍길동",
             "business_number": "123-45-67890",
             "phone": "02-1234-5678",
-            "address": "서울특별시 강남구 ...",
             "email": "info@prajentra.com" (있을 시),
         }
     """
@@ -177,27 +275,13 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
                 info["phone"] = m.group(1)
                 break
 
-        # 주소
-        m = re.search(
-            rf"({ADDRESS_REGION}\s*[특별시광역시도]*\s*[^\n<\r]{{10,100}})",
-            info_html,
-        )
-        if m:
-            address = m.group(1).strip()
-            # HTML 태그·과한 공백 정리
-            address = re.sub(r"<[^>]+>", "", address)
-            address = " ".join(address.split())
-            info["address"] = address[:100]   # 최대 100자
+        # 주소: 자동수집 제외 (2026-05-26 — 정확도 미달, 사용자 요청)
 
-        # 이메일 (사업자 이메일)
-        emails = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", info_html)
-        for email in emails:
-            email_lower = email.lower()
-            # 일반 메일 서비스·테스트 메일 제외
-            if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                if is_valid_email(email):
-                    info["email"] = email
-                    break
+        # 이메일 — ⭐ 우선순위 점수로 가장 적합한 메일 선택
+        email_candidates = extract_emails_from_html(info_html)
+        best_email = pick_best_email(email_candidates)
+        if best_email:
+            info["email"] = best_email
 
         # 디버그: 추출 결과 요약
         print(f"           [디버그] 정규식 매칭 결과:")
@@ -206,7 +290,7 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
         print(f"               사업자번호: {info.get('business_number', '(매칭 X)')}")
         print(f"               전화: {info.get('phone', '(매칭 X)')}")
         print(f"               이메일: {info.get('email', '(매칭 X)')}")
-        print(f"               전체 이메일 후보 수: {len(emails)}")
+        print(f"               전체 이메일 후보 수: {len(email_candidates)}")
 
     except Exception as e:
         print(f"           [디버그] 스마트스토어 fetch 예외: {type(e).__name__}: {e}")
@@ -317,6 +401,7 @@ def fetch_ftc_telecom_seller_info(
             for k, v in first.items():
                 print(f"               {k}: {v}")
             # 공정위 API 표준 필드 + 한글 필드 모두 시도 (응답 구조 대비)
+            # ⭐ 2026-05-26: 주소(bsadr) 자동수집 제외 — 정확도 미달
             info = {
                 "company_name": (
                     first.get("bzmnNm", "")
@@ -337,11 +422,6 @@ def fetch_ftc_telecom_seller_info(
                     first.get("telno", "")
                     or first.get("전화번호", "")
                     or first.get("phoneNo", "")
-                ),
-                "address": (
-                    first.get("bsadr", "")
-                    or first.get("사업장소재지", "")
-                    or first.get("address", "")
                 ),
                 "email": (
                     first.get("emlAddr", "")
@@ -374,20 +454,20 @@ def find_email_from_homepage(brand_name: str) -> Optional[str]:
 def find_business_info_from_homepage(brand_name: str) -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
 
-    ⭐ 2026-05-26 강화 (2차):
-      이전: 검색 키워드 1개, 메인 페이지만
-      변경:
-        - 다양한 검색 키워드 (영문/한글)
-        - cafe24/footer 표준 패턴 강화
-        - "COMPANY ... CEO ... E-mail ..." 한 줄 표기 인식
-
-    동작:
-      1. 다양한 검색 키워드로 공식 홈페이지 후보 찾기
-      2. 후보 페이지 fetch (메인 + /contact, /about)
-      3. footer 패턴 + 일반 패턴 모두 추출
+    ⭐ 2026-05-26 강화 (3차) — 이메일 수집 정확도 ↑:
+      이전 문제:
+        - 베리맘(theverymom.com) 같은 영문 도메인 공식 사이트 못 찾음
+        - cafe24 <dt>E-mail</dt><dd>customer@</dd> HTML 분리 패턴 누락
+        - webmaster@ 같은 시스템 메일이 customer@보다 먼저 매칭
+      개선:
+        - 검색 키워드 6개로 확장 (mall/store/공식몰/이메일 포함)
+        - 후보 URL 8개로 확대 (Naver web + shopping)
+        - 약관/이용안내/개인정보 페이지 추가 fetch (사업자정보 노출)
+        - extract_emails_from_html() + pick_best_email() 사용
+        - 주소 자동수집 제외 (사용자 요청)
 
     반환:
-      {"email": "...", "ceo": "...", "phone": "...", "address": "..."}
+      {"email": "...", "ceo": "...", "phone": "..."}   ← 주소 제외
     """
     if not brand_name or not NAVER_CLIENT_ID:
         return {}
@@ -396,14 +476,15 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
 
     try:
         # ⭐ 다양한 검색 키워드 (공식 홈페이지 찾을 확률 ↑)
+        # mall/store/공식 + 영문도 시도 (영문 도메인 사이트 잡기 위함)
         search_queries = [
             f"{brand_name} 공식 홈페이지",
+            f"{brand_name} 공식몰",
             f"{brand_name} 쇼핑몰",
             f"{brand_name} mall",
-            f"{brand_name} 공식",
+            f"{brand_name} 공식 사이트",
+            f"{brand_name} 이메일",   # ⭐ 이메일 키워드로 검색 → 이메일 정보 포함 페이지
         ]
-        # 영문 변환 시도 (한글 → 영문 추측)
-        # 예: "베리맘" → 회사 사이트가 "verymom" 같은 영문일 수 있음
 
         api_url = "https://openapi.naver.com/v1/search/webkr.json"
         headers = {
@@ -413,19 +494,21 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
 
         # 모든 검색 키워드에서 후보 URL 모으기
         candidate_urls = []
-        for query in search_queries[:3]:   # 최대 3개 키워드 (속도)
+        for query in search_queries:   # 6개 키워드 모두 시도
             try:
                 params = {"query": query, "display": 5}
                 response = requests.get(api_url, headers=headers, params=params, timeout=10)
                 if response.status_code == 200:
                     items = response.json().get("items", [])
-                    for item in items[:3]:
+                    for item in items[:5]:
                         url = item.get("link", "")
-                        # 무관 사이트 제외
+                        # 무관 사이트 제외 (Naver 자체 서비스 등)
                         if any(skip in url for skip in [
                             "smartstore.naver.com", "blog.naver.com",
                             "cafe.naver.com", "shopping.naver.com",
-                            "post.naver.com",
+                            "post.naver.com", "search.naver.com",
+                            "kakao.com", "tistory.com", "youtube.com",
+                            "instagram.com", "facebook.com",
                         ]):
                             continue
                         if url not in candidate_urls:
@@ -434,161 +517,130 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
             except Exception:
                 continue
 
-        # 상위 5개 사이트 시도
-        for item_url in candidate_urls[:5]:
-            item = {"link": item_url}
-            url = item.get("link", "")
-            # 무관 사이트 제외
-            if any(skip in url for skip in [
-                "smartstore.naver.com", "blog.naver.com", "cafe.naver.com",
-                "shopping.naver.com", "post.naver.com",
-            ]):
-                continue
+        print(f"           [디버그] 후보 공식 홈페이지 URL: {len(candidate_urls)}개")
 
+        # ⭐ 상위 8개 사이트 시도 (이전 5개 → 8개)
+        all_email_candidates = []   # 사이트별 후보 모아서 마지막에 베스트 선택
+
+        for item_url in candidate_urls[:8]:
+            url = item_url
             try:
-                # 메인 페이지 + 일반적인 사업자 정보 페이지들 시도
+                # 메인 페이지 + 사업자 정보 자주 노출되는 페이지들 ⭐ 추가
                 base_url = url.rstrip("/")
                 pages_to_try = [
                     url,
+                    # 일반적인 회사소개·연락
                     f"{base_url}/contact",
                     f"{base_url}/about",
                     f"{base_url}/company",
                     f"{base_url}/info",
+                    f"{base_url}/cs",
+                    # ⭐ 약관·개인정보 (사업자정보 풀세트 노출)
+                    f"{base_url}/agreement",
+                    f"{base_url}/privacy",
+                    # cafe24 표준 약관 경로
+                    f"{base_url}/index.html",
+                    f"{base_url}/shopinfo/company.html",
+                    f"{base_url}/shopinfo/guide.html",
                 ]
 
                 combined_text = ""
-                for page_url in pages_to_try:
+                main_text = ""
+                for idx, page_url in enumerate(pages_to_try):
                     try:
                         page = requests.get(page_url, headers=HTTP_HEADERS, timeout=8)
                         if page.status_code == 200:
                             combined_text += page.text + "\n"
-                            # 메인 페이지에서 contact/about 링크 찾기 (보너스)
-                            for link_match in re.finditer(
-                                r'href=["\']([^"\']*(?:contact|about|company|info|cs|footer)[^"\']*)["\']',
-                                page.text, re.IGNORECASE,
-                            ):
-                                sub_link = link_match.group(1)
-                                if not sub_link.startswith("http"):
-                                    sub_link = base_url + ("/" + sub_link.lstrip("/"))
-                                if sub_link not in pages_to_try:
-                                    try:
-                                        sub_page = requests.get(sub_link, headers=HTTP_HEADERS, timeout=6)
-                                        if sub_page.status_code == 200:
-                                            combined_text += sub_page.text + "\n"
-                                            break   # 첫 contact/about 페이지만
-                                    except Exception:
-                                        pass
-                            break   # 메인 페이지 1개만 처리하면 충분
-                        time.sleep(0.1)
+                            if idx == 0:
+                                main_text = page.text
+                                # 메인 페이지에서 contact/about/agreement 링크 추가 발견
+                                for link_match in re.finditer(
+                                    r'href=["\']([^"\']*(?:contact|about|company|info|cs|footer|agreement|privacy|guide|shopinfo)[^"\']*\.(?:html?|php|asp))["\']',
+                                    page.text, re.IGNORECASE,
+                                ):
+                                    sub_link = link_match.group(1)
+                                    if sub_link.startswith("//"):
+                                        sub_link = "https:" + sub_link
+                                    elif not sub_link.startswith("http"):
+                                        sub_link = base_url + ("/" + sub_link.lstrip("/"))
+                                    if sub_link not in pages_to_try:
+                                        try:
+                                            sub_page = requests.get(sub_link, headers=HTTP_HEADERS, timeout=6)
+                                            if sub_page.status_code == 200:
+                                                combined_text += sub_page.text + "\n"
+                                        except Exception:
+                                            pass
+                        time.sleep(0.05)
                     except Exception:
                         continue
 
                 if not combined_text:
                     continue
 
-                # HTML 태그 제거하고 텍스트만
+                # ⭐ HTML 분리 케이스 처리 위해 태그 제거 + 공백 정규화
                 text_only = re.sub(r"<[^>]+>", " ", combined_text)
+                text_only = re.sub(r"&nbsp;|&amp;", " ", text_only)
                 text_only = re.sub(r"\s+", " ", text_only)
 
-                # ⭐ cafe24/표준 footer 패턴 우선 추출 (가장 정확)
-                # 예: "COMPANY 주식회사베리맘 CEO 송민호 CPO ... E-mail customer@..."
-                #     "BUSINESS LICENSE 531-88-00119"
-                #     "ADDRESS 04536 서울특별시 중구..."
-                #     "CALL 080-544-4168"
-
-                # CEO 패턴 (footer): "CEO 송민호" / "대표 송민호"
+                # ─── CEO 패턴 (footer) ───
                 if not info.get("ceo"):
                     m = re.search(
-                        r"(?:CEO|대표(?:이사|자)?)\s+([가-힣]{2,4})(?=\s|[<,.])",
+                        r"(?:CEO|대표(?:이사|자|자명|자성명)?)\s*[:\s]?\s*([가-힣]{2,4})(?=\s|[<,.\)])",
                         text_only, re.IGNORECASE,
                     )
                     if m:
                         name = m.group(1).strip()
-                        if name not in {"이사", "대표", "회사"}:
+                        if name not in {"이사", "대표", "회사", "직책", "사장"}:
                             info["ceo"] = name
 
-                # 이메일 패턴 (footer): "E-mail customer@..." / "이메일 ..."
-                if not info.get("email"):
-                    m = re.search(
-                        r"(?:E-?mail|이메일|EMAIL)\s*[:\s]?\s*([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
-                        text_only, re.IGNORECASE,
-                    )
-                    if m:
-                        email = m.group(1).strip()
-                        email_lower = email.lower()
-                        if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                            if is_valid_email(email):
-                                info["email"] = email
-
-                # 전화 패턴 (footer): "CALL 080-..." / "TEL 02-..."
+                # ─── 전화 패턴 (footer) ───
                 if not info.get("phone"):
                     m = re.search(
-                        r"(?:CALL|TEL|TELEPHONE|전화|문의)\s*[:\s]?\s*(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})",
+                        r"(?:CALL|TEL|TELEPHONE|전화|문의|고객센터|연락처)\s*[:\s]?\s*"
+                        r"(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})",
                         text_only, re.IGNORECASE,
                     )
                     if m:
                         phone = m.group(1).strip()
-                        # 표준 형식 정리: 공백·점 → 하이픈
                         phone = re.sub(r"[.\s]+", "-", phone)
                         info["phone"] = phone
 
-                # 주소 패턴 (footer): "ADDRESS 04536 서울특별시..." / "주소 ..."
-                if not info.get("address"):
-                    m = re.search(
-                        r"(?:ADDRESS|주소|소재지)\s*[:\s]?\s*"
-                        r"(?:\d{5}\s+)?"   # 우편번호 (옵션)
-                        rf"({ADDRESS_REGION}[^\n\r<>]{{10,80}})",
-                        text_only, re.IGNORECASE,
-                    )
-                    if m:
-                        addr = m.group(1).strip()
-                        addr = " ".join(addr.split())
-                        info["address"] = addr[:100]
-
-                # 사업자번호 패턴 (footer): "BUSINESS LICENSE 531-88-00119"
+                # ─── 사업자번호 패턴 (footer) ───
                 if not info.get("business_number"):
                     m = re.search(
-                        r"(?:BUSINESS\s*LICENSE|사업자(?:등록)?번호)\s*[:\s]?\s*"
+                        r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자(?:등록)?번호)\s*[:\s]?\s*"
                         r"(\d{3}-?\d{2}-?\d{5})",
                         text_only, re.IGNORECASE,
                     )
                     if m:
                         info["business_number"] = m.group(1).strip()
 
-                # Fallback: 일반 패턴 (footer 패턴 못 찾았을 때)
-                if not info.get("email"):
-                    emails = re.findall(
-                        r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
-                        text_only,
-                    )
-                    for email in emails:
-                        email_lower = email.lower()
-                        if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                            if is_valid_email(email):
-                                info["email"] = email
-                                break
+                # ─── 이메일 추출 — ⭐ 모든 후보 모아서 전체 사이트에서 베스트 선택 ───
+                # 1) footer 패턴 (E-mail customer@...)
+                for m in re.finditer(
+                    r"(?:E-?mail|이메일|EMAIL|메일주소|문의메일)\s*[:\s]?\s*"
+                    r"([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
+                    text_only, re.IGNORECASE,
+                ):
+                    all_email_candidates.append(m.group(1).strip())
 
-                if not info.get("ceo"):
-                    ceo = extract_ceo_from_text(text_only)
-                    if ceo:
-                        info["ceo"] = ceo
+                # 2) 페이지 전체 일반 매칭 (footer 못 찾았을 때 대비)
+                page_emails = extract_emails_from_html(combined_text)
+                all_email_candidates.extend(page_emails)
 
-                if not info.get("phone"):
-                    phone = extract_phone_from_text(text_only)
-                    if phone:
-                        info["phone"] = phone
-
-                if not info.get("address"):
-                    address = extract_address_from_text(text_only)
-                    if address:
-                        info["address"] = address
-
-                # 정보 충분히 모았으면 break
-                if len([k for k in ["email", "ceo", "phone", "address"] if info.get(k)]) >= 3:
+                # 충분히 모았으면 다음 사이트로 이동 X (1개 사이트로 충분)
+                if info.get("ceo") and info.get("phone") and all_email_candidates:
                     break
 
             except Exception:
                 continue
+
+        # ⭐ 모든 사이트 이메일 후보 중 베스트 선택 (customer/cs > info > webmaster)
+        if all_email_candidates and not info.get("email"):
+            best = pick_best_email(all_email_candidates)
+            if best:
+                info["email"] = best
+                print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 중 베스트 선택: {best}")
 
         if info:
             print(f"           [디버그] 공식 홈페이지 추출: {list(info.keys())}")
@@ -600,7 +652,13 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
 
 
 def search_email_via_naver(brand_name: str) -> Optional[str]:
-    """Naver 검색 결과(블로그/카페/웹)에서 이메일 추출."""
+    """Naver 검색 결과(블로그/카페/웹)에서 이메일 추출.
+
+    ⭐ 2026-05-26 개선:
+      - 검색 소스 확대 (web → web + blog + cafearticle)
+      - 모든 후보 모아서 pick_best_email()로 최적 선택
+      - 검색 키워드 다양화 (제휴/입점/연락처)
+    """
     if not brand_name or not NAVER_CLIENT_ID:
         return None
 
@@ -608,6 +666,8 @@ def search_email_via_naver(brand_name: str) -> Optional[str]:
         f"{brand_name} 이메일 문의",
         f"{brand_name} 대표 메일",
         f"{brand_name} 사업 제휴",
+        f"{brand_name} 입점 문의",
+        f"{brand_name} 고객센터 이메일",
     ]
 
     headers = {
@@ -615,31 +675,33 @@ def search_email_via_naver(brand_name: str) -> Optional[str]:
         "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
     }
 
+    all_candidates = []
     for query in queries:
-        try:
-            api_url = "https://openapi.naver.com/v1/search/webkr.json"
-            params = {"query": query, "display": 5}
-            response = requests.get(api_url, headers=headers, params=params, timeout=10)
-            if response.status_code != 200:
+        for source in ["webkr", "blog", "cafearticle"]:
+            try:
+                api_url = f"https://openapi.naver.com/v1/search/{source}.json"
+                params = {"query": query, "display": 5}
+                response = requests.get(api_url, headers=headers, params=params, timeout=10)
+                if response.status_code != 200:
+                    continue
+                items = response.json().get("items", [])
+                for item in items:
+                    text = (
+                        re.sub(r"<[^>]+>", " ", item.get("title", "")) + " " +
+                        re.sub(r"<[^>]+>", " ", item.get("description", ""))
+                    )
+                    emails = re.findall(
+                        r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
+                        text,
+                    )
+                    all_candidates.extend(emails)
+                time.sleep(0.05)
+            except Exception:
                 continue
 
-            items = response.json().get("items", [])
-            for item in items:
-                text = item.get("title", "") + " " + item.get("description", "")
-                emails = re.findall(
-                    r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
-                    text,
-                )
-                for email in emails:
-                    email_lower = email.lower()
-                    if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                        if is_valid_email(email):
-                            return email
-            time.sleep(0.1)
-        except Exception:
-            continue
-
-    return None
+    # ⭐ 베스트 이메일 선택 (customer/cs/info 우선)
+    best = pick_best_email(all_candidates)
+    return best if best else None
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -797,10 +859,15 @@ def search_business_via_naver_extended(brand_name: str, business_number: str = "
             except Exception:
                 continue
 
-    # 패턴 추출
+    # 패턴 추출 — 주소 제외 (2026-05-26)
     info["ceo"] = extract_ceo_from_text(all_text)
     info["phone"] = extract_phone_from_text(all_text)
-    info["address"] = extract_address_from_text(all_text)
+
+    # 이메일도 추출 (블로그·카페에 종종 노출)
+    emails_in_text = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", all_text)
+    best_email = pick_best_email(emails_in_text)
+    if best_email:
+        info["email"] = best_email
 
     # 빈 값 제거
     info = {k: v for k, v in info.items() if v}
@@ -864,10 +931,15 @@ def search_business_via_google(brand_name: str, business_number: str = "") -> di
             print(f"           [디버그] Google 검색 예외: {e}")
             continue
 
-    # 패턴 추출
+    # 패턴 추출 — 주소 제외 (2026-05-26)
     info["ceo"] = extract_ceo_from_text(all_text)
     info["phone"] = extract_phone_from_text(all_text)
-    info["address"] = extract_address_from_text(all_text)
+
+    # 이메일 (Google snippet에 노출 자주 됨)
+    emails_in_text = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", all_text)
+    best_email = pick_best_email(emails_in_text)
+    if best_email:
+        info["email"] = best_email
 
     info = {k: v for k, v in info.items() if v}
 
@@ -881,11 +953,12 @@ def collect_extended_business_info(brand_name: str, business_number: str = "") -
     """확장 사업자 정보 수집 — 공식 홈페이지 + Naver + Google 끝까지 시도.
 
     ⭐ 2026-05-26 정책:
-      Phase 4a: 공식 홈페이지 ⭐ 최우선 (대표/전화/주소/이메일)
+      Phase 4a: 공식 홈페이지 ⭐ 최우선 (대표/전화/이메일)
                 → 공식 홈페이지가 있고 정보 충분하면 여기서 완료
       Phase 4b: Naver 검색 강화 (홈페이지 부족·없을 때)
       Phase 4c: Google 검색 (그래도 부족하면 Google 사이트 검색)
 
+    ⚠ 주소(address) 자동수집 제외 — 정확도 미달 (사용자 요청).
     "데이터 찾을 때까지 자동 시도" — 검색 도우미 없이 자동 완성.
     """
     info = {}
@@ -900,8 +973,8 @@ def collect_extended_business_info(brand_name: str, business_number: str = "") -
         if v and not info.get(k):
             info[k] = v
 
-    # 누락된 필드 확인
-    missing = [k for k in ["ceo", "phone", "address", "email"] if not info.get(k)]
+    # 누락된 필드 확인 — ⭐ address 제외
+    missing = [k for k in ["ceo", "phone", "email"] if not info.get(k)]
 
     # 2차: Naver 검색 강화 (홈페이지 부족하면)
     if missing:
@@ -913,7 +986,7 @@ def collect_extended_business_info(brand_name: str, business_number: str = "") -
             if v and not info.get(k):
                 info[k] = v
 
-    # 3차: Naver 검색 — 이메일 보완 (별도 함수)
+    # 3차: Naver 검색 — 이메일 보완 (별도 함수, 우선순위 점수 적용)
     if not info.get("email"):
         print(f"           [Phase 4b-2] Naver 검색으로 이메일 찾기...")
         naver_email = search_email_via_naver(brand_name)
@@ -922,8 +995,8 @@ def collect_extended_business_info(brand_name: str, business_number: str = "") -
             if "Naver검색" not in sources_tried:
                 sources_tried.append("Naver검색")
 
-    # 4차: Google 검색 (마지막 보완)
-    missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
+    # 4차: Google 검색 (마지막 보완) — ⭐ address 제외
+    missing = [k for k in ["ceo", "phone", "email"] if not info.get(k)]
     if missing:
         print(f"           [Phase 4c] Google 검색 시작 (보완: {missing})...")
         google_info = search_business_via_google(brand_name, business_number)
@@ -950,24 +1023,23 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
       Phase 1 (스마트스토어) → Phase 2 (공정위 DB) → Phase 3 (이메일 보완)
       각 소스에서 정보 수집 → 빈 값만 다음 소스로 보완
 
-    반환:
+    반환 (주소는 자동수집 제외, 2026-05-26):
         {
             "company_name": "...",
             "ceo": "...",
             "business_number": "...",
             "phone": "...",
-            "address": "...",
             "email": "...",
             "sources": ["스마트스토어", "공정위", "홈페이지"],
             "confidence": "높음" / "중간" / "낮음",
         }
     """
+    # ⭐ 2026-05-26: address 자동수집 제외
     result = {
         "company_name": "",
         "ceo": "",
         "business_number": "",
         "phone": "",
-        "address": "",
         "email": "",
         "sources": [],
     }
@@ -979,7 +1051,7 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     # ───────────────────────────────────────────────
     info1 = fetch_smartstore_business_info(store_url)
     if info1:
-        for k in ["company_name", "ceo", "business_number", "phone", "address", "email"]:
+        for k in ["company_name", "ceo", "business_number", "phone", "email"]:
             if info1.get(k) and not result[k]:
                 result[k] = info1[k]
         if any(info1.get(k) for k in ["company_name", "ceo", "business_number"]):
@@ -997,7 +1069,7 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
             company_name=result.get("company_name", "") or brand_name,
         )
         if info2:
-            for k in ["company_name", "ceo", "business_number", "phone", "address", "email"]:
+            for k in ["company_name", "ceo", "business_number", "phone", "email"]:
                 if info2.get(k) and not result[k]:
                     result[k] = info2[k]
             if any(info2.get(k) for k in ["company_name", "ceo", "business_number", "email"]):
