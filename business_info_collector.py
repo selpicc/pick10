@@ -513,17 +513,59 @@ def extract_phone_from_text(text: str) -> str:
 
 
 def extract_address_from_text(text: str) -> str:
-    """텍스트에서 주소 추출 (시·도부터)."""
+    """텍스트에서 주소 추출 — 엄격한 패턴 매칭.
+
+    실제 주소 패턴:
+      - "서울특별시 강남구 OO동/OO로"
+      - "경기도 성남시 분당구 OO로"
+      - "OO도 OO시 OO구 OO동"
+
+    뉴스 기사·일반 텍스트 false positive 차단:
+      - 시·도 + 시/구/군 + 동/로/길 패턴 필수
+      - 블랙리스트 키워드 (회의·뉴스·기사 등) 포함되면 제외
+    """
     if not text:
         return ""
-    pattern = rf"({ADDRESS_REGION}\s*[특별시광역시도]*\s*[^\n\r<>]{{10,80}})"
-    m = re.search(pattern, text)
-    if m:
-        address = m.group(0).strip()
-        address = re.sub(r"<[^>]+>", "", address)
-        address = " ".join(address.split())
-        return address[:100]
-    return ""
+
+    # 주소가 아닌 텍스트 패턴 (뉴스·기사·이벤트 등)
+    ADDRESS_BLACKLIST = [
+        "회의", "정상회담", "뉴스", "기사", "행사", "이벤트",
+        "방문", "출장", "축제", "박람회", "포럼", "정책",
+        "통상", "외교", "정부", "발표", "발생",
+    ]
+
+    # 엄격한 주소 패턴 (시·도 + 시/구/군 + 동/로 필수)
+    address_patterns = [
+        # 특별시·광역시: "서울특별시 강남구 OO동"
+        rf"({ADDRESS_REGION}(?:특별시|광역시|특별자치시|특별자치도)\s+"
+        rf"[가-힣]+(?:시|구|군)\s+[가-힣]+(?:동|로|길|읍|면|리)[^\n\r<>]{{0,60}})",
+        # 도: "경기도 성남시 분당구 ..."
+        rf"({ADDRESS_REGION}도\s+[가-힣]+(?:시|군)\s+"
+        rf"[가-힣]+(?:동|로|길|읍|면|리|구)[^\n\r<>]{{0,60}})",
+        # 도로명: "서울 강남구 역삼로 123"
+        rf"({ADDRESS_REGION}\s+[가-힣]+(?:구|시|군)\s+"
+        rf"[가-힣]+로\s*\d+(?:-\d+)?(?:\s*\d+층)?)",
+    ]
+
+    candidates = []
+    for pattern in address_patterns:
+        for m in re.finditer(pattern, text):
+            address = m.group(0).strip()
+            address = re.sub(r"<[^>]+>", "", address)
+            address = " ".join(address.split())
+
+            # 길이 검증
+            if len(address) < 10:
+                continue
+
+            # 블랙리스트 키워드 포함 시 제외
+            if any(bad in address for bad in ADDRESS_BLACKLIST):
+                continue
+
+            candidates.append(address[:100])
+
+    # 가장 첫 번째 매칭 반환 (없으면 빈 값)
+    return candidates[0] if candidates else ""
 
 
 def search_business_via_naver_extended(brand_name: str, business_number: str = "") -> dict:
