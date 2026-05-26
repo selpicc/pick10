@@ -1681,39 +1681,85 @@ if len(filtered) > 0:
                     )
 
                 # 사업자정보 수집 버튼 클릭 처리
+                # 4단계 통합 수집:
+                #   1. 공정위 API (상호·사업자번호·통신판매업번호)
+                #   2. Naver 검색 (대표·전화·주소)
+                #   3. Google 검색 (대표·전화·주소 보완)
+                #   4. 모든 결과 통합 + DB 저장
                 if collect_biz_clicked and new_biz_num.strip():
-                    with st.spinner("공정위 DB에서 사업자 정보 수집 중..."):
+                    with st.spinner(
+                        "🔍 공정위 DB + Naver + Google 통합 검색 중... (10-30초)"
+                    ):
                         try:
-                            from business_info_collector import fetch_ftc_telecom_seller_info
+                            from business_info_collector import (
+                                fetch_ftc_telecom_seller_info,
+                                collect_extended_business_info,
+                            )
+
+                            # 1차: 공정위 API (상호, 사업자번호)
                             biz_info = fetch_ftc_telecom_seller_info(
                                 business_number=new_biz_num.strip()
                             )
 
-                            if biz_info and any(biz_info.get(k) for k in
-                                                ["company_name", "ceo", "phone"]):
+                            # 2차: Naver + Google 확장 검색 (대표/전화/주소)
+                            # 공정위에서 가져온 상호명 사용 (정확)
+                            company_for_search = (
+                                biz_info.get("company_name", "") or sel_brand
+                            )
+                            ext_info = collect_extended_business_info(
+                                brand_name=company_for_search,
+                                business_number=new_biz_num.strip(),
+                            )
+
+                            # 통합: 공정위 우선 + 확장 검색 보완
+                            merged = dict(biz_info)
+                            for k in ["ceo", "phone", "address"]:
+                                if not merged.get(k) and ext_info.get(k):
+                                    merged[k] = ext_info[k]
+
+                            if merged and any(merged.get(k) for k in
+                                              ["company_name", "ceo", "phone", "address"]):
+                                # 출처 표시
+                                sources = []
+                                if biz_info.get("company_name"):
+                                    sources.append("공정위DB")
+                                if ext_info.get("ceo") or ext_info.get("phone") or ext_info.get("address"):
+                                    sources.append("Naver/Google")
+
                                 # 자동 수집 정보를 DB에 업데이트
                                 update_data = {
                                     "사업자번호 (수기)": new_biz_num.strip(),
-                                    "상호 (자동)": biz_info.get("company_name", ""),
-                                    "대표 (자동)": biz_info.get("ceo", ""),
-                                    "사업자번호 (자동)": biz_info.get("business_number", new_biz_num.strip()),
-                                    "전화 (자동)": biz_info.get("phone", ""),
-                                    "이메일 (자동)": biz_info.get("email", ""),
-                                    "주소 (자동)": biz_info.get("address", ""),
-                                    "사업자정보 출처 (자동)": "공정위DB (수기 입력)",
-                                    "사업자정보 신뢰도 (자동)": "높음",
+                                    "상호 (자동)": merged.get("company_name", ""),
+                                    "대표 (자동)": merged.get("ceo", ""),
+                                    "사업자번호 (자동)": merged.get(
+                                        "business_number", new_biz_num.strip()
+                                    ),
+                                    "전화 (자동)": merged.get("phone", ""),
+                                    "이메일 (자동)": merged.get("email", ""),
+                                    "주소 (자동)": merged.get("address", ""),
+                                    "사업자정보 출처 (자동)": ", ".join(sources),
+                                    "사업자정보 신뢰도 (자동)": (
+                                        "높음" if len(sources) >= 2 else "중간"
+                                    ),
                                 }
                                 if save_one_brand(sel_brand, update_data):
-                                    filled = sum(1 for v in biz_info.values() if v)
-                                    st.success(f"✅ {filled}개 항목 자동 수집 완료! 화면 갱신 중...")
+                                    filled = sum(
+                                        1 for k in ["company_name", "ceo", "phone",
+                                                     "address", "email"]
+                                        if merged.get(k)
+                                    )
+                                    st.success(
+                                        f"✅ {filled}개 항목 자동 수집 완료! "
+                                        f"(출처: {', '.join(sources)}) 화면 갱신 중..."
+                                    )
                                     st.cache_data.clear()
                                     st.rerun()
                                 else:
                                     st.error("저장 실패. Supabase 연결 확인.")
                             else:
                                 st.warning(
-                                    "⚠️ 공정위 DB에서 정보 찾기 실패. "
-                                    "사업자번호 다시 확인 (하이픈 포함/제외 둘 다 시도해보세요)"
+                                    "⚠️ 사업자 정보 찾기 실패. "
+                                    "사업자번호 확인 또는 수기 입력 권장."
                                 )
                         except Exception as e:
                             st.error(f"❌ 수집 오류: {e}")

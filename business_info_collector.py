@@ -28,6 +28,8 @@ load_dotenv()
 PUBLIC_DATA_API_KEY = os.getenv("PUBLIC_DATA_API_KEY", "")
 NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")   # Google Custom Search API 키
+GOOGLE_CX = os.getenv("GOOGLE_CX", "")              # Google Search Engine ID
 
 # 공통 HTTP 헤더 (스마트스토어/홈페이지 fetch용)
 HTTP_HEADERS = {
@@ -310,6 +312,10 @@ def fetch_ftc_telecom_seller_info(
 
         if items:
             first = items[0]
+            # ⭐ 디버그: 실제 응답의 모든 필드 출력 (정확한 필드명 확인용)
+            print(f"           [디버그] 공정위 응답 첫 번째 record의 모든 필드:")
+            for k, v in first.items():
+                print(f"               {k}: {v}")
             # 공정위 API 표준 필드 + 한글 필드 모두 시도 (응답 구조 대비)
             info = {
                 "company_name": (
@@ -457,6 +463,226 @@ def search_email_via_naver(brand_name: str) -> Optional[str]:
             continue
 
     return None
+
+
+# ─────────────────────────────────────────────────────────────────
+# Phase 4: 확장 검색 (Naver + Google) — 사업자번호 기반 정보 추출
+# 공정위 API에 없는 정보 (대표/전화/주소) 자동 수집 시도
+# ─────────────────────────────────────────────────────────────────
+def extract_ceo_from_text(text: str) -> str:
+    """텍스트에서 대표자 이름 추출.
+
+    패턴:
+      - "대표 OOO", "대표이사 OOO", "대표자 OOO"
+      - "OOO 대표", "OOO 대표이사"
+    """
+    if not text:
+        return ""
+    # 일반 단어 제외 (false positive 방지)
+    blacklist = {"대표", "이사", "본사", "회사", "사장", "정보", "소개",
+                 "직원", "팀장", "기자", "사람", "고객", "주식", "회원"}
+
+    patterns = [
+        r"대표(?:이사|자)?[:\s]+([가-힣]{2,4})(?=\s|[,.\)\]<>])",
+        r"\b([가-힣]{2,4})\s+대표(?:이사)?\b",
+    ]
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for name in matches:
+            name = name.strip()
+            if name not in blacklist and len(name) >= 2:
+                return name
+    return ""
+
+
+def extract_phone_from_text(text: str) -> str:
+    """텍스트에서 전화번호 추출 (다양한 형식)."""
+    if not text:
+        return ""
+    patterns = [
+        r"\b(0\d{1,2}-\d{3,4}-\d{4})\b",     # 02-1234-5678
+        r"\b(0\d{1,2}\.\d{3,4}\.\d{4})\b",   # 02.1234.5678
+        r"\b(1\d{3}-\d{4})\b",                # 1588-XXXX
+        r"\b(01\d-\d{3,4}-\d{4})\b",          # 010-1234-5678
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def extract_address_from_text(text: str) -> str:
+    """텍스트에서 주소 추출 (시·도부터)."""
+    if not text:
+        return ""
+    pattern = rf"({ADDRESS_REGION}\s*[특별시광역시도]*\s*[^\n\r<>]{{10,80}})"
+    m = re.search(pattern, text)
+    if m:
+        address = m.group(0).strip()
+        address = re.sub(r"<[^>]+>", "", address)
+        address = " ".join(address.split())
+        return address[:100]
+    return ""
+
+
+def search_business_via_naver_extended(brand_name: str, business_number: str = "") -> dict:
+    """Naver 검색 강화 — 사업자번호 기반 다양한 키워드로 정보 추출.
+
+    검색 키워드:
+      - "{회사명} 대표"
+      - "{회사명} 본사 연락처"
+      - "{사업자번호}" (직접 검색)
+      - "{회사명} 주소"
+    """
+    if not NAVER_CLIENT_ID:
+        return {}
+
+    info = {}
+
+    # 다양한 검색 키워드 조합
+    queries = [
+        f"{brand_name} 대표이사",
+        f"{brand_name} 대표 연락처",
+        f"{brand_name} 본사 주소",
+    ]
+    if business_number:
+        queries.append(business_number.replace("-", ""))   # 사업자번호 직접 검색
+        queries.append(f"{brand_name} {business_number}")
+
+    all_text = ""
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+    }
+
+    for query in queries[:5]:   # 최대 5개 쿼리 (API 부담 ↓)
+        for source in ["blog", "cafearticle", "webkr"]:
+            try:
+                api_url = f"https://openapi.naver.com/v1/search/{source}.json"
+                resp = requests.get(
+                    api_url,
+                    headers=headers,
+                    params={"query": query, "display": 5},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    items = resp.json().get("items", [])
+                    for item in items:
+                        text = (
+                            re.sub(r"<[^>]+>", "", item.get("title", "")) + " " +
+                            re.sub(r"<[^>]+>", "", item.get("description", ""))
+                        )
+                        all_text += text + "\n"
+                time.sleep(0.1)
+            except Exception:
+                continue
+
+    # 패턴 추출
+    info["ceo"] = extract_ceo_from_text(all_text)
+    info["phone"] = extract_phone_from_text(all_text)
+    info["address"] = extract_address_from_text(all_text)
+
+    # 빈 값 제거
+    info = {k: v for k, v in info.items() if v}
+
+    if info:
+        print(f"           [디버그] Naver 확장 검색 추출: {list(info.keys())}")
+
+    return info
+
+
+def search_business_via_google(brand_name: str, business_number: str = "") -> dict:
+    """Google Custom Search API로 사업자 정보 검색.
+
+    API: https://www.googleapis.com/customsearch/v1
+    무료: 일 100회
+
+    site: 검색으로 특정 사이트 우선:
+      - site:saramin.co.kr (사람인)
+      - site:jobkorea.co.kr (잡코리아)
+    """
+    if not GOOGLE_API_KEY or not GOOGLE_CX:
+        print(f"           [디버그] Google API 키/CX 없음 (skip)")
+        return {}
+
+    info = {}
+
+    # 검색 키워드 (사이트 특화 + 일반)
+    queries = [
+        f"{brand_name} 대표",
+        f"{brand_name} site:saramin.co.kr",
+        f"{brand_name} site:jobkorea.co.kr",
+    ]
+    if business_number:
+        queries.append(f'"{business_number}"')
+
+    all_text = ""
+
+    for query in queries[:4]:   # 최대 4개 (Google 한도 절약)
+        try:
+            response = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={
+                    "key": GOOGLE_API_KEY,
+                    "cx": GOOGLE_CX,
+                    "q": query,
+                    "num": 5,
+                },
+                timeout=10,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                for item in data.get("items", []):
+                    text = (
+                        item.get("title", "") + " " +
+                        item.get("snippet", "") + " " +
+                        item.get("link", "")
+                    )
+                    all_text += text + "\n"
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"           [디버그] Google 검색 예외: {e}")
+            continue
+
+    # 패턴 추출
+    info["ceo"] = extract_ceo_from_text(all_text)
+    info["phone"] = extract_phone_from_text(all_text)
+    info["address"] = extract_address_from_text(all_text)
+
+    info = {k: v for k, v in info.items() if v}
+
+    if info:
+        print(f"           [디버그] Google 검색 추출: {list(info.keys())}")
+
+    return info
+
+
+def collect_extended_business_info(brand_name: str, business_number: str = "") -> dict:
+    """확장 사업자 정보 수집 — Naver + Google 통합.
+
+    Phase 4: 공정위 API에 없는 정보 (대표/전화/주소) 자동 수집.
+    Naver 검색 강화 → Google 검색 (Naver 못 찾은 정보만)
+    """
+    info = {}
+
+    # 1차: Naver 검색 강화
+    print(f"           [Phase 4] Naver 확장 검색 시작...")
+    naver_info = search_business_via_naver_extended(brand_name, business_number)
+    for k, v in naver_info.items():
+        if v and not info.get(k):
+            info[k] = v
+
+    # 2차: Google (Naver 못 찾은 정보만 보완)
+    missing = [k for k in ["ceo", "phone", "address"] if not info.get(k)]
+    if missing:
+        print(f"           [Phase 4] Google 검색 시작 (보완할 필드: {missing})...")
+        google_info = search_business_via_google(brand_name, business_number)
+        for k, v in google_info.items():
+            if v and not info.get(k):
+                info[k] = v
+
+    return info
 
 
 # ─────────────────────────────────────────────────────────────────
