@@ -1748,6 +1748,24 @@ if len(filtered) > 0:
                                         "높음" if len(sources) >= 2 else "중간"
                                     ),
                                 }
+
+                                # ⭐ 2026-05-26: 수기 필드 4개 자동 채움
+                                # 사용자가 이미 입력한 값은 보존, 빈 값일 때만 자동값으로 채움
+                                # → 빨간 박스(상호/대표/이메일/연락처)에 자동 기재
+                                def _is_empty(val):
+                                    return not str(val or "").strip()
+
+                                manual_fill_map = [
+                                    ("상호 (수기)",   "company_name"),
+                                    ("대표 (수기)",   "ceo"),
+                                    ("이메일 (수기)", "email"),
+                                    ("전화 (수기)",   "phone"),
+                                ]
+                                for manual_col, merged_key in manual_fill_map:
+                                    current_val = sel_full.get(manual_col, "")
+                                    auto_val = merged.get(merged_key, "")
+                                    if _is_empty(current_val) and auto_val:
+                                        update_data[manual_col] = auto_val
                                 if save_one_brand(sel_brand, update_data):
                                     filled = sum(
                                         1 for k in ["company_name", "ceo", "phone", "email"]
