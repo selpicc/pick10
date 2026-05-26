@@ -374,14 +374,17 @@ def find_email_from_homepage(brand_name: str) -> Optional[str]:
 def find_business_info_from_homepage(brand_name: str) -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
 
-    ⭐ 2026-05-26 강화:
-      이전: 이메일만 추출
-      변경: 이메일·대표·전화·주소 모두 추출
+    ⭐ 2026-05-26 강화 (2차):
+      이전: 검색 키워드 1개, 메인 페이지만
+      변경:
+        - 다양한 검색 키워드 (영문/한글)
+        - cafe24/footer 표준 패턴 강화
+        - "COMPANY ... CEO ... E-mail ..." 한 줄 표기 인식
 
     동작:
-      1. Naver 웹 검색으로 공식 홈페이지 후보 찾기
-      2. 후보 페이지 fetch (메인 + /contact, /about 페이지)
-      3. 각 페이지에서 정보 정규식 추출
+      1. 다양한 검색 키워드로 공식 홈페이지 후보 찾기
+      2. 후보 페이지 fetch (메인 + /contact, /about)
+      3. footer 패턴 + 일반 패턴 모두 추출
 
     반환:
       {"email": "...", "ceo": "...", "phone": "...", "address": "..."}
@@ -392,22 +395,48 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
     info = {}
 
     try:
-        # Naver 웹 검색 (공식 홈페이지 후보)
+        # ⭐ 다양한 검색 키워드 (공식 홈페이지 찾을 확률 ↑)
+        search_queries = [
+            f"{brand_name} 공식 홈페이지",
+            f"{brand_name} 쇼핑몰",
+            f"{brand_name} mall",
+            f"{brand_name} 공식",
+        ]
+        # 영문 변환 시도 (한글 → 영문 추측)
+        # 예: "베리맘" → 회사 사이트가 "verymom" 같은 영문일 수 있음
+
         api_url = "https://openapi.naver.com/v1/search/webkr.json"
         headers = {
             "X-Naver-Client-Id": NAVER_CLIENT_ID,
             "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
         }
-        params = {"query": f"{brand_name} 공식 홈페이지", "display": 5}
 
-        response = requests.get(api_url, headers=headers, params=params, timeout=10)
-        if response.status_code != 200:
-            return {}
+        # 모든 검색 키워드에서 후보 URL 모으기
+        candidate_urls = []
+        for query in search_queries[:3]:   # 최대 3개 키워드 (속도)
+            try:
+                params = {"query": query, "display": 5}
+                response = requests.get(api_url, headers=headers, params=params, timeout=10)
+                if response.status_code == 200:
+                    items = response.json().get("items", [])
+                    for item in items[:3]:
+                        url = item.get("link", "")
+                        # 무관 사이트 제외
+                        if any(skip in url for skip in [
+                            "smartstore.naver.com", "blog.naver.com",
+                            "cafe.naver.com", "shopping.naver.com",
+                            "post.naver.com",
+                        ]):
+                            continue
+                        if url not in candidate_urls:
+                            candidate_urls.append(url)
+                time.sleep(0.1)
+            except Exception:
+                continue
 
-        items = response.json().get("items", [])
-
-        # 상위 3개 사이트만 시도 (속도)
-        for item in items[:3]:
+        # 상위 5개 사이트 시도
+        for item_url in candidate_urls[:5]:
+            item = {"link": item_url}
             url = item.get("link", "")
             # 무관 사이트 제외
             if any(skip in url for skip in [
@@ -461,31 +490,94 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
                 text_only = re.sub(r"<[^>]+>", " ", combined_text)
                 text_only = re.sub(r"\s+", " ", text_only)
 
-                # 이메일 추출 (이미 검증된 로직)
-                emails = re.findall(
-                    r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
-                    text_only,
-                )
-                for email in emails:
-                    email_lower = email.lower()
-                    if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
-                        if is_valid_email(email) and not info.get("email"):
-                            info["email"] = email
-                            break
+                # ⭐ cafe24/표준 footer 패턴 우선 추출 (가장 정확)
+                # 예: "COMPANY 주식회사베리맘 CEO 송민호 CPO ... E-mail customer@..."
+                #     "BUSINESS LICENSE 531-88-00119"
+                #     "ADDRESS 04536 서울특별시 중구..."
+                #     "CALL 080-544-4168"
 
-                # 대표자 추출
+                # CEO 패턴 (footer): "CEO 송민호" / "대표 송민호"
+                if not info.get("ceo"):
+                    m = re.search(
+                        r"(?:CEO|대표(?:이사|자)?)\s+([가-힣]{2,4})(?=\s|[<,.])",
+                        text_only, re.IGNORECASE,
+                    )
+                    if m:
+                        name = m.group(1).strip()
+                        if name not in {"이사", "대표", "회사"}:
+                            info["ceo"] = name
+
+                # 이메일 패턴 (footer): "E-mail customer@..." / "이메일 ..."
+                if not info.get("email"):
+                    m = re.search(
+                        r"(?:E-?mail|이메일|EMAIL)\s*[:\s]?\s*([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
+                        text_only, re.IGNORECASE,
+                    )
+                    if m:
+                        email = m.group(1).strip()
+                        email_lower = email.lower()
+                        if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
+                            if is_valid_email(email):
+                                info["email"] = email
+
+                # 전화 패턴 (footer): "CALL 080-..." / "TEL 02-..."
+                if not info.get("phone"):
+                    m = re.search(
+                        r"(?:CALL|TEL|TELEPHONE|전화|문의)\s*[:\s]?\s*(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})",
+                        text_only, re.IGNORECASE,
+                    )
+                    if m:
+                        phone = m.group(1).strip()
+                        # 표준 형식 정리: 공백·점 → 하이픈
+                        phone = re.sub(r"[.\s]+", "-", phone)
+                        info["phone"] = phone
+
+                # 주소 패턴 (footer): "ADDRESS 04536 서울특별시..." / "주소 ..."
+                if not info.get("address"):
+                    m = re.search(
+                        r"(?:ADDRESS|주소|소재지)\s*[:\s]?\s*"
+                        r"(?:\d{5}\s+)?"   # 우편번호 (옵션)
+                        rf"({ADDRESS_REGION}[^\n\r<>]{{10,80}})",
+                        text_only, re.IGNORECASE,
+                    )
+                    if m:
+                        addr = m.group(1).strip()
+                        addr = " ".join(addr.split())
+                        info["address"] = addr[:100]
+
+                # 사업자번호 패턴 (footer): "BUSINESS LICENSE 531-88-00119"
+                if not info.get("business_number"):
+                    m = re.search(
+                        r"(?:BUSINESS\s*LICENSE|사업자(?:등록)?번호)\s*[:\s]?\s*"
+                        r"(\d{3}-?\d{2}-?\d{5})",
+                        text_only, re.IGNORECASE,
+                    )
+                    if m:
+                        info["business_number"] = m.group(1).strip()
+
+                # Fallback: 일반 패턴 (footer 패턴 못 찾았을 때)
+                if not info.get("email"):
+                    emails = re.findall(
+                        r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b",
+                        text_only,
+                    )
+                    for email in emails:
+                        email_lower = email.lower()
+                        if not any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
+                            if is_valid_email(email):
+                                info["email"] = email
+                                break
+
                 if not info.get("ceo"):
                     ceo = extract_ceo_from_text(text_only)
                     if ceo:
                         info["ceo"] = ceo
 
-                # 전화 추출
                 if not info.get("phone"):
                     phone = extract_phone_from_text(text_only)
                     if phone:
                         info["phone"] = phone
 
-                # 주소 추출
                 if not info.get("address"):
                     address = extract_address_from_text(text_only)
                     if address:
