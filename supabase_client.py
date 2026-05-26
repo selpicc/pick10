@@ -44,6 +44,7 @@ DB_TO_KOR = {
     "manual_ceo":             "대표 (수기)",
     "manual_email":           "이메일 (수기)",
     "manual_phone":           "전화 (수기)",
+    "manual_business_number": "사업자번호 (수기)",   # ⭐ 사용자 직접 입력
     "manual_marketing_memo":  "마케팅 분석 메모 (수기)",
     "sales_status":           "영업 상태 (수기)",
     "activity_memo":          "활동 메모 (수기)",

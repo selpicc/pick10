@@ -1617,20 +1617,129 @@ if len(filtered) > 0:
                         key=f"count_{sel_brand}",
                     )
 
+                # ⭐ 사업자등록번호 입력 + 자동 수집 버튼 (2026-05-26 추가)
+                # 사용자가 사업자번호 한 줄만 입력하면 → 공정위 API로 상호·대표·전화·주소 자동 채움
+                current_biz_num = (
+                    str(sel_full.get("사업자번호 (수기)", "")).strip()
+                    or str(sel_full.get("사업자번호 (자동)", "")).strip()
+                )
+                auto_company_name = str(sel_full.get("상호 (자동)", "")).strip()
+
+                # 자동 수집 정보가 비어있고 사업자번호도 없으면 → 빨간 강조 안내
+                needs_biz_input = (not current_biz_num) and (not auto_company_name)
+
+                if needs_biz_input:
+                    st.markdown(
+                        "<div style='background: #fef2f2; border: 2px solid #ef4444; "
+                        "border-radius: 8px; padding: 12px 16px; margin-bottom: 12px;'>"
+                        "<div style='color: #dc2626; font-weight: 600; font-size: 14px;'>"
+                        "⚠️ 사업자등록번호 입력 필요"
+                        "</div>"
+                        "<div style='color: #7f1d1d; font-size: 12px; margin-top: 4px;'>"
+                        "사업자번호 입력 후 [🔍 사업자정보 수집] 버튼 클릭 → "
+                        "상호·대표·전화·주소 자동 입력"
+                        "</div>"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                biz_col_input, biz_col_btn = st.columns([2.5, 1.5])
+                with biz_col_input:
+                    new_biz_num = st.text_input(
+                        "사업자등록번호 📌" if needs_biz_input else "사업자등록번호",
+                        value=current_biz_num,
+                        placeholder="예) 123-45-67890 또는 1234567890",
+                        help="입력 후 옆 [사업자정보 수집] 버튼 클릭 → 공정위 DB에서 정보 자동 수집",
+                        key=f"biz_num_{sel_brand}",
+                    )
+                with biz_col_btn:
+                    st.markdown("<div style='padding-top: 28px;'></div>", unsafe_allow_html=True)
+                    collect_biz_clicked = st.button(
+                        "🔍 사업자정보 수집",
+                        type="primary" if (new_biz_num.strip() and not auto_company_name) else "secondary",
+                        use_container_width=True,
+                        key=f"collect_biz_{sel_brand}",
+                        disabled=not new_biz_num.strip(),
+                        help="공정위 통신판매사업자 DB에서 상호·대표·전화·주소 자동 수집",
+                    )
+
+                # 자동 수집된 정보 표시 (참고용)
+                if auto_company_name:
+                    st.markdown(
+                        f"<div style='background: #f0fdf4; border: 1px solid #86efac; "
+                        f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
+                        f"<b style='color: #166534;'>✅ 공정위 DB 자동 수집 정보</b><br>"
+                        f"<span style='color: #14532d;'>"
+                        f"상호: {auto_company_name} · "
+                        f"대표: {sel_full.get('대표 (자동)', '-')} · "
+                        f"전화: {sel_full.get('전화 (자동)', '-')}<br>"
+                        f"이메일: {sel_full.get('이메일 (자동)', '-')} · "
+                        f"주소: {str(sel_full.get('주소 (자동)', '-'))[:40]}"
+                        f"</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                # 사업자정보 수집 버튼 클릭 처리
+                if collect_biz_clicked and new_biz_num.strip():
+                    with st.spinner("공정위 DB에서 사업자 정보 수집 중..."):
+                        try:
+                            from business_info_collector import fetch_ftc_telecom_seller_info
+                            biz_info = fetch_ftc_telecom_seller_info(
+                                business_number=new_biz_num.strip()
+                            )
+
+                            if biz_info and any(biz_info.get(k) for k in
+                                                ["company_name", "ceo", "phone"]):
+                                # 자동 수집 정보를 DB에 업데이트
+                                update_data = {
+                                    "사업자번호 (수기)": new_biz_num.strip(),
+                                    "상호 (자동)": biz_info.get("company_name", ""),
+                                    "대표 (자동)": biz_info.get("ceo", ""),
+                                    "사업자번호 (자동)": biz_info.get("business_number", new_biz_num.strip()),
+                                    "전화 (자동)": biz_info.get("phone", ""),
+                                    "이메일 (자동)": biz_info.get("email", ""),
+                                    "주소 (자동)": biz_info.get("address", ""),
+                                    "사업자정보 출처 (자동)": "공정위DB (수기 입력)",
+                                    "사업자정보 신뢰도 (자동)": "높음",
+                                }
+                                if save_one_brand(sel_brand, update_data):
+                                    filled = sum(1 for v in biz_info.values() if v)
+                                    st.success(f"✅ {filled}개 항목 자동 수집 완료! 화면 갱신 중...")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error("저장 실패. Supabase 연결 확인.")
+                            else:
+                                st.warning(
+                                    "⚠️ 공정위 DB에서 정보 찾기 실패. "
+                                    "사업자번호 다시 확인 (하이픈 포함/제외 둘 다 시도해보세요)"
+                                )
+                        except Exception as e:
+                            st.error(f"❌ 수집 오류: {e}")
+
+                st.markdown("<div style='margin-top: 8px;'></div>", unsafe_allow_html=True)
+
                 # 상호 / 대표자 성함 (신규)
                 edit_col_a, edit_col_b = st.columns(2)
                 with edit_col_a:
                     new_company = st.text_input(
                         "상호",
-                        value=str(sel_full.get("상호 (수기)", "")),
-                        placeholder="사업자등록증 상의 상호",
+                        value=(
+                            str(sel_full.get("상호 (수기)", "")).strip()
+                            or str(sel_full.get("상호 (자동)", "")).strip()
+                        ),
+                        placeholder="사업자등록증 상의 상호 (자동 채워질 수 있음)",
                         key=f"company_{sel_brand}",
                     )
                 with edit_col_b:
                     new_ceo = st.text_input(
                         "대표자 성함",
-                        value=str(sel_full.get("대표 (수기)", "")),
-                        placeholder="대표자 성함",
+                        value=(
+                            str(sel_full.get("대표 (수기)", "")).strip()
+                            or str(sel_full.get("대표 (자동)", "")).strip()
+                        ),
+                        placeholder="대표자 성함 (자동 채워질 수 있음)",
                         key=f"ceo_{sel_brand}",
                     )
 
@@ -1638,13 +1747,21 @@ if len(filtered) > 0:
                 with edit_col3:
                     new_email = st.text_input(
                         "이메일",
-                        value=str(sel_full.get("이메일 (수기)", "")),
+                        value=(
+                            str(sel_full.get("이메일 (수기)", "")).strip()
+                            or str(sel_full.get("이메일 (자동)", "")).strip()
+                        ),
+                        placeholder="이메일 (자동 채워질 수 있음)",
                         key=f"email_{sel_brand}",
                     )
                 with edit_col4:
                     new_phone = st.text_input(
                         "연락처",
-                        value=str(sel_full.get("전화 (수기)", "")),
+                        value=(
+                            str(sel_full.get("전화 (수기)", "")).strip()
+                            or str(sel_full.get("전화 (자동)", "")).strip()
+                        ),
+                        placeholder="연락처 (자동 채워질 수 있음)",
                         key=f"phone_{sel_brand}",
                     )
 
@@ -1674,6 +1791,7 @@ if len(filtered) > 0:
                         "관심고객수 (수기)": new_count,
                         "상호 (수기)":      new_company,
                         "대표 (수기)":      new_ceo,
+                        "사업자번호 (수기)": new_biz_num,   # ⭐ 사업자번호 저장
                         "이메일 (수기)": new_email,
                         "전화 (수기)": new_phone,
                         "활동 메모 (수기)": new_memo,
