@@ -776,14 +776,17 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
     try:
         # ⭐ 다양한 검색 키워드 (공식 홈페이지 찾을 확률 ↑)
         # mall/store/공식 + 영문도 시도 (영문 도메인 사이트 잡기 위함)
+        # ⭐ 2026-05-26: 브랜드명 단독 검색 추가 (SEO 1위 = 공식몰일 확률 높음)
+        # 메타 검증으로 잘못된 사이트는 자동 차단되므로 안전
         search_queries = [
+            f"{brand_name}",                # ⭐ 브랜드명 단독 (가장 자연스러운 검색)
             f"{brand_name} 공식 홈페이지",
             f"{brand_name} 공식몰",
             f"{brand_name} 쇼핑몰",
             f"{brand_name} 공식 사이트",
             f"{brand_name} 이메일",
-            f"{brand_name} 고객센터",   # ⭐ footer 이메일 잡기 좋은 키워드
-            f"{brand_name} cs",          # ⭐ 영문 CS 페이지
+            f"{brand_name} 고객센터",   # footer 이메일 잡기 좋은 키워드
+            f"{brand_name} cs",          # 영문 CS 페이지
         ]
 
         # 무관 사이트 도메인 (Naver/Google 둘 다 사용)
@@ -834,10 +837,12 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
         # 한글 브랜드명 → 영문 도메인 케이스 (프라젠트라 → plagentra.kr) 잡기
         # Google이 네이버보다 영문 도메인 매칭 훨씬 잘 함
         if GOOGLE_API_KEY and GOOGLE_CX:
+            # ⭐ 브랜드명 단독 추가 (Google SEO 강함, 공식몰 1위 노출)
             google_queries = [
+                f"{brand_name}",                # ⭐ 브랜드명 단독
                 f"{brand_name} 공식몰",
                 f"{brand_name} 공식 사이트",
-                f"{brand_name} cs 고객센터",   # ⭐ footer/CS 페이지 직접 노출
+                f"{brand_name} cs 고객센터",   # footer/CS 페이지 직접 노출
             ]
             for gquery in google_queries:
                 try:
