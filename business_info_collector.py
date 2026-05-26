@@ -51,12 +51,43 @@ HTTP_HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
 }
 
-# 무관 이메일 패턴 (네이버·구글 등 — 브랜드 이메일 아님)
+# 무관 이메일 패턴 (브랜드 이메일 아님)
+# ⭐ 2026-05-26 강화: 채용/쇼핑 플랫폼 자체 메일 차단 (help@saramin.co.kr 등 오인 방지)
 EMAIL_BLACKLIST_DOMAINS = [
+    # ─── 무료 메일 (개인 메일) ───
     "@naver.com", "@gmail.com", "@daum.net", "@hanmail.net",
-    "@hotmail.com", "@yahoo.com", "@outlook.com",
+    "@hotmail.com", "@yahoo.com", "@outlook.com", "@nate.com",
+    "@kakao.com",
+
+    # ─── 시스템·테스트용 ───
     "example", "noreply", "no-reply", "donotreply",
     "sentry.io", "wixpress.com", "intercom.io",
+
+    # ⭐ ─── 채용 사이트 자체 메일 (사람인 help@... 같은 오인 차단) ───
+    "@saramin.co.kr", "@jobkorea.co.kr", "@wanted.co.kr",
+    "@incruit.com", "@worknet.go.kr", "@peoplenjob.com",
+    "@jobplanet.co.kr", "@catch.co.kr", "@albamon.com",
+
+    # ⭐ ─── 쇼핑·오픈마켓 자체 메일 ───
+    "@coupang.com", "@coupangcorp.com",
+    "@gmarket.co.kr", "@auction.co.kr", "@ebay.co.kr",
+    "@11st.co.kr", "@interpark.com", "@ssg.com",
+    "@lotteon.com", "@wemakeprice.com", "@tmon.co.kr",
+    "@kurly.com", "@oliveyoung.co.kr",
+
+    # ⭐ ─── 포털·플랫폼 자체 메일 ───
+    "@navercorp.com", "@kakaocorp.com", "@kakaomobility.com",
+    "@google.com", "@youtube.com", "@meta.com",
+    "@instagram.com", "@facebook.com", "@line.me",
+
+    # ⭐ ─── 결제/택배/공공 ───
+    "@kcp.co.kr", "@inicis.com", "@danal.co.kr", "@nicepay.co.kr",
+    "@cj.net", "@cjlogistics.com", "@hanjin.co.kr", "@lotteglogis.com",
+    "@epost.go.kr",
+
+    # ⭐ ─── 호스팅·솔루션 (cafe24/godo 등 자체 메일) ───
+    "@cafe24corp.com", "@simplexi.com", "@godo.co.kr",
+    "@imweb.me", "@nhnent.com", "@nhn.com",
 ]
 
 

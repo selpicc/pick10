@@ -1664,16 +1664,21 @@ if len(filtered) > 0:
                     )
 
                 # 자동 수집된 정보 표시 (참고용) — 주소 제외 (2026-05-26)
+                # ⭐ 빈 값은 "🔍 미확인" 표기 (수기 확인 필요 명시)
                 if auto_company_name:
+                    def _fmt(val):
+                        v = str(val).strip()
+                        return v if v and v not in ("-", "None") else "🔍 미확인"
+
                     st.markdown(
                         f"<div style='background: #f0fdf4; border: 1px solid #86efac; "
                         f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
                         f"<b style='color: #166534;'>✅ 공정위 DB 자동 수집 정보</b><br>"
                         f"<span style='color: #14532d;'>"
                         f"상호: {auto_company_name} · "
-                        f"대표: {sel_full.get('대표 (자동)', '-')} · "
-                        f"전화: {sel_full.get('전화 (자동)', '-')}<br>"
-                        f"이메일: {sel_full.get('이메일 (자동)', '-')}"
+                        f"대표: {_fmt(sel_full.get('대표 (자동)', ''))} · "
+                        f"전화: {_fmt(sel_full.get('전화 (자동)', ''))}<br>"
+                        f"이메일: {_fmt(sel_full.get('이메일 (자동)', ''))}"
                         f"</span>"
                         f"</div>",
                         unsafe_allow_html=True,
