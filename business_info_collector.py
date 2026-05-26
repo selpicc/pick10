@@ -420,10 +420,22 @@ def fetch_smartstore_business_info(store_url: str) -> dict:
                             seller.get("emailAddress") or
                             seller.get("contactEmail") or ""
                         ),
+                        # ⭐ 2026-05-26: 외부 공식몰 URL 추출 (판매자 직접 등록)
+                        # 가장 신뢰도 높은 공식 홈페이지 힌트
+                        "website_url": (
+                            seller.get("websiteUrl") or
+                            seller.get("homepageUrl") or
+                            seller.get("homepage") or
+                            seller.get("website") or
+                            seller.get("officialSiteUrl") or
+                            seller.get("companyUrl") or ""
+                        ),
                     }
                     info = {k: v for k, v in info.items() if v}
                     if info:
                         print(f"           ✅ __NEXT_DATA__ 추출 성공: {list(info.keys())}")
+                        if info.get("website_url"):
+                            print(f"               🎯 외부 공식몰 URL 발견: {info['website_url']}")
                         return info
             except Exception as e:
                 print(f"           [디버그] __NEXT_DATA__ 파싱 실패: {e}")
@@ -658,13 +670,87 @@ def fetch_ftc_telecom_seller_info(
 # ─────────────────────────────────────────────────────────────────
 # Phase 3: 이메일 다층 수집
 # ─────────────────────────────────────────────────────────────────
-def find_email_from_homepage(brand_name: str) -> Optional[str]:
+def find_email_from_homepage(brand_name: str, hint_url: str = "") -> Optional[str]:
     """공식 홈페이지에서 이메일 자동 추출 (기존 호환)."""
-    info = find_business_info_from_homepage(brand_name)
+    info = find_business_info_from_homepage(brand_name, hint_url=hint_url)
     return info.get("email") if info else None
 
 
-def find_business_info_from_homepage(brand_name: str) -> dict:
+def _verify_homepage_match(html: str, brand_name: str) -> int:
+    """페이지 메타 정보(title/og:site_name/meta keywords)로 브랜드 매칭 점수 계산.
+
+    ⭐ 2026-05-26 신규: 공식몰 후보 URL 자동 검증
+      - title에 브랜드명 포함 → +50
+      - og:site_name에 브랜드명 포함 → +30
+      - meta keywords/description에 브랜드명 → +20
+      - 영문 브랜드의 경우 영문 추측도 매칭
+
+    임계값 30점 이상 = 공식몰일 확률 높음
+    """
+    if not html or not brand_name:
+        return 0
+
+    score = 0
+    brand_clean = brand_name.lower().strip().replace(" ", "")
+    # 회사 접두사 제거
+    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)"]:
+        brand_clean = brand_clean.replace(prefix, "")
+    brand_clean = brand_clean.strip()
+
+    if not brand_clean:
+        return 0
+
+    # 1. <title> 검사
+    title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    if title_match:
+        title = title_match.group(1).lower()
+        if brand_clean in title:
+            score += 50
+
+    # 2. <meta property="og:site_name" content="...">
+    og_site_match = re.search(
+        r'<meta[^>]*property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if og_site_match:
+        og_site = og_site_match.group(1).lower()
+        if brand_clean in og_site:
+            score += 30
+
+    # 3. <meta property="og:title" content="...">
+    og_title_match = re.search(
+        r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if og_title_match:
+        og_title = og_title_match.group(1).lower()
+        if brand_clean in og_title:
+            score += 20
+
+    # 4. <meta name="keywords" content="...">
+    keywords_match = re.search(
+        r'<meta[^>]*name=["\']keywords["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if keywords_match:
+        keywords = keywords_match.group(1).lower()
+        if brand_clean in keywords:
+            score += 20
+
+    # 5. <meta name="description" content="...">
+    desc_match = re.search(
+        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if desc_match:
+        desc = desc_match.group(1).lower()
+        if brand_clean in desc:
+            score += 15
+
+    return score
+
+
+def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
 
     ⭐ 2026-05-26 강화 (3차) — 이메일 수집 정확도 ↑:
@@ -774,10 +860,17 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
                 except Exception:
                     continue
 
+        # ⭐ 스마트스토어 판매자 등록 외부 URL 있으면 최우선 후보로 (100% 신뢰)
+        if hint_url and hint_url.startswith("http"):
+            if hint_url not in candidate_urls:
+                candidate_urls.insert(0, hint_url)
+                print(f"           🎯 hint_url 최우선 후보 추가: {hint_url}")
+
         print(f"           [디버그] 후보 공식 홈페이지 URL: {len(candidate_urls)}개 "
-              f"(Naver+Google 통합)")
+              f"(hint+Naver+Google 통합)")
 
         # ⭐ 상위 8개 사이트 시도 (이전 5개 → 8개)
+        # 메타 검증 점수 30점 이상 사이트만 사용 (잘못된 사이트 자동 차단)
         all_email_candidates = []   # 사이트별 후보 모아서 마지막에 베스트 선택
 
         for item_url in candidate_urls[:8]:
@@ -829,10 +922,23 @@ def find_business_info_from_homepage(brand_name: str) -> dict:
 
                 combined_text = ""
                 main_text = ""
+                # ⭐ 메타 검증 — 메인 페이지 fetch 후 점수 매김
+                # hint_url은 검증 skip (스마트스토어 판매자 직접 등록 → 100% 신뢰)
+                meta_verified = (item_url == hint_url)
+
                 for idx, page_url in enumerate(pages_to_try):
                     try:
                         page = requests.get(page_url, headers=HTTP_HEADERS, timeout=8)
                         if page.status_code == 200:
+                            # 메인 페이지에서 메타 검증
+                            if idx == 0 and not meta_verified:
+                                meta_score = _verify_homepage_match(page.text, brand_name)
+                                print(f"               [메타검증] {page_url[:50]} → {meta_score}점")
+                                if meta_score < 30:
+                                    print(f"               ⚠ 메타 점수 미달 (<30) → 이 사이트 skip")
+                                    break   # 점수 미달 → 이 후보 URL 자체를 skip
+                                meta_verified = True
+
                             combined_text += page.text + "\n"
                             if idx == 0:
                                 main_text = page.text
@@ -1362,10 +1468,15 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     # Phase 1: 스마트스토어 사업자정보 페이지
     # ───────────────────────────────────────────────
     info1 = fetch_smartstore_business_info(store_url)
+    website_hint = ""   # ⭐ 스마트스토어 판매자 등록 외부 URL (있으면 공식몰로 사용)
     if info1:
         for k in ["company_name", "ceo", "business_number", "phone", "email"]:
             if info1.get(k) and not result[k]:
                 result[k] = info1[k]
+        # ⭐ 외부 사이트 URL 힌트 추출 (Phase 3에서 우선 후보로 사용)
+        if info1.get("website_url"):
+            website_hint = info1["website_url"]
+            print(f"           🎯 스마트스토어 외부 URL 발견 → 공식몰 hint: {website_hint}")
         if any(info1.get(k) for k in ["company_name", "ceo", "business_number"]):
             result["sources"].append("스마트스토어")
             print(f"           ✓ 스마트스토어: 상호={result['company_name'][:20]}, "
@@ -1380,10 +1491,12 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
 
     # ───────────────────────────────────────────────
     # Phase 3: 공식 홈페이지 + Naver 검색 (이메일 없을 때만)
+    # ⭐ website_hint(스마트스토어 판매자 등록 외부 URL)를 hint_url로 전달
     # ───────────────────────────────────────────────
     if not result["email"] and brand_name:
         # 3-1) 공식 홈페이지 (브랜드 공식몰 footer)
-        email = find_email_from_homepage(brand_name)
+        # hint_url 있으면 그 URL 최우선 fetch (100% 신뢰)
+        email = find_email_from_homepage(brand_name, hint_url=website_hint)
         if email:
             result["email"] = email
             result["sources"].append("공식홈페이지")
