@@ -1087,7 +1087,27 @@ if len(filtered) > 0:
     safe_main_cols = [c for c in main_cols if c in filtered.columns]
 
     extra_cols = ["_source_file"] if "_source_file" in filtered.columns else []
-    main_df = filtered[safe_main_cols + extra_cols + (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])]
+    main_df = filtered[
+        safe_main_cols + extra_cols +
+        (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])
+    ].copy()   # ⭐ copy()로 안전한 복사본 (SettingWithCopyWarning 회피)
+
+    # ⭐ 2026-05-26: 메인 테이블에 자동수집 정보 통합 표시
+    # 수기 컬럼이 비어있을 때 자동값으로 fallback (메모리상만, DB 영향 X)
+    # → 사용자가 [수집] 버튼만 누르면 메인 테이블에도 즉시 반영
+    def _fallback_with_auto(manual_col: str, auto_col: str):
+        if manual_col not in main_df.columns:
+            return
+        if auto_col not in filtered.columns:
+            return
+        # filtered와 main_df는 같은 index를 가짐 (정렬 전)
+        auto_vals = filtered.loc[main_df.index, auto_col].fillna("").astype(str).str.strip()
+        manual_vals = main_df[manual_col].fillna("").astype(str).str.strip()
+        # 수기 비어있으면 자동값으로 표시
+        main_df[manual_col] = manual_vals.where(manual_vals != "", auto_vals)
+
+    _fallback_with_auto("이메일 (수기)", "이메일 (자동)")
+    _fallback_with_auto("전화 (수기)",   "전화 (자동)")
 
     # 정렬: 수집일 desc만 적용 (안정 정렬)
     # 내부 동일 날짜는 load_all_data의 id desc 순서 그대로 유지 → 방금 INSERT한 게 위로
