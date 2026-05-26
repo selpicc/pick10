@@ -247,29 +247,39 @@ def fetch_ftc_telecom_seller_info(
     info = {}
 
     try:
-        # 공정위 통신판매사업자 등록상세 API
-        # End Point: https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service
-        # 메서드: /getMllBsInfoDetail_3 (통신판매사업자 등록상세 조회)
+        # ⭐ 2026-05-26: 등록현황 API로 전환 (등록상세 → 등록현황)
+        # End Point: https://apis.data.go.kr/1130000/MllBs_2Service
+        # 메서드:
+        #   /getMllBsBiznoInfo_2  — 사업자번호로 검색 (정확)
+        #   /getMllBsCoNmInfo_2   — 상호명으로 검색 ⭐ (스마트스토어 차단 시 핵심)
         # 일일 트래픽: 10,000회
-        # ⚠️ 이 API는 사업자번호(brno) 또는 인허가관리번호(prmmiMnno)로만 검색 가능
-        #    상호명(bzmnNm) 검색은 X → 별도 "등록현황 API" 활용신청 필요
-        api_url = "https://apis.data.go.kr/1130000/MllBsInfoDetail_3Service/getMllBsInfoDetail_3"
-        print(f"           [디버그] 공정위 API 호출: {api_url}")
-        print(f"           [디버그] 검색 조건: 사업자번호={business_number}")
+        base_url = "https://apis.data.go.kr/1130000/MllBs_2Service"
 
-        # 사업자번호 없으면 검색 불가
-        if not business_number:
-            print(f"           [디버그] 사업자번호 없음 → 공정위 API skip")
-            return {}
+        # 검색 메서드 결정 — 사업자번호 우선, 없으면 상호명
+        if business_number:
+            api_url = f"{base_url}/getMllBsBiznoInfo_2"
+            params = {
+                "serviceKey": PUBLIC_DATA_API_KEY,
+                "pageNo": "1",
+                "numOfRows": "10",
+                "resultType": "json",
+                "brno": business_number.replace("-", ""),
+            }
+            search_type = "사업자번호"
+        else:
+            # ⭐ 상호명으로 검색 (사업자번호 없을 때)
+            api_url = f"{base_url}/getMllBsCoNmInfo_2"
+            params = {
+                "serviceKey": PUBLIC_DATA_API_KEY,
+                "pageNo": "1",
+                "numOfRows": "10",
+                "resultType": "json",
+                "bzmnNm": company_name,
+            }
+            search_type = "상호명"
 
-        # 정확한 파라미터 이름 (활용가이드 기준)
-        params = {
-            "serviceKey": PUBLIC_DATA_API_KEY,   # 소문자 s 시작 (정정)
-            "pageNo": "1",
-            "numOfRows": "10",
-            "resultType": "json",
-            "brno": business_number.replace("-", ""),   # 사업자등록번호 (하이픈 제거)
-        }
+        print(f"           [디버그] 공정위 API 호출 ({search_type}): {api_url}")
+        print(f"           [디버그] 검색 조건: 사업자번호={business_number}, 상호명={company_name}")
 
         response = requests.get(api_url, params=params, timeout=15)
         print(f"           [디버그] 공정위 API 응답: HTTP {response.status_code}")
