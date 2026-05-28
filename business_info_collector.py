@@ -1121,31 +1121,54 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                         if verified:
                             info["ceo"] = verified
 
-                # ─── 전화 패턴 (footer) ───
-                # ⭐ 2026-05-26 강화:
-                #   1. 대표번호 (1588-7601, 1600-XXXX, 1577-XXXX 등 8자리) 추가
-                #   2. 라벨과 숫자 사이 거리 확대 ("고객센터 전화 : 1588-7601" 케이스)
-                #   3. "고객만족센터", "상담센터" 등 라벨 변형 추가
+                # ─── 전화 패턴 (footer) — ⭐ 2026-05-26 우선순위 점수화 ───
+                # 모든 후보 추출 → 점수 기반 최적 선택
+                #   - "대표전화", "고객센터" 강라벨 +30
+                #   - 1588/1599/1899 대표번호 +20
+                #   - FAX/팩스 가까이 있으면 -50 (FAX 자동 차단)
                 if not info.get("phone"):
-                    m = re.search(
-                        # 라벨 (다양한 표기)
-                        r"(?:CALL|TEL|TELEPHONE|전화|문의|연락처|"
-                        r"고객\s*센터|고객\s*만족\s*센터|상담\s*센터|cs|customer)"
-                        # 라벨 이후 구분자/추가 단어 ("전화", "번호" 등) 허용
-                        r"[\s\.\-:전화번호문의]{0,15}"
-                        # 전화번호 (대표번호 8자리 + 일반 11자리 모두)
-                        r"("
-                        r"1[5-9]\d{2}[-.\s]?\d{4}"                  # 대표번호 1588-7601
-                        r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}"     # 일반 02-1234-5678
-                        r"|\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4}"      # 일반 패턴
-                        r")",
-                        text_only, re.IGNORECASE,
+                    phone_candidates = []
+                    label_re = (
+                        r"(CALL|TEL|TELEPHONE|전화|문의|연락처|"
+                        r"고객\s*센터|고객\s*만족\s*센터|상담\s*센터|"
+                        r"대표\s*전화|대표\s*번호|cs|customer)"
                     )
-                    if m:
-                        phone = m.group(1).strip()
-                        # 표준 형식 정리: 공백·점 → 하이픈
-                        phone = re.sub(r"[.\s]+", "-", phone)
-                        info["phone"] = phone
+                    num_re = (
+                        r"(1[5-9]\d{2}[-.\s]?\d{4}"              # 대표번호 1588-7601
+                        r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}"  # 일반 02-1234-5678
+                        r"|\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})"  # 일반 패턴
+                    )
+                    full_pattern = f"{label_re}[\\s\\.\\-:전화번호문의]{{0,15}}{num_re}"
+
+                    for m in re.finditer(full_pattern, text_only, re.IGNORECASE):
+                        label = m.group(1).lower()
+                        num = m.group(2)
+                        score = 50   # 기본
+                        # 강라벨 가산
+                        if "대표" in label:
+                            score += 30
+                        if "고객" in label or "센터" in label:
+                            score += 30
+                        # 대표번호(1588/1599/1899 등) 가산
+                        if re.match(r"1[5-9]\d{2}", num.replace("-", "").replace(" ", "").replace(".", "")):
+                            score += 20
+                        # FAX/팩스 근처 검사 (앞 30글자) → 감산
+                        context_start = max(0, m.start() - 30)
+                        context = text_only[context_start:m.end()].lower()
+                        if "fax" in context or "팩스" in context:
+                            score -= 80   # 강력 차단
+                        # 정리
+                        num_clean = re.sub(r"[.\s]+", "-", num.strip())
+                        phone_candidates.append((score, num_clean))
+
+                    if phone_candidates:
+                        # 점수 내림차순 + 0점 이상만 선택
+                        phone_candidates.sort(key=lambda x: -x[0])
+                        best_score, best_phone = phone_candidates[0]
+                        if best_score > 0:
+                            info["phone"] = best_phone
+                            print(f"               [전화선택] {best_phone} (점수 {best_score}, "
+                                  f"후보 {len(phone_candidates)}개)")
 
                 # ─── 사업자번호 패턴 (footer) ───
                 if not info.get("business_number"):
