@@ -1454,24 +1454,31 @@ def collect_extended_business_info(brand_name: str, business_number: str = "") -
 # 통합 함수: 모든 소스에서 정보 수집 → 가장 신뢰도 높은 정보 선택
 # ─────────────────────────────────────────────────────────────────
 def collect_business_info(brand_name: str, store_url: str) -> dict:
-    """사업자 정보 자동 수집 — 3-tier 통합.
+    """영업 컨택 정보 자동 수집 — 검색 기반 (100% Naver/Google).
 
-    동작:
-      Phase 1 (스마트스토어) → Phase 2 (공정위 DB) → Phase 3 (이메일 보완)
-      각 소스에서 정보 수집 → 빈 값만 다음 소스로 보완
+    ⭐ 2026-05-26 전면 재설계:
+      이전: Phase 1 (스마트스토어) → Phase 2 (공정위 DB) → Phase 3 (검색)
+      변경: 100% 검색 기반 — 사용자 워크플로우 그대로
+        1. 네이버/구글에 브랜드명 검색
+        2. 검색 결과의 자사 홈페이지 들어감
+        3. 메타+body 검증으로 진짜 공식몰 판별
+        4. footer + 약관 페이지에서 이메일/전화/사업자번호 추출
 
-    반환 (주소는 자동수집 제외, 2026-05-26):
+      제거 이유:
+        - 스마트스토어: HTTP 429 차단 자주, 영업 컨택과 무관
+        - 공정위 DB: 본사 정보라 브랜드 영업 컨택과 무관
+
+    반환:
         {
             "company_name": "...",
             "ceo": "...",
             "business_number": "...",
             "phone": "...",
             "email": "...",
-            "sources": ["스마트스토어", "공정위", "홈페이지"],
+            "sources": ["공식홈페이지", "Naver검색"],
             "confidence": "높음" / "중간" / "낮음",
         }
     """
-    # ⭐ 2026-05-26: address 자동수집 제외
     result = {
         "company_name": "",
         "ceo": "",
@@ -1481,52 +1488,42 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
         "sources": [],
     }
 
-    print(f"        🔍 사업자정보 자동 수집 시작 ({brand_name})")
+    print(f"        🔍 영업 컨택 자동 수집 시작 ({brand_name}) — 검색 기반")
+
+    if not brand_name:
+        print(f"           ⚠ 브랜드명 없음 → skip")
+        result["confidence"] = "낮음"
+        return result
 
     # ───────────────────────────────────────────────
-    # Phase 1: 스마트스토어 사업자정보 페이지
+    # Phase 1: 공식 홈페이지 (네이버 + Google 검색 → footer 추출) ⭐ 메인
+    # 사용자 워크플로우와 동일:
+    #   "네이버에 '브랜드명' 검색 → 자사 홈페이지 클릭 → 하단 정보 복사"
     # ───────────────────────────────────────────────
-    info1 = fetch_smartstore_business_info(store_url)
-    website_hint = ""   # ⭐ 스마트스토어 판매자 등록 외부 URL (있으면 공식몰로 사용)
-    if info1:
+    print(f"           [Phase 1] 공식 홈페이지 검색·추출 시작...")
+    homepage_info = find_business_info_from_homepage(brand_name)
+    if homepage_info:
         for k in ["company_name", "ceo", "business_number", "phone", "email"]:
-            if info1.get(k) and not result[k]:
-                result[k] = info1[k]
-        # ⭐ 외부 사이트 URL 힌트 추출 (Phase 3에서 우선 후보로 사용)
-        if info1.get("website_url"):
-            website_hint = info1["website_url"]
-            print(f"           🎯 스마트스토어 외부 URL 발견 → 공식몰 hint: {website_hint}")
-        if any(info1.get(k) for k in ["company_name", "ceo", "business_number"]):
-            result["sources"].append("스마트스토어")
-            print(f"           ✓ 스마트스토어: 상호={result['company_name'][:20]}, "
-                  f"대표={result['ceo'][:10]}, 전화={result['phone']}")
+            if homepage_info.get(k) and not result[k]:
+                result[k] = homepage_info[k]
+        if any(homepage_info.get(k) for k in ["phone", "email", "ceo"]):
+            result["sources"].append("공식홈페이지")
+            print(f"           ✓ 공식 홈페이지 추출: "
+                  f"이메일={result['email']}, 전화={result['phone']}, "
+                  f"대표={result['ceo']}")
     time.sleep(0.3)
 
     # ───────────────────────────────────────────────
-    # ⭐ 2026-05-26: Phase 2 (공정위 DB) 제거
-    # 공정위 DB는 본사 정보(사업자번호, 본사 대표, 본사 전화)라
-    # 영업 컨택(브랜드 공식몰 CS)과 완전히 별개 → 호출 안 함
+    # Phase 2: Naver 검색 보완 (공식 홈페이지에서 이메일 못 찾았을 때)
+    # 블로그/카페/웹 검색 결과에 노출된 이메일 추출
     # ───────────────────────────────────────────────
-
-    # ───────────────────────────────────────────────
-    # Phase 3: 공식 홈페이지 + Naver 검색 (이메일 없을 때만)
-    # ⭐ website_hint(스마트스토어 판매자 등록 외부 URL)를 hint_url로 전달
-    # ───────────────────────────────────────────────
-    if not result["email"] and brand_name:
-        # 3-1) 공식 홈페이지 (브랜드 공식몰 footer)
-        # hint_url 있으면 그 URL 최우선 fetch (100% 신뢰)
-        email = find_email_from_homepage(brand_name, hint_url=website_hint)
-        if email:
-            result["email"] = email
-            result["sources"].append("공식홈페이지")
-            print(f"           ✓ 공식 홈페이지 이메일: {email}")
-        else:
-            # 3-2) Naver 검색 결과
-            email = search_email_via_naver(brand_name)
-            if email:
-                result["email"] = email
-                result["sources"].append("Naver검색")
-                print(f"           ✓ Naver 검색 이메일: {email}")
+    if not result["email"]:
+        print(f"           [Phase 2] Naver 블로그/카페 검색으로 이메일 보완...")
+        naver_email = search_email_via_naver(brand_name)
+        if naver_email:
+            result["email"] = naver_email
+            result["sources"].append("Naver검색")
+            print(f"           ✓ Naver 검색 이메일: {naver_email}")
         time.sleep(0.3)
 
     # ───────────────────────────────────────────────
