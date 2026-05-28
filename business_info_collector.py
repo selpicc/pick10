@@ -752,10 +752,14 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
                     return full_pts // 2   # 핵심 단어만 매칭 → 절반 점수
         return 0
 
+    # ⭐ 메타 영역과 body 영역 점수 분리 — 메타 0점이면 body는 보조용으로만
+    meta_score = 0
+    body_score = 0
+
     # 1. <title>
     title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
     if title_match:
-        score += _match_score(title_match.group(1), 50)
+        meta_score += _match_score(title_match.group(1), 50)
 
     # 2. og:site_name
     og_site_match = re.search(
@@ -763,7 +767,7 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         html, re.IGNORECASE,
     )
     if og_site_match:
-        score += _match_score(og_site_match.group(1), 30)
+        meta_score += _match_score(og_site_match.group(1), 30)
 
     # 3. og:title
     og_title_match = re.search(
@@ -771,7 +775,7 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         html, re.IGNORECASE,
     )
     if og_title_match:
-        score += _match_score(og_title_match.group(1), 20)
+        meta_score += _match_score(og_title_match.group(1), 20)
 
     # 4. meta keywords
     keywords_match = re.search(
@@ -779,7 +783,7 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         html, re.IGNORECASE,
     )
     if keywords_match:
-        score += _match_score(keywords_match.group(1), 20)
+        meta_score += _match_score(keywords_match.group(1), 20)
 
     # 5. meta description
     desc_match = re.search(
@@ -787,15 +791,12 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         html, re.IGNORECASE,
     )
     if desc_match:
-        score += _match_score(desc_match.group(1), 15)
+        meta_score += _match_score(desc_match.group(1), 15)
 
-    # ⭐ 6. body text (처음 30KB)
+    # ⭐ 6. body text (처음 30KB) — 보조 점수
     body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
     body_text = re.sub(r"\s+", " ", body_text)
 
-    # body는 등장 횟수 기반 점수 (자주 나오면 그 브랜드 사이트 확률 높음)
-    # 전체/공백제거 우선, 없으면 핵심 단어
-    body_score = 0
     for idx, token in enumerate(tokens):
         if token in body_text:
             occ = body_text.count(token)
@@ -807,9 +808,16 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
             else:
                 body_score = max(5, base - 20)
             break   # 가장 높은 우선순위 토큰만 점수
-    score += body_score
 
-    return score
+    # ⭐ 2026-05-26 핵심 변경: 메타 매칭 0점이면 body만으로는 통과 불가
+    # → 리뷰/큐레이션/도매 사이트 (body에 브랜드명 우연히 언급) 자동 차단
+    # 자사몰이면 title/og에 브랜드명이 반드시 있어야 한다는 가정
+    if meta_score == 0:
+        # body 점수도 1/4로 깎음 (보조용)
+        # 임계값 25점 → meta 0 + body 1/4 → 통과 불가
+        return body_score // 4
+
+    return meta_score + body_score
 
 
 def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
