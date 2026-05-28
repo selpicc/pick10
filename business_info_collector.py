@@ -1122,14 +1122,28 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                             info["ceo"] = verified
 
                 # ─── 전화 패턴 (footer) ───
+                # ⭐ 2026-05-26 강화:
+                #   1. 대표번호 (1588-7601, 1600-XXXX, 1577-XXXX 등 8자리) 추가
+                #   2. 라벨과 숫자 사이 거리 확대 ("고객센터 전화 : 1588-7601" 케이스)
+                #   3. "고객만족센터", "상담센터" 등 라벨 변형 추가
                 if not info.get("phone"):
                     m = re.search(
-                        r"(?:CALL|TEL|TELEPHONE|전화|문의|고객센터|연락처)\s*[:\s]?\s*"
-                        r"(\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})",
+                        # 라벨 (다양한 표기)
+                        r"(?:CALL|TEL|TELEPHONE|전화|문의|연락처|"
+                        r"고객\s*센터|고객\s*만족\s*센터|상담\s*센터|cs|customer)"
+                        # 라벨 이후 구분자/추가 단어 ("전화", "번호" 등) 허용
+                        r"[\s\.\-:전화번호문의]{0,15}"
+                        # 전화번호 (대표번호 8자리 + 일반 11자리 모두)
+                        r"("
+                        r"1[5-9]\d{2}[-.\s]?\d{4}"                  # 대표번호 1588-7601
+                        r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}"     # 일반 02-1234-5678
+                        r"|\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4}"      # 일반 패턴
+                        r")",
                         text_only, re.IGNORECASE,
                     )
                     if m:
                         phone = m.group(1).strip()
+                        # 표준 형식 정리: 공백·점 → 하이픈
                         phone = re.sub(r"[.\s]+", "-", phone)
                         info["phone"] = phone
 
