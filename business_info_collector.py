@@ -223,14 +223,13 @@ def pick_best_email(candidates: list, brand_name: str = "") -> str:
             continue
 
         score = score_email(email)
-        # ⭐ 2026-05-26 강화: 도메인-브랜드 매칭 더 엄격
-        # 한글 브랜드 ↔ 영문 도메인 매칭 어려움 인정 →
-        # 매칭 안 될 때 잘못된 정보보다 미수집(빈 값) 우선
+        # ⭐ 2026-05-26: 사이트 검증(메타+body)이 1차 안전망 → 이메일 매칭은 보조
+        # 도메인 매칭 안 되어도, 사이트 검증을 통과한 페이지의 이메일이면 신뢰
         if brand_name:
             if _is_domain_matching_brand(email, brand_name):
                 score += 50   # 매칭되면 강력 보너스
             else:
-                score -= 60   # ⭐ 미매칭 감산 강화 (-30 → -60)
+                score -= 30   # ⭐ 미매칭 감산 완화 (-60 → -30)
 
         valid.append((score, email))
     if not valid:
@@ -238,12 +237,12 @@ def pick_best_email(candidates: list, brand_name: str = "") -> str:
     # 점수 내림차순 정렬, 동점이면 짧은 이메일 우선 (덜 generic)
     valid.sort(key=lambda x: (-x[0], len(x[1])))
 
-    # ⭐ 임계값 50점 — support@choandkang(100-60=40) 같은 미매칭 케이스 차단
-    # 한글 브랜드는 영문 도메인 매칭 거의 불가 → 미수집(빈 값) 됨
-    # 진짜 영업 메일은 사용자가 수기 입력 (정확도 100%)
+    # ⭐ 임계값 완화 (50 → 30)
+    # 한글 브랜드 ↔ 영문 도메인 매칭 안 되는 케이스 통과
+    # 잘못된 사이트 차단은 페이지 메타+body 검증이 담당 (find_business_info_from_homepage)
     best_score, best_email = valid[0]
-    if brand_name and best_score < 50:
-        # 50점 미만 = 도메인 미매칭 → 신뢰도 부족, 미선택
+    if brand_name and best_score < 30:
+        # 30점 미만 = webmaster 같은 시스템 메일 + 미매칭만 차단
         return ""
 
     return best_email
@@ -747,6 +746,21 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         if brand_clean in desc:
             score += 15
 
+    # ⭐ 6. body text 매칭 (한글 브랜드 안전망)
+    # HTML 태그 제거 후 본문에 브랜드명이 등장하면 가산
+    # 한글 브랜드는 영문 도메인 매칭 불가 → body text가 핵심 검증
+    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()   # 처음 30KB만 검사 (속도)
+    body_text = re.sub(r"\s+", " ", body_text)
+    if brand_clean in body_text:
+        # 등장 횟수 기반 점수 (자주 나오면 그 브랜드 사이트일 확률 높음)
+        occurrences = body_text.count(brand_clean)
+        if occurrences >= 5:
+            score += 40   # 5번 이상 → 강력 매칭
+        elif occurrences >= 2:
+            score += 25   # 2~4번
+        else:
+            score += 15   # 1번만
+
     return score
 
 
@@ -939,8 +953,8 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                             if idx == 0 and not meta_verified:
                                 meta_score = _verify_homepage_match(page.text, brand_name)
                                 print(f"               [메타검증] {page_url[:50]} → {meta_score}점")
-                                if meta_score < 30:
-                                    print(f"               ⚠ 메타 점수 미달 (<30) → 이 사이트 skip")
+                                if meta_score < 25:
+                                    print(f"               ⚠ 메타+body 점수 미달 (<25) → 이 사이트 skip")
                                     break   # 점수 미달 → 이 후보 URL 자체를 skip
                                 meta_verified = True
 
