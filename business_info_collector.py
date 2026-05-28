@@ -1514,17 +1514,10 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     time.sleep(0.3)
 
     # ───────────────────────────────────────────────
-    # Phase 2: Naver 검색 보완 (공식 홈페이지에서 이메일 못 찾았을 때)
-    # 블로그/카페/웹 검색 결과에 노출된 이메일 추출
+    # ⭐ 2026-05-26: Phase 2 (Naver 블로그/카페 검색) 제거
+    # 정확도 낮음 (블로그/카페 글의 이메일이 영업 컨택이 아닌 경우 多)
+    # 공식 홈페이지에서 못 찾으면 미수집(🔍 미확인) → 사용자가 수기 입력
     # ───────────────────────────────────────────────
-    if not result["email"]:
-        print(f"           [Phase 2] Naver 블로그/카페 검색으로 이메일 보완...")
-        naver_email = search_email_via_naver(brand_name)
-        if naver_email:
-            result["email"] = naver_email
-            result["sources"].append("Naver검색")
-            print(f"           ✓ Naver 검색 이메일: {naver_email}")
-        time.sleep(0.3)
 
     # ───────────────────────────────────────────────
     # 신뢰도 평가
