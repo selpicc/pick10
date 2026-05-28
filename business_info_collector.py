@@ -675,6 +675,42 @@ def find_email_from_homepage(brand_name: str, hint_url: str = "") -> Optional[st
     return info.get("email") if info else None
 
 
+def _brand_match_tokens(brand_name: str) -> list:
+    """브랜드명에서 매칭 가능한 토큰들 추출.
+
+    ⭐ 2026-05-26 신규: "아토피엔 더순해" → ["아토피엔 더순해", "아토피엔더순해", "더순해"]
+    공백 포함 브랜드는 핵심 단어만으로도 매칭 가능하게.
+    """
+    if not brand_name:
+        return []
+    brand_clean = brand_name.lower().strip()
+    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)"]:
+        brand_clean = brand_clean.replace(prefix, "")
+    brand_clean = brand_clean.strip()
+
+    if not brand_clean:
+        return []
+
+    tokens = [brand_clean]   # 전체
+
+    # 공백 제거 버전 ("아토피엔 더순해" → "아토피엔더순해")
+    no_space = brand_clean.replace(" ", "")
+    if no_space != brand_clean and no_space:
+        tokens.append(no_space)
+
+    # 공백으로 분리된 각 단어 (3자 이상만, false positive 방지)
+    # 길이순으로 정렬 (긴 단어가 핵심 브랜드명일 가능성)
+    words = sorted(
+        [w for w in brand_clean.split() if len(w) >= 3],
+        key=len, reverse=True,
+    )
+    for w in words[:2]:   # 상위 2개만 (false positive 방지)
+        if w not in tokens:
+            tokens.append(w)
+
+    return tokens
+
+
 def _verify_homepage_match(html: str, brand_name: str) -> int:
     """페이지 메타 정보(title/og:site_name/meta keywords)로 브랜드 매칭 점수 계산.
 
@@ -682,84 +718,96 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
       - title에 브랜드명 포함 → +50
       - og:site_name에 브랜드명 포함 → +30
       - meta keywords/description에 브랜드명 → +20
-      - 영문 브랜드의 경우 영문 추측도 매칭
+      - body text에 브랜드명 등장 → +15~40
+      - ⭐ 토큰 매칭 ("아토피엔 더순해" → "더순해"만으로도 매칭) → 점수 차등
 
-    임계값 30점 이상 = 공식몰일 확률 높음
+    임계값 25점 이상 = 공식몰일 확률 높음
     """
     if not html or not brand_name:
         return 0
 
-    score = 0
-    brand_clean = brand_name.lower().strip().replace(" ", "")
-    # 회사 접두사 제거
-    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)"]:
-        brand_clean = brand_clean.replace(prefix, "")
-    brand_clean = brand_clean.strip()
-
-    if not brand_clean:
+    tokens = _brand_match_tokens(brand_name)
+    if not tokens:
         return 0
 
-    # 1. <title> 검사
+    score = 0
+    # tokens[0] = 전체 브랜드명, tokens[1] = 공백제거, tokens[2+] = 핵심 단어들
+
+    def _match_score(text: str, full_pts: int) -> int:
+        """텍스트에서 토큰 매칭 → 우선순위 점수 반환.
+
+        - 전체 브랜드명 매칭 → full_pts
+        - 공백제거 매칭 → full_pts - 5
+        - 핵심 단어 매칭 → full_pts // 2 (절반)
+        """
+        text_lower = text.lower()
+        # 우선순위: 전체 → 공백제거 → 핵심 단어
+        for idx, token in enumerate(tokens):
+            if token in text_lower:
+                if idx == 0:
+                    return full_pts
+                elif idx == 1:
+                    return max(0, full_pts - 5)
+                else:
+                    return full_pts // 2   # 핵심 단어만 매칭 → 절반 점수
+        return 0
+
+    # 1. <title>
     title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
     if title_match:
-        title = title_match.group(1).lower()
-        if brand_clean in title:
-            score += 50
+        score += _match_score(title_match.group(1), 50)
 
-    # 2. <meta property="og:site_name" content="...">
+    # 2. og:site_name
     og_site_match = re.search(
         r'<meta[^>]*property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     )
     if og_site_match:
-        og_site = og_site_match.group(1).lower()
-        if brand_clean in og_site:
-            score += 30
+        score += _match_score(og_site_match.group(1), 30)
 
-    # 3. <meta property="og:title" content="...">
+    # 3. og:title
     og_title_match = re.search(
         r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     )
     if og_title_match:
-        og_title = og_title_match.group(1).lower()
-        if brand_clean in og_title:
-            score += 20
+        score += _match_score(og_title_match.group(1), 20)
 
-    # 4. <meta name="keywords" content="...">
+    # 4. meta keywords
     keywords_match = re.search(
         r'<meta[^>]*name=["\']keywords["\'][^>]*content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     )
     if keywords_match:
-        keywords = keywords_match.group(1).lower()
-        if brand_clean in keywords:
-            score += 20
+        score += _match_score(keywords_match.group(1), 20)
 
-    # 5. <meta name="description" content="...">
+    # 5. meta description
     desc_match = re.search(
         r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     )
     if desc_match:
-        desc = desc_match.group(1).lower()
-        if brand_clean in desc:
-            score += 15
+        score += _match_score(desc_match.group(1), 15)
 
-    # ⭐ 6. body text 매칭 (한글 브랜드 안전망)
-    # HTML 태그 제거 후 본문에 브랜드명이 등장하면 가산
-    # 한글 브랜드는 영문 도메인 매칭 불가 → body text가 핵심 검증
-    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()   # 처음 30KB만 검사 (속도)
+    # ⭐ 6. body text (처음 30KB)
+    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
     body_text = re.sub(r"\s+", " ", body_text)
-    if brand_clean in body_text:
-        # 등장 횟수 기반 점수 (자주 나오면 그 브랜드 사이트일 확률 높음)
-        occurrences = body_text.count(brand_clean)
-        if occurrences >= 5:
-            score += 40   # 5번 이상 → 강력 매칭
-        elif occurrences >= 2:
-            score += 25   # 2~4번
-        else:
-            score += 15   # 1번만
+
+    # body는 등장 횟수 기반 점수 (자주 나오면 그 브랜드 사이트 확률 높음)
+    # 전체/공백제거 우선, 없으면 핵심 단어
+    body_score = 0
+    for idx, token in enumerate(tokens):
+        if token in body_text:
+            occ = body_text.count(token)
+            base = 40 if idx == 0 else (35 if idx == 1 else 20)
+            if occ >= 5:
+                body_score = base
+            elif occ >= 2:
+                body_score = base - 10
+            else:
+                body_score = max(5, base - 20)
+            break   # 가장 높은 우선순위 토큰만 점수
+    score += body_score
 
     return score
 
@@ -945,26 +993,59 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                 # hint_url은 검증 skip (스마트스토어 판매자 직접 등록 → 100% 신뢰)
                 meta_verified = (item_url == hint_url)
 
+                # ⭐ 2026-05-26: User-Agent 다양화 (SPA/봇차단 우회)
+                BROWSER_UAS = [
+                    HTTP_HEADERS["User-Agent"],   # Chrome Windows
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+                ]
+
+                def _fetch_with_retry(url: str, timeout: int = 8) -> str:
+                    """다양한 User-Agent로 fetch 시도. 빈 응답이면 retry."""
+                    for ua in BROWSER_UAS:
+                        try:
+                            headers = {**HTTP_HEADERS, "User-Agent": ua}
+                            resp = requests.get(url, headers=headers, timeout=timeout)
+                            if resp.status_code == 200 and len(resp.text) > 500:
+                                return resp.text
+                        except Exception:
+                            continue
+                    return ""
+
                 for idx, page_url in enumerate(pages_to_try):
                     try:
-                        page = requests.get(page_url, headers=HTTP_HEADERS, timeout=8)
-                        if page.status_code == 200:
+                        # ⭐ 메인 페이지는 retry 강화 (SPA/봇차단 우회)
+                        if idx == 0:
+                            page_html = _fetch_with_retry(page_url, timeout=10)
+                            status_ok = bool(page_html)
+                        else:
+                            try:
+                                page = requests.get(page_url, headers=HTTP_HEADERS, timeout=8)
+                                page_html = page.text if page.status_code == 200 else ""
+                                status_ok = bool(page_html)
+                            except Exception:
+                                page_html = ""
+                                status_ok = False
+
+                        if status_ok:
                             # 메인 페이지에서 메타 검증
                             if idx == 0 and not meta_verified:
-                                meta_score = _verify_homepage_match(page.text, brand_name)
+                                meta_score = _verify_homepage_match(page_html, brand_name)
                                 print(f"               [메타검증] {page_url[:50]} → {meta_score}점")
                                 if meta_score < 25:
                                     print(f"               ⚠ 메타+body 점수 미달 (<25) → 이 사이트 skip")
                                     break   # 점수 미달 → 이 후보 URL 자체를 skip
                                 meta_verified = True
 
-                            combined_text += page.text + "\n"
+                            combined_text += page_html + "\n"
                             if idx == 0:
-                                main_text = page.text
+                                main_text = page_html
                                 # 메인 페이지에서 contact/about/agreement 링크 추가 발견
                                 for link_match in re.finditer(
                                     r'href=["\']([^"\']*(?:contact|about|company|info|cs|footer|agreement|privacy|guide|shopinfo)[^"\']*\.(?:html?|php|asp))["\']',
-                                    page.text, re.IGNORECASE,
+                                    page_html, re.IGNORECASE,
                                 ):
                                     sub_link = link_match.group(1)
                                     if sub_link.startswith("//"):
