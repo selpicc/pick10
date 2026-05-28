@@ -809,15 +809,43 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
                 body_score = max(5, base - 20)
             break   # 가장 높은 우선순위 토큰만 점수
 
-    # ⭐ 2026-05-26 핵심 변경: 메타 매칭 0점이면 body만으로는 통과 불가
-    # → 리뷰/큐레이션/도매 사이트 (body에 브랜드명 우연히 언급) 자동 차단
-    # 자사몰이면 title/og에 브랜드명이 반드시 있어야 한다는 가정
-    if meta_score == 0:
-        # body 점수도 1/4로 깎음 (보조용)
-        # 임계값 25점 → meta 0 + body 1/4 → 통과 불가
-        return body_score // 4
+    # ⭐ 7. footer 신호 (공식몰만 가지는 표지) — 2026-05-26 추가
+    # 영문 title/SPA 사이트도 공식몰이면 footer에 사업자정보 표시 의무 (전자상거래법)
+    # 리뷰/큐레이션 사이트는 이 신호 없음 → 자동 구분
+    footer_signal_score = 0
+    footer_patterns = [
+        # 사업자등록번호 라벨
+        (r"사업자\s*등록\s*번호|사업자\s*번호|business\s*license", 15),
+        # 통신판매업 신고
+        (r"통신판매업|통신판매신고|통신판매\s*신고번호", 15),
+        # 사업자번호 실제 패턴 (XXX-XX-XXXXX)
+        (r"\b\d{3}-?\d{2}-?\d{5}\b", 15),
+        # 대표자 표기 (footer 형식)
+        (r"대표[자]?\s*[:\s]\s*[가-힣]{2,4}|ceo\s*[:\s]\s*[a-z가-힣]{2,}", 10),
+        # 약관/개인정보 페이지 링크
+        (r"개인정보처리방침|이용약관|terms\s*of\s*(?:use|service)|privacy\s*policy", 10),
+        # 결제/배송 (커머스 사이트 표지)
+        (r"고객센터|customer\s*service|cs\s*center", 10),
+    ]
+    for pattern, pts in footer_patterns:
+        if re.search(pattern, body_text, re.IGNORECASE):
+            footer_signal_score += pts
 
-    return meta_score + body_score
+    # ⭐ 종합 점수 계산
+    # 메타 0점 + footer 신호 약함 → 리뷰/큐레이션 사이트 (차단)
+    # 메타 0점 + footer 신호 강함 → 영문 title 공식몰 (통과)
+    # 메타 매칭 + footer 신호 → 진짜 공식몰 (확실 통과)
+    if meta_score == 0:
+        # 메타 없으면 footer 신호로 판단 (body는 보조)
+        # footer 신호 30점+ 있으면 진짜 공식몰일 확률 높음
+        if footer_signal_score >= 30:
+            return meta_score + body_score + footer_signal_score   # 통과 가능
+        else:
+            # footer 신호 약함 → 리뷰/큐레이션 사이트 가능성 → body 깎음
+            return (body_score // 4) + footer_signal_score
+
+    # 메타 매칭 있으면 종합 점수
+    return meta_score + body_score + footer_signal_score
 
 
 def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
