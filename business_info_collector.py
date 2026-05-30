@@ -51,14 +51,19 @@ HTTP_HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
 }
 
-# 무관 이메일 패턴 (브랜드 이메일 아님)
-# ⭐ 2026-05-26 강화: 채용/쇼핑 플랫폼 자체 메일 차단 (help@saramin.co.kr 등 오인 방지)
-EMAIL_BLACKLIST_DOMAINS = [
-    # ─── 무료 메일 (개인 메일) ───
+# ⭐ 2026-05-30: 무료 메일을 별도 분리.
+#   - 블로그/카페/검색 결과의 무료 메일 → 차단 (엉뚱한 개인 메일 방지)
+#   - 단, 사업자등록번호가 박힌 '진짜 공식 footer'의 무료 메일 → 허용
+#     (코코핏 nanumcnc@naver.com 처럼 작은 회사는 네이버 메일을 영업 컨택으로 씀)
+FREE_MAIL_DOMAINS = [
     "@naver.com", "@gmail.com", "@daum.net", "@hanmail.net",
     "@hotmail.com", "@yahoo.com", "@outlook.com", "@nate.com",
     "@kakao.com",
+]
 
+# 무관 이메일 패턴 (플랫폼/시스템 자체 메일) — ⭐ 항상 차단 (공식 footer라도 X)
+# ⭐ 2026-05-26 강화: 채용/쇼핑 플랫폼 자체 메일 차단 (help@saramin.co.kr 등 오인 방지)
+EMAIL_HARD_BLACKLIST = [
     # ─── 시스템·테스트용 ───
     "example", "noreply", "no-reply", "donotreply",
     "sentry.io", "wixpress.com", "intercom.io",
@@ -88,7 +93,127 @@ EMAIL_BLACKLIST_DOMAINS = [
     # ⭐ ─── 호스팅·솔루션 (cafe24/godo 등 자체 메일) ───
     "@cafe24corp.com", "@simplexi.com", "@godo.co.kr",
     "@imweb.me", "@nhnent.com", "@nhn.com",
+
+    # ⭐ ─── 뉴스레터·이메일 마케팅·상담 SaaS (2026-05-30) ───
+    # 코코핏이 스티비로 뉴스레터 발송 → footer의 support@stibee.com 오수집 차단
+    # 이런 서비스의 support@ 메일은 브랜드 영업 컨택이 아님
+    "@stibee.com",        # 스티비 (뉴스레터)
+    "@mailchimp.com", "@sendgrid.net", "@sendgrid.com",
+    "@mailerlite.com", "@getresponse.com", "@hubspot.com",
+    "@amazonses.com", "@sendinblue.com", "@brevo.com",
+    "@channel.io",        # 채널톡 (상담)
+    "@zendesk.com", "@freshdesk.com", "@tawk.to",
+    "@wix.com", "@squarespace.com", "@shopify.com",
 ]
+
+# 하위 호환: 전체 블랙리스트 (무료메일 + 하드)
+EMAIL_BLACKLIST_DOMAINS = FREE_MAIL_DOMAINS + EMAIL_HARD_BLACKLIST
+
+
+# ─────────────────────────────────────────────────────────────────
+# ⭐ 2026-05-30 추가: 헤드리스 브라우저 (SPA 사이트 렌더링)
+# -----------------------------------------------------------------
+# 문제: kokofit.kr 처럼 자바스크립트로 화면을 그리는 SPA 사이트는
+#       requests.get()으로 받으면 빈 껍데기만 옴 → footer(전화·이메일) 못 읽음
+#       → 엉뚱한 다른 사이트(cowave.kr)의 정보를 가져오는 오류 발생
+# 해결: Playwright로 진짜 브라우저처럼 JS 실행 후 완성된 HTML을 읽는다.
+#       (Playwright 미설치 시 빈 문자열 반환 → 기존 동작 그대로 유지)
+#
+# 설치(사용자 PC에서 1회):
+#   pip install playwright
+#   playwright install chromium
+# ─────────────────────────────────────────────────────────────────
+_BROWSER_CTX = {
+    "playwright": None,
+    "browser": None,
+    "checked": False,      # _get_browser를 한 번이라도 시도했는지
+    "available": False,    # 사용 가능 여부
+}
+
+
+def _get_browser():
+    """Playwright 크롬 브라우저 싱글톤 반환 (한 번 켜서 재사용).
+
+    미설치/실행실패 시 None 반환 + 1회만 안내 메시지 출력.
+    """
+    if _BROWSER_CTX["browser"] is not None:
+        return _BROWSER_CTX["browser"]
+    # 이미 시도했고 실패했으면 재시도 안 함 (매번 에러 출력 방지)
+    if _BROWSER_CTX["checked"] and not _BROWSER_CTX["available"]:
+        return None
+
+    _BROWSER_CTX["checked"] = True
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("           ⚠ Playwright 미설치 — SPA(자바스크립트) 사이트는 렌더링 못 함")
+        print("              설치:  pip install playwright")
+        print("                     playwright install chromium")
+        _BROWSER_CTX["available"] = False
+        return None
+
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(headless=True)
+        _BROWSER_CTX["playwright"] = pw
+        _BROWSER_CTX["browser"] = browser
+        _BROWSER_CTX["available"] = True
+        print("           🌐 헤드리스 브라우저 준비 완료 (SPA 사이트 렌더링 가능)")
+        return browser
+    except Exception as e:
+        print(f"           ⚠ 브라우저 실행 실패: {type(e).__name__}: {e}")
+        print("              'playwright install chromium' 를 실행했는지 확인하세요")
+        _BROWSER_CTX["available"] = False
+        return None
+
+
+def render_html_with_browser(url: str, timeout: int = 15) -> str:
+    """SPA 사이트를 실제 브라우저로 렌더링해 완성된 HTML 반환.
+
+    requests로는 자바스크립트 실행 전 빈 껍데기만 받기 때문에,
+    코코핏(kokofit.kr) 같은 SPA 사이트는 이 함수로 진짜 footer까지 읽는다.
+
+    Playwright 미설치/실패 시 빈 문자열 반환 → 호출부에서 기존 동작으로 fallback.
+    """
+    browser = _get_browser()
+    if browser is None:
+        return ""
+
+    page = None
+    try:
+        page = browser.new_page(user_agent=HTTP_HEADERS["User-Agent"])
+        # 1) DOM 로드까지 대기 (networkidle은 광고/추적 스크립트 때문에
+        #    영영 안 끝나는 사이트가 많아 사용 안 함 → 속도 핵심)
+        page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
+        # 2) 지연 렌더링 footer 대비 짧게만 대기 (1.2초)
+        page.wait_for_timeout(1200)
+        html = page.content()
+        return html or ""
+    except Exception as e:
+        print(f"           [디버그] 브라우저 렌더링 실패 ({url[:50]}): {type(e).__name__}")
+        return ""
+    finally:
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
+
+
+def close_browser():
+    """프로그램 종료 시 브라우저 정리 (수집 스크립트 마지막에 호출 권장)."""
+    try:
+        if _BROWSER_CTX["browser"] is not None:
+            _BROWSER_CTX["browser"].close()
+        if _BROWSER_CTX["playwright"] is not None:
+            _BROWSER_CTX["playwright"].stop()
+    except Exception:
+        pass
+    finally:
+        _BROWSER_CTX["browser"] = None
+        _BROWSER_CTX["playwright"] = None
+        _BROWSER_CTX["available"] = False
+        _BROWSER_CTX["checked"] = False
 
 
 def is_valid_email(email: str) -> bool:
@@ -202,10 +327,13 @@ def _is_domain_matching_brand(email: str, brand_name: str) -> bool:
     return False
 
 
-def pick_best_email(candidates: list, brand_name: str = "") -> str:
+def pick_best_email(candidates: list, brand_name: str = "",
+                    allow_free_mail: bool = False) -> str:
     """후보 이메일 리스트에서 가장 적합한 것 선택 (점수 기준).
 
-    - 블랙리스트 도메인(@naver.com 등) 제외
+    - 플랫폼/시스템 자체 메일(EMAIL_HARD_BLACKLIST) → 항상 제외
+    - 무료 메일(@naver/@gmail 등) → 기본 제외, 단 allow_free_mail=True면 허용
+      (⭐ 2026-05-30: 사업자번호 있는 진짜 공식 footer의 네이버 메일 살리기용)
     - is_valid_email() 통과만
     - score_email() 점수 최고값 반환
     - ⭐ brand_name 제공 시 도메인-브랜드 매칭 가산점 (판옵티콘↔poolix 같은 무관 메일 차단)
@@ -217,7 +345,11 @@ def pick_best_email(candidates: list, brand_name: str = "") -> str:
         if not email or "@" not in email:
             continue
         email_lower = email.lower()
-        if any(skip in email_lower for skip in EMAIL_BLACKLIST_DOMAINS):
+        # 플랫폼/시스템 자체 메일 → 항상 차단
+        if any(skip in email_lower for skip in EMAIL_HARD_BLACKLIST):
+            continue
+        # 무료 메일 → allow_free_mail 아니면 차단
+        if not allow_free_mail and any(skip in email_lower for skip in FREE_MAIL_DOMAINS):
             continue
         if not is_valid_email(email):
             continue
@@ -976,6 +1108,11 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
         # 메타 검증 점수 30점 이상 사이트만 사용 (잘못된 사이트 자동 차단)
         all_email_candidates = []   # 사이트별 후보 모아서 마지막에 베스트 선택
 
+        # ⭐ 2026-05-30: 브라우저 렌더링은 느리므로 셀러당 최대 3곳까지만 허용.
+        #    공식몰은 보통 검색 상위에 있어 3곳이면 충분. (시간 초과 방지)
+        #    list로 감싼 이유: 중첩 함수 _fetch_with_retry에서 값 변경하기 위함.
+        render_budget = [3]
+
         for item_url in candidate_urls[:8]:
             url = item_url
             try:
@@ -1039,16 +1176,40 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                 ]
 
                 def _fetch_with_retry(url: str, timeout: int = 8) -> str:
-                    """다양한 User-Agent로 fetch 시도. 빈 응답이면 retry."""
+                    """다양한 User-Agent로 fetch 시도.
+
+                    ⭐ 2026-05-30: SPA(자바스크립트) 사이트 대응 추가.
+                    requests 결과가 '빈 껍데기'(태그 제거 후 보이는 글자 < 300자)면
+                    헤드리스 브라우저로 실제 렌더링한 HTML을 가져온다 (코코핏 케이스).
+                    """
+                    html = ""
                     for ua in BROWSER_UAS:
                         try:
                             headers = {**HTTP_HEADERS, "User-Agent": ua}
                             resp = requests.get(url, headers=headers, timeout=timeout)
                             if resp.status_code == 200 and len(resp.text) > 500:
-                                return resp.text
+                                html = resp.text
+                                break
                         except Exception:
                             continue
-                    return ""
+
+                    # ⭐ SPA 감지: 태그 제거 후 보이는 글자가 너무 적으면 JS 렌더링 사이트
+                    #    단, 렌더링 예산(셀러당 3회)이 남아있을 때만 (시간 초과 방지)
+                    visible_len = (
+                        len(re.sub(r"<[^>]+>", " ", html).strip()) if html else 0
+                    )
+                    if visible_len < 300 and render_budget[0] > 0:
+                        render_budget[0] -= 1
+                        rendered = render_html_with_browser(url, timeout=12)
+                        if rendered:
+                            rendered_visible = len(
+                                re.sub(r"<[^>]+>", " ", rendered).strip()
+                            )
+                            if rendered_visible > visible_len:
+                                print(f"               🌐 SPA 감지 → 브라우저 렌더링 "
+                                      f"({rendered_visible}자 확보, 남은 예산 {render_budget[0]})")
+                                return rendered
+                    return html
 
                 for idx, page_url in enumerate(pages_to_try):
                     try:
@@ -1179,6 +1340,22 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                     )
                     if m:
                         info["business_number"] = m.group(1).strip()
+                        # ⭐ 2026-05-30: 사업자번호가 박힌 = 진짜 공식 footer.
+                        #   이 페이지의 이메일은 무료메일(@naver 등)이라도 공식 컨택일
+                        #   확률 높음 (코코핏 nanumcnc@naver.com 케이스).
+                        #   1순위 브랜드/시스템 메일 → 없으면 무료메일까지 허용.
+                        if not info.get("email"):
+                            page_cands = extract_emails_from_html(text_only)
+                            pe = pick_best_email(page_cands, brand_name=brand_name)
+                            if not pe:
+                                pe = pick_best_email(
+                                    page_cands, brand_name="",
+                                    allow_free_mail=True,
+                                )
+                            if pe:
+                                info["email"] = pe
+                                print(f"               [공식footer 이메일] {pe} "
+                                      f"(사업자번호 동일 페이지)")
 
                 # ─── 이메일 추출 — ⭐ 모든 후보 모아서 전체 사이트에서 베스트 선택 ───
                 # 1) footer 패턴 (E-mail customer@...)

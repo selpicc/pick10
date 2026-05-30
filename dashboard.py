@@ -714,7 +714,7 @@ if collect_clicked:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=600,   # 5분 → 10분 (Fallback + 확장 라운드 시간 여유)
+                timeout=900,   # 15분 (SPA 브라우저 렌더링 시간 여유, 2026-05-30)
                 cwd=script_dir,
             )
             # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
@@ -763,7 +763,7 @@ if collect_clicked:
                 st.cache_data.clear()
                 st.rerun()
         except subprocess.TimeoutExpired:
-            st.error("시간 초과 (5분). 네트워크 또는 API 응답이 늦을 수 있어요. 잠시 후 다시 시도하세요.")
+            st.error("시간 초과 (15분). 수집 건수를 줄이거나(예: 1~2건) 잠시 후 다시 시도하세요.")
         except FileNotFoundError:
             st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
         except Exception as e:
