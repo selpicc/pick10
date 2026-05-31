@@ -705,9 +705,19 @@ if collect_clicked:
     else:
         mode_label = "전체 카테고리"
 
-    with st.spinner(f"수집 중... {mode_label} → {collect_n}건 (약 {15 + collect_n * 8}초)"):
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
+    # ⭐ 2026-05-30: '수집 중' 상태를 끝까지 확실히 표시
+    #   (로딩 스피너가 중간에 사라져 '다 된 줄' 오해하던 문제 해결)
+    #   st.empty() 배너는 수집(블로킹) 동안 화면에 계속 떠 있고, 끝나면 지움
+    status_box = st.empty()
+    status_box.warning(
+        f"🔄 수집 중입니다…  {mode_label} → {collect_n}건\n\n"
+        f"깊은 검색 + 공식홈 확인 때문에 보통 3~4분 걸려요. "
+        f"멈춘 게 아니니 이 화면을 닫지 말고 기다려 주세요. "
+        f"완료되면 아래 목록이 자동으로 갱신됩니다."
+    )
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        with st.spinner("수집 진행 중… (완료까지 화면을 그대로 두세요)"):
             result = subprocess.run(
                 cmd_args,
                 capture_output=True,
@@ -717,57 +727,61 @@ if collect_clicked:
                 timeout=900,   # 15분 (SPA 브라우저 렌더링 시간 여유, 2026-05-30)
                 cwd=script_dir,
             )
-            # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
-            import re
-            stdout = result.stdout or ""
+        status_box.empty()   # 수집 완료 → '수집 중' 배너 제거
+        # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
+        import re
+        stdout = result.stdout or ""
 
-            def _grab(pattern: str, default: int = 0) -> int:
-                m = re.search(pattern, stdout)
-                return int(m.group(1)) if m else default
+        def _grab(pattern: str, default: int = 0) -> int:
+            m = re.search(pattern, stdout)
+            return int(m.group(1)) if m else default
 
-            saved_n = _grab(r"저장 완료:\s*(\d+)\s*/\s*\d+건")
-            big_n = _grab(r"대기업 자동 제외:\s*(\d+)건")
-            a_fail = _grab(r"A 탈락.*?:\s*(\d+)건")
-            b_fail = _grab(r"B 탈락.*?:\s*(\d+)건")
-            c_fail = _grab(r"C 탈락.*?:\s*(\d+)건")
-            flagship_fail = stdout.count("주력상품 재검사 탈락")
+        saved_n = _grab(r"저장 완료:\s*(\d+)\s*/\s*\d+건")
+        big_n = _grab(r"대기업 자동 제외:\s*(\d+)건")
+        a_fail = _grab(r"A 탈락.*?:\s*(\d+)건")
+        b_fail = _grab(r"B 탈락.*?:\s*(\d+)건")
+        c_fail = _grab(r"C 탈락.*?:\s*(\d+)건")
+        flagship_fail = stdout.count("주력상품 재검사 탈락")
 
-            # ⭐ 디버그용: collect_5.py 출력을 Streamlit Cloud 로그에 전달
-            # subprocess.run의 capture_output 때문에 print가 안 보이는 문제 해결
-            import sys as _sys
+        # ⭐ 디버그용: collect_5.py 출력을 Streamlit Cloud 로그에 전달
+        # subprocess.run의 capture_output 때문에 print가 안 보이는 문제 해결
+        import sys as _sys
+        print("\n" + "=" * 60, file=_sys.stderr)
+        print("📋 [collect_5.py 실행 출력]", file=_sys.stderr)
+        print("=" * 60, file=_sys.stderr)
+        print(stdout, file=_sys.stderr)
+        if result.stderr:
             print("\n" + "=" * 60, file=_sys.stderr)
-            print("📋 [collect_5.py 실행 출력]", file=_sys.stderr)
+            print("⚠️ [collect_5.py 에러 출력]", file=_sys.stderr)
             print("=" * 60, file=_sys.stderr)
-            print(stdout, file=_sys.stderr)
-            if result.stderr:
-                print("\n" + "=" * 60, file=_sys.stderr)
-                print("⚠️ [collect_5.py 에러 출력]", file=_sys.stderr)
-                print("=" * 60, file=_sys.stderr)
-                print(result.stderr, file=_sys.stderr)
-            print("=" * 60 + "\n", file=_sys.stderr)
+            print(result.stderr, file=_sys.stderr)
+        print("=" * 60 + "\n", file=_sys.stderr)
 
-            # session_state에 결과 저장 (rerun 후에도 표시 유지)
-            st.session_state["last_collect_summary"] = {
-                "success": result.returncode == 0,
-                "saved": saved_n,
-                "target": collect_n,
-                "big": big_n,
-                "a": a_fail,
-                "b": b_fail,
-                "c": c_fail,
-                "flagship": flagship_fail,
-                "mode": collect_mode,
-            }
+        # session_state에 결과 저장 (rerun 후에도 표시 유지)
+        st.session_state["last_collect_summary"] = {
+            "success": result.returncode == 0,
+            "saved": saved_n,
+            "target": collect_n,
+            "big": big_n,
+            "a": a_fail,
+            "b": b_fail,
+            "c": c_fail,
+            "flagship": flagship_fail,
+            "mode": collect_mode,
+        }
 
-            if result.returncode == 0:
-                st.cache_data.clear()
-                st.rerun()
-        except subprocess.TimeoutExpired:
-            st.error("시간 초과 (15분). 수집 건수를 줄이거나(예: 1~2건) 잠시 후 다시 시도하세요.")
-        except FileNotFoundError:
-            st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
-        except Exception as e:
-            st.error(f"실행 중 오류: {e}")
+        if result.returncode == 0:
+            st.cache_data.clear()
+            st.rerun()
+    except subprocess.TimeoutExpired:
+        status_box.empty()
+        st.error("시간 초과 (15분). 수집 건수를 줄이거나(예: 1~2건) 잠시 후 다시 시도하세요.")
+    except FileNotFoundError:
+        status_box.empty()
+        st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
+    except Exception as e:
+        status_box.empty()
+        st.error(f"실행 중 오류: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────

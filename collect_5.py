@@ -409,6 +409,20 @@ def _process_one_candidate(
     print(f"\n   ▶ {brand_name}{mark}  (Selpic 점수 {sel['_score']})")
     print(f"        근거: {' · '.join(sel['_breakdown'])}")
 
+    # ⭐ 5-1.0) 리셀러/잡동사니 몰 '이름' 휴리스틱 (빠른 컷, 2026-05-30)
+    #   '커머스/딜/가성비/잇템/쇼핑/도매/유통/특가' 등은 만물상 리셀러 작명 패턴.
+    #   (브랜드형 이름은 안 걸림 — 진짜 브랜드 보호. 너무 많이 걸리면 토큰 빼면 됨)
+    RESELLER_NAME_TOKENS = (
+        "커머스", "가성비", "잇템", "빅딜", "딜몰", "특가",
+        "도매", "유통", "트레이딩", "트레이드", "쇼핑몰", "쇼핑",
+        "만물", "종합몰", "마켓플레이스",
+    )
+    _bn = brand_name.replace(" ", "")
+    if any(tk in _bn for tk in RESELLER_NAME_TOKENS):
+        print(f"        🚫 리셀러/잡동사니 몰 이름 패턴 제외: {brand_name} → 다음 후보로")
+        time.sleep(0.2)
+        return False
+
     # 5-1) 브랜드 재검색
     brand_items = search_shop(brand_name, display=20)
     own_items = [
@@ -422,6 +436,36 @@ def _process_one_candidate(
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
     ]
+
+    # ⭐ 5-1.3a) 잡동사니 몰 제외 (2026-05-30, 사용자 요청)
+    #   확장 검색이 끌어오는 '만물상'(상품 수천개 중 타깃 1개) 차단.
+    #   셀러 자기 상품 중 '명확한 영유아/임산부 상품' 비율이 절반 미만이면 제외.
+    #   판별: 영유아 키워드(ok) OR 출산/육아 등 카테고리 → 진짜 타깃 상품으로 카운트.
+    #   (FOCUS_MIN 숫자 낮추면 관대, 높이면 엄격)
+    FOCUS_MIN = 0.5
+    CAT_TARGET_TOKENS = (
+        "출산", "육아", "유아", "기저귀", "분유", "이유식",
+        "수유", "임부", "임산부", "신생아", "베이비", "젖병",
+    )
+    if len(own_brand_items) >= 4:
+        target_hits = 0
+        for it in own_brand_items:
+            title = clean_html_tags(it.get("title", ""))
+            fit, _ = market_fit_check(brand_name, title)
+            cat_path = " ".join(
+                str(it.get(f"category{i}", "")) for i in range(1, 5)
+            )
+            if fit == "ok" or any(tk in cat_path for tk in CAT_TARGET_TOKENS):
+                target_hits += 1
+        focus_ratio = target_hits / len(own_brand_items)
+        if focus_ratio < FOCUS_MIN:
+            print(f"        🚫 잡동사니 몰 제외 "
+                  f"(타깃 집중도 {focus_ratio:.0%} — "
+                  f"{target_hits}/{len(own_brand_items)}개만 영유아/임산부 상품) "
+                  f"→ 다음 후보로")
+            time.sleep(0.3)
+            return False
+
     if len(own_brand_items) >= 5:
         if COLLECT_MODE == "auto":
             cat_preset = sel.get("_category_preset", "")
