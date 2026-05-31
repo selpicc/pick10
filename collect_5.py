@@ -625,7 +625,10 @@ def _perform_expansion_search(
                     elif COLLECT_MODE == "category":
                         item["_category_preset"] = TARGET_CATEGORY
                     else:
-                        item["_category_preset"] = ""
+                        # ⭐ 2026-05-30: 자동 모드 확장 — 키워드로 카테고리 자동 분류
+                        #   ("" 두면 점수 산정/표시가 비어서 누락됨)
+                        kw_cat = classify_category(keyword)
+                        item["_category_preset"] = kw_cat if kw_cat != "기타" else keyword
                     item["_keyword"] = f"{keyword} (확장{expansion_round})"
                     item["_rank"] = rank
 
@@ -1292,6 +1295,12 @@ else:
     #   - 카테고리당 2개 키워드 → 동의어 자동 확장으로 4-6개 키워드
     #   - sort sim+date 다양화 + 페이지 1~3 확대
     #   - 블로그/카페 마이닝 [1.5/6]에서 추가
+
+    # ⭐ 2026-05-30: 자동 모드 확장 검색용 키워드 풀 (카테고리당 대표 1개)
+    #   확장은 깊은 페이지(151~300위)까지 뒤져 '덜 유명한 새 브랜드' 발굴.
+    #   전체 키워드(약 72개)면 너무 느려서 카테고리당 대표 1개만 사용.
+    expanded_keywords = [kws[0] for kws in CATEGORY_PRESETS.values() if kws]
+
     print(f"🔍 [1/6] {len(CATEGORY_PRESETS)}개 카테고리 × 키워드 (동의어 확장) × 2 sort × 3 페이지...")
     for cat_name, keywords in CATEGORY_PRESETS.items():
         cat_total = 0
@@ -1482,13 +1491,11 @@ for sel in passed:
     )
 
 # ─── 부족 시 자동 확장 검색 (사용자 요청: 미달 시 검색범위 자동 확대) ───
-# 키워드/카테고리 모드만 적용 (자동 모드는 검색 범위 이미 광범위)
+# ⭐ 2026-05-30: 자동 모드도 확장 지원 (DB가 차서 기본검색이 전부 중복일 때
+#    깊은 페이지·다른 정렬로 '덜 유명한 새 브랜드' 자동 발굴)
 expansion_round = 0
 MAX_EXPANSION_ROUNDS = 2
 while len(results) < TARGET_COUNT and expansion_round < MAX_EXPANSION_ROUNDS:
-    if COLLECT_MODE == "auto":
-        break   # 자동 모드는 확장 미지원
-
     expansion_round += 1
     print(f"\n⚡ 결과 {len(results)}/{TARGET_COUNT}건 미달 → 확장 라운드 {expansion_round} 시작...")
 
