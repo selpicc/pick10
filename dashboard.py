@@ -1642,7 +1642,7 @@ if len(filtered) > 0:
                 auto_sources = str(sel_full.get("사업자정보 출처 (자동)", "")).strip()
                 auto_confidence = str(sel_full.get("사업자정보 신뢰도 (자동)", "")).strip()
                 confidence_emoji = {
-                    "높음": "🟢", "중간": "🟡", "낮음": "🔴",
+                    "높음": "🟢", "중간": "🟡", "낮음": "🔴", "미발견": "🟠",
                 }.get(auto_confidence, "⚪")
 
                 if contact_email_raw or contact_phone_raw:
@@ -1656,6 +1656,24 @@ if len(filtered) > 0:
                         f"{confidence_emoji} 출처: {auto_sources or '미상'}</span><br>"
                         f"<span style='color: #064e3b;'>"
                         f"CS 전화: {_fmt(contact_phone_raw)} · CS 이메일: {_fmt(contact_email_raw)}"
+                        f"</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                elif not (
+                    str(sel_full.get("이메일 (수기)", "")).strip()
+                    or str(sel_full.get("전화 (수기)", "")).strip()
+                ):
+                    # ⭐ 2026-05-30: 자동 수집 보류(공식홈 미발견/정확도 낮음) +
+                    #   수기 연락처도 아직 없음 → '수기 입력 필요' 안내
+                    #   (이미 수기로 채운 셀러에는 안내 안 띄움 — legacy 호환)
+                    st.markdown(
+                        f"<div style='background: #fffbeb; border: 2px solid #f59e0b; "
+                        f"border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;'>"
+                        f"<b style='color: #b45309;'>🟠 공식 홈페이지 미발견 — 수기 입력 필요</b><br>"
+                        f"<span style='color: #92400e; font-size: 12px;'>"
+                        f"확실한 공식몰을 찾지 못해 자동 수집을 보류했어요. "
+                        f"아래 칸에 직접 입력 후 저장하시면 됩니다."
                         f"</span>"
                         f"</div>",
                         unsafe_allow_html=True,

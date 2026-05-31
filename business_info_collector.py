@@ -980,6 +980,83 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
     return meta_score + body_score + footer_signal_score
 
 
+def _brand_presence_score(html: str, brand_name: str) -> int:
+    """페이지에 '브랜드명 자체'가 얼마나 분명히 등장하는지만 점수화.
+
+    ⭐ 2026-05-30 신규: 신뢰도 게이트 전용.
+    _verify_homepage_match는 사업자번호/고객센터 같은 '일반 footer 신호'까지
+    더해서, 브랜드와 무관한 아무 쇼핑몰도 높은 점수가 나옴(예: gileduzon).
+    그래서 '진짜 이 브랜드의 사이트인가' 판단에는 footer 신호를 빼고
+    제목/메타/본문에 브랜드명이 실제로 있는지만 본다.
+
+    점수: 제목 +50 / og:site_name +30 / og:title +20 / keywords +20 /
+          description +15 / body 등장 +5~40 (가장 높은 항목 기준 합산)
+    """
+    if not html or not brand_name:
+        return 0
+    tokens = _brand_match_tokens(brand_name)
+    if not tokens:
+        return 0
+
+    def _match_score(text: str, full_pts: int) -> int:
+        text_lower = text.lower()
+        for idx, token in enumerate(tokens):
+            if token in text_lower:
+                if idx == 0:
+                    return full_pts
+                elif idx == 1:
+                    return max(0, full_pts - 5)
+                else:
+                    return full_pts // 2
+        return 0
+
+    score = 0
+    title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    if title_match:
+        score += _match_score(title_match.group(1), 50)
+    og_site = re.search(
+        r'<meta[^>]*property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if og_site:
+        score += _match_score(og_site.group(1), 30)
+    og_title = re.search(
+        r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if og_title:
+        score += _match_score(og_title.group(1), 20)
+    kw = re.search(
+        r'<meta[^>]*name=["\']keywords["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if kw:
+        score += _match_score(kw.group(1), 20)
+    desc = re.search(
+        r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if desc:
+        score += _match_score(desc.group(1), 15)
+
+    # body 본문에 브랜드명 등장
+    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
+    body_text = re.sub(r"\s+", " ", body_text)
+    for idx, token in enumerate(tokens):
+        if token in body_text:
+            occ = body_text.count(token)
+            base = 40 if idx == 0 else (35 if idx == 1 else 20)
+            if occ >= 5:
+                score += base
+            elif occ >= 2:
+                score += base - 10
+            else:
+                score += max(5, base - 20)
+            break
+
+    return score
+
+
 def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
 
@@ -1113,6 +1190,12 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
         #    list로 감싼 이유: 중첩 함수 _fetch_with_retry에서 값 변경하기 위함.
         render_budget = [3]
 
+        # ⭐ 2026-05-30: 브랜드 일치 최고 점수 추적 (신뢰도 게이트용)
+        #    best_meta_score: footer 신호 포함 (참고/로그용)
+        #    best_brand_score: 순수 브랜드명 일치만 (게이트 판단용 — gileduzon 오수집 차단)
+        best_meta_score = 0
+        best_brand_score = 0
+
         for item_url in candidate_urls[:8]:
             url = item_url
             try:
@@ -1235,6 +1318,15 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                                     print(f"               ⚠ 메타+body 점수 미달 (<25) → 이 사이트 skip")
                                     break   # 점수 미달 → 이 후보 URL 자체를 skip
                                 meta_verified = True
+                                # ⭐ 신뢰도 게이트용 점수 기록
+                                if meta_score > best_meta_score:
+                                    best_meta_score = meta_score
+                                # ⭐ footer 신호 제외, 순수 브랜드명 일치 점수
+                                brand_score = _brand_presence_score(page_html, brand_name)
+                                if brand_score > best_brand_score:
+                                    best_brand_score = brand_score
+                                print(f"               [브랜드일치] {brand_score}점 "
+                                      f"(이 점수로 신뢰 판단)")
 
                             combined_text += page_html + "\n"
                             if idx == 0:
@@ -1392,8 +1484,12 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
             else:
                 print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 있었으나 브랜드 매칭 X → 미선택")
 
+        # ⭐ 2026-05-30: 신뢰도 게이트용 — 순수 브랜드 일치 점수를 결과에 포함
         if info:
-            print(f"           [디버그] 공식 홈페이지 추출: {list(info.keys())}")
+            info["meta_score"] = best_meta_score      # 참고용 (footer 포함)
+            info["brand_score"] = best_brand_score    # ⭐ 게이트 판단용
+            print(f"           [디버그] 공식 홈페이지 추출: {list(info.keys())} "
+                  f"(브랜드일치 {best_brand_score}점 / 메타 {best_meta_score}점)")
 
     except Exception as e:
         print(f"           [디버그] 공식 홈페이지 검색 예외: {e}")
@@ -1833,39 +1929,51 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     # ───────────────────────────────────────────────
     print(f"           [Phase 1] 공식 홈페이지 검색·추출 시작...")
     homepage_info = find_business_info_from_homepage(brand_name)
-    if homepage_info:
+
+    # ───────────────────────────────────────────────
+    # ⭐ 2026-05-30: 신뢰도 게이트 (사용자 요청)
+    #   "확실할 때만 자동 저장, 아니면 '수기 입력 필요'로 표시"
+    #   확실함 = ① 공식몰 footer에서 사업자등록번호를 찾음 (진짜 회사 footer)
+    #          AND ② 제목/메타/본문에 '브랜드명 자체'가 분명히 있음 (brand_score)
+    #   ⚠ brand_score는 footer 일반신호(사업자번호/고객센터 등) 제외 → 아무 쇼핑몰이
+    #      통과하던 문제(gileduzon) 차단. 진짜 그 브랜드 사이트만 통과.
+    #   (기준 점수는 아래 TRUST_BRAND_MIN — 너무 많이 '수기 필요'면 낮추면 됨)
+    # ───────────────────────────────────────────────
+    TRUST_BRAND_MIN = 30
+    has_bizno = bool(homepage_info.get("business_number"))
+    brand_score = int(homepage_info.get("brand_score", 0) or 0)
+    trusted = bool(homepage_info) and has_bizno and brand_score >= TRUST_BRAND_MIN
+
+    if trusted:
         for k in ["company_name", "ceo", "business_number", "phone", "email"]:
             if homepage_info.get(k) and not result[k]:
                 result[k] = homepage_info[k]
-        if any(homepage_info.get(k) for k in ["phone", "email", "ceo"]):
-            result["sources"].append("공식홈페이지")
-            print(f"           ✓ 공식 홈페이지 추출: "
-                  f"이메일={result['email']}, 전화={result['phone']}, "
-                  f"대표={result['ceo']}")
-    time.sleep(0.3)
-
-    # ───────────────────────────────────────────────
-    # ⭐ 2026-05-26: Phase 2 (Naver 블로그/카페 검색) 제거
-    # 정확도 낮음 (블로그/카페 글의 이메일이 영업 컨택이 아닌 경우 多)
-    # 공식 홈페이지에서 못 찾으면 미수집(🔍 미확인) → 사용자가 수기 입력
-    # ───────────────────────────────────────────────
-
-    # ───────────────────────────────────────────────
-    # 신뢰도 평가
-    # ───────────────────────────────────────────────
-    source_count = len(result["sources"])
-    if source_count >= 2:
+        result["sources"].append("공식홈페이지")
         result["confidence"] = "높음"
-    elif source_count == 1:
-        result["confidence"] = "중간"
+        print(f"           ✓ 공식 홈페이지 추출(신뢰 확인): "
+              f"이메일={result['email']}, 전화={result['phone']}, "
+              f"대표={result['ceo']} (브랜드일치 {brand_score}점)")
     else:
-        result["confidence"] = "낮음"
+        # 신뢰 기준 미달 → 자동 저장 보류, 수기 입력 유도
+        reasons = []
+        if not has_bizno:
+            reasons.append("사업자등록번호 미발견")
+        if brand_score < TRUST_BRAND_MIN:
+            reasons.append(f"브랜드일치 약함({brand_score}점)")
+        reason_str = ", ".join(reasons) or "공식몰 미발견"
+        print(f"           ⚠ 자동수집 보류 → 수기 입력 필요 ({reason_str})")
+        # 잘못된 다른 회사 정보를 넣지 않도록 연락처는 비워 둠
+        result["sources"] = ["공식 홈페이지 미발견 — 수기 입력 필요"]
+        result["confidence"] = "미발견"
+        return result
+
+    time.sleep(0.3)
 
     # 정보 채워진 항목 수
     filled = sum(1 for k in ["company_name", "ceo", "business_number", "phone", "email"]
                  if result.get(k))
 
-    print(f"           ✓ 수집 완료: {source_count}개 소스 / "
+    print(f"           ✓ 수집 완료: {len(result['sources'])}개 소스 / "
           f"{filled}개 항목 채움 (신뢰도: {result['confidence']})")
 
     return result
