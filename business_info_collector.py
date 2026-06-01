@@ -1122,8 +1122,175 @@ def _url_domain_matches_brand(url: str, brand_name: str) -> bool:
     return False
 
 
-def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
+# ⭐ 2026-06-01: 글로벌 IT/CDN/광고/SNS 도메인 — 한국 서비스 업체 아님 (추출 노이즈 차단)
+#   예: adobe.com 이 만삭사진 검색에서 섞여 들어오던 문제
+GLOBAL_NOISE_HOSTS = (
+    "adobe.", "microsoft.", "apple.", "amazon.", "amazonaws", "aws.",
+    "github.", "gitlab.", "wordpress.", "wix.", "godaddy.", "shopify.",
+    "cloudflare.", "akamai.", "fastly.", "jsdelivr.", "jquery.",
+    "bootstrapcdn", "fontawesome", "googleapis.", "gstatic.", "w3.org",
+    "schema.org", "mozilla.", "whatsapp.", "telegram.", "twitter.",
+    "x.com", "linkedin.", "pinterest.", "tiktok.", "vimeo.", "github.io",
+    "cloudfront.", "doubleclick.", "googlesyndication", "googletagmanager",
+    "google-analytics", "criteo.", "taboola.", "outbrain.", "kakaocdn",
+    "daumcdn.", "phinf.",
+)
+
+
+def find_service_business_homepages(query: str, max_results: int = 10) -> list:
+    """서비스 업체(산후도우미·청소·마사지 등) 공식홈페이지를 웹검색으로 발굴.
+
+    ⭐ 2026-06-01 (사용자 요청): 청소·마사지·산후도우미 등 '서비스'는 네이버 쇼핑
+    (스마트스토어 상품)에 안 나옴. 네이버 웹검색(webkr)으로 업체 홈페이지를 찾는다.
+    블로그·뉴스·포털·쇼핑몰·SNS는 제외하고 '업체 홈페이지'만 추려서 반환.
+    (예: chyeon.com, momstera.kr 같은 산후/육아 서비스 업체 사이트)
+
+    반환: [{"name": 사이트제목, "url": "https://도메인"}, ...]  (도메인 중복 제거)
+    """
+    if not NAVER_CLIENT_ID:
+        print("           ⚠ NAVER 키 없음 → 서비스 업체 검색 skip")
+        return []
+
+    # 업체 홈페이지가 아닌 도메인 (블로그/뉴스/포털/쇼핑/SNS)
+    SKIP_HOSTS = (
+        "naver.", "daum.", "kakao.", "google.", "tistory.", "blog.",
+        "cafe.", "post.naver", "brunch.", "youtube.", "instagram.",
+        "facebook.", "coupang.", "11st", "gmarket.", "auction.",
+        "wikipedia.", "namu.wiki", "news", "yna.co", "chosun.", "donga.",
+        "joongang.", "hankyung.", "mk.co", "wikitree", "tip.daum",
+    )
+
+    def _is_skip_host(netloc: str) -> bool:
+        # 블로그·뉴스·포털·쇼핑·SNS
+        if any(h in netloc for h in SKIP_HOSTS):
+            return True
+        # 글로벌 IT/CDN/광고 (adobe·microsoft 등)
+        if any(g in netloc for g in GLOBAL_NOISE_HOSTS):
+            return True
+        # ⭐ 정부·공공기관 포털 제외 (bokjiro.go.kr / seoul.go.kr / socialservice.or.kr 등)
+        #   — 영업처(민간 업체)가 아님
+        if ".go.kr" in netloc or ".or.kr" in netloc or ".gov" in netloc:
+            return True
+        return False
+
+    headers = {
+        "X-Naver-Client-Id": NAVER_CLIENT_ID,
+        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+    }
+    results = []
+    seen_domains = set()
+    try:
+        resp = requests.get(
+            "https://openapi.naver.com/v1/search/webkr.json",
+            headers=headers,
+            params={"query": query, "display": 30},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"           ⚠ 웹검색 실패 (status {resp.status_code})")
+            return []
+        items = resp.json().get("items", [])
+    except Exception as e:
+        print(f"           ⚠ 서비스 업체 검색 예외: {type(e).__name__}")
+        return []
+
+    for item in items:
+        link = item.get("link", "")
+        title = re.sub(r"<[^>]+>", "", item.get("title", "")).strip()
+        if not link:
+            continue
+        try:
+            from urllib.parse import urlparse
+            netloc = urlparse(link).netloc.lower()
+        except Exception:
+            continue
+        if not netloc:
+            continue
+        # 블로그/뉴스/포털/쇼핑/정부공공 제외
+        if _is_skip_host(netloc):
+            continue
+        # 도메인 메인(www. 제거) 기준 중복 제거 → 업체 1곳당 1개
+        domain_key = netloc.replace("www.", "")
+        if domain_key in seen_domains:
+            continue
+        seen_domains.add(domain_key)
+        homepage = f"https://{netloc}"
+        results.append({"name": title, "url": homepage})
+        if len(results) >= max_results:
+            break
+
+    print(f"           [서비스검색] '{query}' → 업체 홈페이지 {len(results)}곳")
+    return results
+
+
+def find_powerlink_businesses(query: str, max_results: int = 8) -> list:
+    """네이버 검색 '파워링크(광고)' 업체 홈페이지 발굴.
+
+    ⭐ 2026-06-01 (사용자 요청): 네이버 검색광고(파워링크)는 openapi에 안 나옴.
+    검색결과 페이지(search.naver.com)를 브라우저로 렌더링해서, 광고/상위 업체의
+    홈페이지 도메인을 추출한다. 광고 낼 만큼 마케팅 적극적인 = 좋은 영업 리드.
+    (네이버 화면을 긁는 방식이라 API보다 불안정 — 구조 바뀌면 조정 필요)
+
+    반환: [{"name": 도메인앞부분, "url": "https://도메인"}, ...]
+    """
+    try:
+        from urllib.parse import quote
+        url = f"https://search.naver.com/search.naver?query={quote(query)}"
+    except Exception:
+        return []
+
+    html = render_html_with_browser(url, timeout=15)
+    if not html:
+        print("           ⚠ 파워링크 렌더링 실패 (Playwright 필요/네이버 차단)")
+        return []
+
+    # 네이버/포털/블로그/뉴스/광고시스템/CDN 제외
+    SKIP = (
+        "naver.", "daum.", "kakao.", "google.", "tistory.", "blog.",
+        "cafe.", "youtube.", "instagram.", "facebook.", "coupang.",
+        "11st", "gmarket.", "auction.", "wikipedia.", "namu.",
+        "yna.", "chosun.", "donga.", "joongang.", "mk.co", "hankyung.",
+        "adcr.", "ad.naver", "shopping.naver", "pstatic.", "gstatic.",
+        "wcs.naver", "siape.", "nelo.", "veta.naver",
+    )
+
+    # ⭐ JS/CSS 안의 도메인이 노이즈로 섞이지 않게 script·style 먼저 제거
+    text = re.sub(r"<script[^>]*>.*?</script>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", " ", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    found = re.findall(
+        r"\b([a-z0-9][a-z0-9\-]{1,30}\.(?:co\.kr|com|kr|net))\b",
+        text, re.IGNORECASE,
+    )
+    results = []
+    seen = set()
+    for dom in found:
+        d = dom.lower()
+        if any(s in d for s in SKIP):
+            continue
+        if any(g in d for g in GLOBAL_NOISE_HOSTS):
+            continue
+        if ".go.kr" in d or ".or.kr" in d:
+            continue
+        if d in seen:
+            continue
+        seen.add(d)
+        results.append({"name": d.split(".")[0], "url": f"https://{d}"})
+        if len(results) >= max_results:
+            break
+
+    print(f"           [파워링크] '{query}' → 광고/상위 업체 {len(results)}곳")
+    return results
+
+
+def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
+                                     only_hint: bool = False) -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
+
+    ⭐ only_hint=True: 웹검색 없이 hint_url(그 홈페이지)만 읽음.
+       서비스 업체용 — 이미 홈페이지를 아는데 이름으로 또 검색하면
+       genie·melon·maplestory 같은 무관 사이트가 섞여 느리고 위험.
+
 
     ⭐ 2026-05-26 강화 (3차) — 이메일 수집 정확도 ↑:
       이전 문제:
@@ -1239,7 +1406,11 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
 
         # ⭐ 스마트스토어 판매자 등록 외부 URL 있으면 최우선 후보로 (100% 신뢰)
         if hint_url and hint_url.startswith("http"):
-            if hint_url not in candidate_urls:
+            if only_hint:
+                # ⭐ 서비스 업체: 검색 결과 전부 버리고 이 홈페이지만 읽음 (노이즈 차단)
+                candidate_urls = [hint_url]
+                print(f"           🎯 hint_url만 사용 (웹검색 무시): {hint_url}")
+            elif hint_url not in candidate_urls:
                 candidate_urls.insert(0, hint_url)
                 print(f"           🎯 hint_url 최우선 후보 추가: {hint_url}")
 

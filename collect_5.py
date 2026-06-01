@@ -131,7 +131,12 @@ from market_filter import (
 
 # 사업자 정보 자동 수집 (Phase 1+2+3)
 # 신규 셀러 수집 시 상호·대표·사업자번호·전화·이메일 자동 추출
-from business_info_collector import collect_business_info
+from business_info_collector import (
+    collect_business_info,
+    find_service_business_homepages,   # ⭐ 서비스 업체(웹검색) 발굴
+    find_powerlink_businesses,         # ⭐ 서비스 업체(파워링크 광고) 발굴
+    find_business_info_from_homepage,  # ⭐ 서비스 업체 홈페이지 연락처 수집
+)
 
 
 RESULTS_DIR = "results"
@@ -1526,8 +1531,17 @@ passed.sort(key=lambda x: x["_score"], reverse=True)
 
 print(f"   ✓ {SCORE_THRESHOLD}점+ 통과: {len(passed)}건 (대기업 컷 후 상위 {TARGET_COUNT}건 선별)")
 if len(passed) == 0:
-    print(f"\n   ❌ 통과 셀러 없음. 임계치 조정 또는 카테고리 변경 필요")
-    sys.exit(0)
+    print(f"\n   ❌ 상품 통과 셀러 없음.")
+    # ⭐ 2026-06-01: 서비스 수집 모드면 상품 0건이어도 종료하지 않고 계속
+    #   (출산서비스 카테고리·키워드·자동은 뒤에서 서비스 업체를 따로 수집)
+    _will_service = (
+        (COLLECT_MODE == "category" and TARGET_CATEGORY == "출산 서비스")
+        or COLLECT_MODE in ("keywords", "auto")
+    )
+    if not _will_service:
+        print(f"   임계치 조정 또는 카테고리 변경 필요")
+        sys.exit(0)
+    print(f"   → 서비스 업체 수집은 계속 진행합니다.")
 print()
 
 
@@ -1563,20 +1577,138 @@ results = []
 big_company_skipped = []   # 대기업으로 제외된 셀러 기록
 processed_brands = set()   # 같은 브랜드 중복 처리 방지
 
-for sel in passed:
-    if len(results) >= TARGET_COUNT:
-        break
-    _process_one_candidate(
-        sel, processed_brands, results, big_company_skipped,
-        search_kw_pool_strict, user_kw_tokens, auto_mode_contexts,
-    )
+
+def _collect_service_candidates(queries, category_label, target):
+    """⭐ 2026-06-01: 서비스 업체(청소·마사지·산후도우미) 수집.
+    스마트스토어 상품이 아니라 웹검색으로 업체 홈페이지를 찾고,
+    홈페이지에서 연락처 수집 + '스토어 주소'를 홈페이지로 저장.
+    상품 데이터(가격·리뷰·관심고객수)는 없으므로 빈 값.
+    """
+    seen_domains = set()   # 같은 업체(도메인) 중복 방지
+    for q in queries:
+        if len(results) >= target:
+            break
+        # ⭐ 웹검색(자연결과) + 파워링크(광고) 둘 다 모아서 합침
+        homepages = find_service_business_homepages(q, max_results=8)
+        homepages += find_powerlink_businesses(q, max_results=8)
+        for hp in homepages:
+            if len(results) >= target:
+                break
+            url = hp.get("url", "")
+            if not url:
+                continue
+            # 도메인 중복 제거 (두 소스에서 같은 업체가 나올 수 있음)
+            try:
+                from urllib.parse import urlparse as _up_dom
+                _dom = _up_dom(url).netloc.replace("www.", "").lower()
+            except Exception:
+                _dom = url
+            if _dom in seen_domains:
+                continue
+            seen_domains.add(_dom)
+            # 도메인명 (검색·브랜드 매칭 기준 — hint_url과 도메인 일치 → 공식 신뢰)
+            domain_name = ""
+            try:
+                from urllib.parse import urlparse as _up_svc
+                domain_name = _up_svc(url).netloc.replace("www.", "").split(".")[0]
+            except Exception:
+                domain_name = ""
+            search_name = domain_name or (hp.get("name") or "")[:30]
+
+            # 홈페이지 footer에서 연락처 수집 — ⭐ only_hint: 이 홈페이지만 읽음(검색 X)
+            info = find_business_info_from_homepage(
+                search_name, hint_url=url, only_hint=True
+            )
+
+            # 표시 브랜드명: 푸터 상호 > 도메인명 > 검색 제목
+            name = (
+                info.get("company_name") or domain_name or (hp.get("name") or "")
+            ).strip()[:40]
+            if not name or name in processed_brands or name in already_collected:
+                continue
+            processed_brands.add(name)
+            print(f"\n   ▶ [서비스] {name}  ({url})")
+            mg = calculate_marketing_grade(name, "", category_label)
+            has_contact = bool(info.get("phone") or info.get("email"))
+            results.append({
+                "수집일":               datetime.now().strftime("%Y-%m-%d"),
+                "Selpic 점수":          0,
+                "발견 카테고리":        category_label or "출산 서비스",
+                "발견 키워드":          f"{q} (서비스)",
+                "수집 모드":            COLLECT_MODE,
+                "브랜드명":             name,
+                "스마트스토어 주소":    url,   # ⭐ 스토어열기 → 공식 홈페이지
+                "주력상품명":           "",
+                "상품 카테고리":        "서비스",
+                "가격":                 "",
+                "점수 근거":            "서비스 업체 (웹검색 발굴)",
+                "마케팅 검색 키워드 (자동)": mg.get("query", name),
+                "마케팅 등급 (자동)":   mg["grade"],
+                "마케팅 점수 (자동)":   mg["score"],
+                "마케팅 채널별 노출 (자동)": (
+                    f"블로그 {mg['blog']:,} · 카페 {mg['cafe']:,} · SNS {mg['sns']:,}"
+                ),
+                "마케팅 활동 단계 (자동)": f"{mg['size']} — {mg['size_note']}",
+                "관심고객수 (자동)":    0,
+                "상호 (자동)":               info.get("company_name", ""),
+                "대표 (자동)":               info.get("ceo", ""),
+                "사업자번호 (자동)":         info.get("business_number", ""),
+                "전화 (자동)":               info.get("phone", ""),
+                "이메일 (자동)":             info.get("email", ""),
+                "사업자정보 출처 (자동)":    "서비스 홈페이지" if has_contact else "공식 홈페이지 미발견 — 수기 입력 필요",
+                "사업자정보 신뢰도 (자동)":  "중간" if has_contact else "미발견",
+                "관심고객수 (수기)":         "",
+                "리뷰수 (수기)":             "",
+                "상호 (수기)":               "",
+                "대표 (수기)":               "",
+                "이메일 (수기)":             "",
+                "전화 (수기)":               "",
+                "마케팅 분석 메모 (수기)":   "",
+            })
+            print(f"        ✓ 서비스 업체 추가: 전화={info.get('phone','')}, "
+                  f"이메일={info.get('email','')}")
+            time.sleep(0.3)
+
+
+# ⭐ 서비스 업체 수집 (출산서비스 카테고리 / 키워드 / 자동) — 상품 수집 전에 일부 채움
+SERVICE_CATEGORIES = {"출산 서비스"}
+# ⭐ 2026-06-01: '출산 서비스' 카테고리 = 서비스 전용 → 상품(스마트스토어) 수집 안 함.
+#   (서비스로 다 못 채워도 의류 등 상품으로 빈자리 채우지 않음 — 사용자 요청)
+is_service_only = (COLLECT_MODE == "category" and TARGET_CATEGORY in SERVICE_CATEGORIES)
+_svc_queries = []
+_svc_target = 0
+if COLLECT_MODE == "category" and TARGET_CATEGORY in SERVICE_CATEGORIES:
+    _svc_queries = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
+    _svc_target = TARGET_COUNT                      # 서비스 카테고리 → 전부 서비스
+elif COLLECT_MODE == "keywords":
+    _svc_queries = USER_KEYWORDS
+    _svc_target = max(1, TARGET_COUNT // 2)         # 키워드 → 절반은 서비스, 절반 상품
+elif COLLECT_MODE == "auto":
+    _svc_queries = CATEGORY_PRESETS.get("출산 서비스", [])[:2]
+    _svc_target = min(2, TARGET_COUNT)              # 자동 → 소수만
+
+if _svc_queries:
+    print(f"\n🧹 [서비스] 서비스 업체 수집 시작 "
+          f"(키워드 {len(_svc_queries)}개, 목표 {_svc_target}건)...")
+    _collect_service_candidates(_svc_queries, TARGET_CATEGORY, _svc_target)
+
+# ⭐ 상품(스마트스토어) 수집 — 단, '출산 서비스' 카테고리(서비스 전용)는 건너뜀
+if not is_service_only:
+    for sel in passed:
+        if len(results) >= TARGET_COUNT:
+            break
+        _process_one_candidate(
+            sel, processed_brands, results, big_company_skipped,
+            search_kw_pool_strict, user_kw_tokens, auto_mode_contexts,
+        )
 
 # ─── 부족 시 자동 확장 검색 (사용자 요청: 미달 시 검색범위 자동 확대) ───
 # ⭐ 2026-05-30: 자동 모드도 확장 지원 (DB가 차서 기본검색이 전부 중복일 때
 #    깊은 페이지·다른 정렬로 '덜 유명한 새 브랜드' 자동 발굴)
+# ⭐ 2026-06-01: 서비스 전용 카테고리는 상품 확장 안 함
 expansion_round = 0
 MAX_EXPANSION_ROUNDS = 2
-while len(results) < TARGET_COUNT and expansion_round < MAX_EXPANSION_ROUNDS:
+while (not is_service_only) and len(results) < TARGET_COUNT and expansion_round < MAX_EXPANSION_ROUNDS:
     expansion_round += 1
     print(f"\n⚡ 결과 {len(results)}/{TARGET_COUNT}건 미달 → 확장 라운드 {expansion_round} 시작...")
 
