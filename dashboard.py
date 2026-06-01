@@ -671,30 +671,18 @@ else:   # 키워드 입력
         unsafe_allow_html=True,
     )
 
-if collect_clicked:
-    # ────────────────────────────────────────────────
-    # ⚠️ 자동 미적합 정리 로직 제거 (2026-05-13)
-    # 이유: market_fit_check는 substring 비교 + 영유아 키워드 필수라
-    #       정상 브랜드도 잘못 부적합 판정될 수 있음
-    #       (예: "프라젠트라" — 브랜드명/주력상품명에 영유아 키워드 없으면 A 탈락)
-    # 결과: 사용자가 검토할 기회도 없이 신규 수집 직후 자동 삭제됨
-    # 해결: 정리는 사용자가 명시적으로 트리거 (디테일 패널의 "🗑️ 이 셀러 삭제"
-    #       또는 메인 표 체크박스 선택 → 일괄 삭제 사용)
-    # ────────────────────────────────────────────────
-    # try:
-    #     with st.spinner("기존 브랜드 검토 중..."):
-    #         scan = scan_unfit_brands()
-    #         del_cands = scan["delete_candidates"]
-    #         if del_cands:
-    #             delete_unfit_brands(del_cands)
-    # except Exception:
-    #     pass
+# ─────────────────────────────────────────────────────────────────
+# 수집 실행 — ⭐ 2026-06-01: 백그라운드 실행 + 2초 폴링
+#   기존엔 subprocess를 블로킹으로 돌려서, 깊은 검색+공식홈 확인으로 몇 분 걸리는
+#   동안 화면이 멈춘 것처럼 보였음('반응 없음' 오해). → 백그라운드(Popen)로 띄우고
+#   2초마다 상태 확인. '수집 중' 배너가 경과시간과 함께 끝까지 떠 있고,
+#   끝나면 자동으로 목록 갱신. 버튼 사용감은 그대로.
+# ─────────────────────────────────────────────────────────────────
+import time as _time
+import tempfile as _tempfile
 
-    # ────────────────────────────────────────────────
-    # 수집 (모드별 인자 전달 — collect_5.py에 [3.5/6] A+B+C 필터 내장)
-    # collect_5.py 내부 필터는 신규 수집 후보에만 적용 → 기존 DB 영향 X
-    # ────────────────────────────────────────────────
-    # 모드별 명령줄 인자 구성
+# (A) 버튼 클릭 → 백그라운드 수집 시작
+if collect_clicked and not st.session_state.get("collect_running"):
     cmd_args = [sys.executable, "collect_5.py", "--count", str(collect_n)]
     if collect_mode == "카테고리 지정" and collect_category:
         cmd_args += ["--category", collect_category]
@@ -705,83 +693,111 @@ if collect_clicked:
     else:
         mode_label = "전체 카테고리"
 
-    # ⭐ 2026-05-30: '수집 중' 상태를 끝까지 확실히 표시
-    #   (로딩 스피너가 중간에 사라져 '다 된 줄' 오해하던 문제 해결)
-    #   st.empty() 배너는 수집(블로킹) 동안 화면에 계속 떠 있고, 끝나면 지움
-    status_box = st.empty()
-    status_box.warning(
-        f"🔄 수집 중입니다…  {mode_label} → {collect_n}건\n\n"
-        f"깊은 검색 + 공식홈 확인 때문에 보통 3~4분 걸려요. "
-        f"멈춘 게 아니니 이 화면을 닫지 말고 기다려 주세요. "
-        f"완료되면 아래 목록이 자동으로 갱신됩니다."
-    )
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        with st.spinner("수집 진행 중… (완료까지 화면을 그대로 두세요)"):
-            result = subprocess.run(
-                cmd_args,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=900,   # 15분 (SPA 브라우저 렌더링 시간 여유, 2026-05-30)
-                cwd=script_dir,
-            )
-        status_box.empty()   # 수집 완료 → '수집 중' 배너 제거
-        # 수집 로그 파싱 → 핵심 숫자만 추출 (복잡한 로그 X, 요약만)
-        import re
-        stdout = result.stdout or ""
-
-        def _grab(pattern: str, default: int = 0) -> int:
-            m = re.search(pattern, stdout)
-            return int(m.group(1)) if m else default
-
-        saved_n = _grab(r"저장 완료:\s*(\d+)\s*/\s*\d+건")
-        big_n = _grab(r"대기업 자동 제외:\s*(\d+)건")
-        a_fail = _grab(r"A 탈락.*?:\s*(\d+)건")
-        b_fail = _grab(r"B 탈락.*?:\s*(\d+)건")
-        c_fail = _grab(r"C 탈락.*?:\s*(\d+)건")
-        flagship_fail = stdout.count("주력상품 재검사 탈락")
-
-        # ⭐ 디버그용: collect_5.py 출력을 Streamlit Cloud 로그에 전달
-        # subprocess.run의 capture_output 때문에 print가 안 보이는 문제 해결
-        import sys as _sys
-        print("\n" + "=" * 60, file=_sys.stderr)
-        print("📋 [collect_5.py 실행 출력]", file=_sys.stderr)
-        print("=" * 60, file=_sys.stderr)
-        print(stdout, file=_sys.stderr)
-        if result.stderr:
-            print("\n" + "=" * 60, file=_sys.stderr)
-            print("⚠️ [collect_5.py 에러 출력]", file=_sys.stderr)
-            print("=" * 60, file=_sys.stderr)
-            print(result.stderr, file=_sys.stderr)
-        print("=" * 60 + "\n", file=_sys.stderr)
-
-        # session_state에 결과 저장 (rerun 후에도 표시 유지)
-        st.session_state["last_collect_summary"] = {
-            "success": result.returncode == 0,
-            "saved": saved_n,
-            "target": collect_n,
-            "big": big_n,
-            "a": a_fail,
-            "b": b_fail,
-            "c": c_fail,
-            "flagship": flagship_fail,
-            "mode": collect_mode,
+        logpath = os.path.join(
+            _tempfile.gettempdir(), f"pick10_collect_{int(_time.time())}.log"
+        )
+        logfile = open(logpath, "w", encoding="utf-8", errors="replace")
+        # 자식 프로세스가 항상 UTF-8로 출력하도록 (한글 깨짐 방지)
+        _env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+        proc = subprocess.Popen(
+            cmd_args, stdout=logfile, stderr=subprocess.STDOUT,
+            cwd=script_dir, text=True, env=_env,
+        )
+        st.session_state["collect_running"] = True
+        st.session_state["collect_proc"] = proc
+        st.session_state["collect_logf"] = logfile
+        st.session_state["collect_logpath"] = logpath
+        st.session_state["collect_start"] = _time.time()
+        st.session_state["collect_meta"] = {
+            "mode_label": mode_label,
+            "collect_n": collect_n,
+            "collect_mode": collect_mode,
         }
-
-        if result.returncode == 0:
-            st.cache_data.clear()
-            st.rerun()
-    except subprocess.TimeoutExpired:
-        status_box.empty()
-        st.error("시간 초과 (15분). 수집 건수를 줄이거나(예: 1~2건) 잠시 후 다시 시도하세요.")
+        st.rerun()
     except FileNotFoundError:
-        status_box.empty()
         st.error("collect_5.py 파일을 찾을 수 없어요. dashboard.py와 같은 폴더에 있는지 확인하세요.")
     except Exception as e:
-        status_box.empty()
-        st.error(f"실행 중 오류: {e}")
+        st.error(f"수집 시작 중 오류: {e}")
+
+# (B) 수집 진행 중 → '수집 중' 배너 표시 + 2초마다 자동 확인
+if st.session_state.get("collect_running"):
+    proc = st.session_state["collect_proc"]
+    meta = st.session_state["collect_meta"]
+    elapsed = int(_time.time() - st.session_state["collect_start"])
+    mm, ss = elapsed // 60, elapsed % 60
+    ret = proc.poll()
+
+    # 15분 초과 → 강제 종료 (무한 대기 방지)
+    if ret is None and elapsed > 900:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        ret = -9   # 타임아웃 표시
+
+    if ret is None:
+        # 아직 수집 중 → 노란 배너 + 2초 후 자동 새로고침
+        st.warning(
+            f"🔄 수집 중입니다…  {meta['mode_label']} → {meta['collect_n']}건\n\n"
+            f"⏱ {mm}분 {ss}초 경과 · 보통 3~5분 걸려요. "
+            f"멈춘 게 아니니 그대로 두세요 — 끝나면 자동으로 목록이 갱신됩니다."
+        )
+        _time.sleep(2)
+        st.rerun()
+    else:
+        # 수집 종료 → 로그 읽어 요약 만들고 상태 정리
+        try:
+            st.session_state["collect_logf"].close()
+        except Exception:
+            pass
+        stdout = ""
+        try:
+            with open(st.session_state["collect_logpath"], "r",
+                      encoding="utf-8", errors="replace") as f:
+                stdout = f.read()
+        except Exception:
+            pass
+
+        import re as _re
+
+        def _grab(pattern, default=0):
+            m = _re.search(pattern, stdout)
+            return int(m.group(1)) if m else default
+
+        st.session_state["last_collect_summary"] = {
+            "success": (ret == 0),
+            "saved": _grab(r"저장 완료:\s*(\d+)\s*/\s*\d+건"),
+            "target": meta["collect_n"],
+            "big": _grab(r"대기업 자동 제외:\s*(\d+)건"),
+            "a": _grab(r"A 탈락.*?:\s*(\d+)건"),
+            "b": _grab(r"B 탈락.*?:\s*(\d+)건"),
+            "c": _grab(r"C 탈락.*?:\s*(\d+)건"),
+            "flagship": stdout.count("주력상품 재검사 탈락"),
+            "mode": meta["collect_mode"],
+            "timeout": (ret == -9),
+        }
+
+        # 디버그 로그를 Streamlit 콘솔로
+        import sys as _sys
+        print("\n" + "=" * 60, file=_sys.stderr)
+        print("📋 [collect_5.py 출력]", file=_sys.stderr)
+        print(stdout, file=_sys.stderr)
+        print("=" * 60 + "\n", file=_sys.stderr)
+
+        # 임시 로그 삭제 + 상태 키 정리
+        try:
+            os.remove(st.session_state["collect_logpath"])
+        except Exception:
+            pass
+        for _k in ["collect_running", "collect_proc", "collect_logf",
+                   "collect_logpath", "collect_start", "collect_meta"]:
+            st.session_state.pop(_k, None)
+
+        if ret == 0:
+            st.cache_data.clear()
+        st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -831,6 +847,11 @@ if "last_collect_summary" in st.session_state:
             if reasons_text:
                 info_msg += f" ({reasons_text})"
             st.info(info_msg)
+        elif s.get("timeout"):
+            st.error(
+                "⏱ 시간 초과 (15분)로 중단했어요. 수집 건수를 줄이거나(1~2건) "
+                "잠시 후 다시 시도해 주세요."
+            )
         else:
             st.error("❌ 수집 실패")
     with res_col2:

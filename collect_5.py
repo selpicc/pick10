@@ -426,7 +426,9 @@ def _process_one_candidate(
         return False
 
     # 5-1) 브랜드 재검색
-    brand_items = search_shop(brand_name, display=20)
+    # ⭐ 2026-06-01: display 20→40. 셀러 카탈로그를 더 넓게 봐야 만물상
+    #   (SOOAPAPA·뉴몰3 등 — 타깃 상품 몇 개 + 비타깃 다수)을 정확히 판별.
+    brand_items = search_shop(brand_name, display=40)
     own_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
@@ -449,8 +451,9 @@ def _process_one_candidate(
         "출산", "육아", "유아", "기저귀", "분유", "이유식",
         "수유", "임부", "임산부", "신생아", "베이비", "젖병",
     )
-    if len(own_brand_items) >= 4:
+    if len(own_brand_items) >= 3:
         target_hits = 0
+        nontarget_hits = 0   # 명백히 다른 시장(c) — 만물상 강한 신호
         for it in own_brand_items:
             title = clean_html_tags(it.get("title", ""))
             fit, _ = market_fit_check(brand_name, title)
@@ -459,12 +462,16 @@ def _process_one_candidate(
             )
             if fit == "ok" or any(tk in cat_path for tk in CAT_TARGET_TOKENS):
                 target_hits += 1
+            elif fit == "c":   # 시니어/펫/공구/가전 등 명백히 다른 시장
+                nontarget_hits += 1
         focus_ratio = target_hits / len(own_brand_items)
-        if focus_ratio < FOCUS_MIN:
+        # 잡몰 판정: ① 타깃 집중도 절반 미만  OR
+        #           ② 명백히 다른 시장 상품이 2개 이상 섞임 (포커스 브랜드면 0개)
+        if focus_ratio < FOCUS_MIN or nontarget_hits >= 2:
             print(f"        🚫 잡동사니 몰 제외 "
                   f"(타깃 집중도 {focus_ratio:.0%} — "
-                  f"{target_hits}/{len(own_brand_items)}개만 영유아/임산부 상품) "
-                  f"→ 다음 후보로")
+                  f"{target_hits}/{len(own_brand_items)}개 타깃, "
+                  f"다른시장 {nontarget_hits}개) → 다음 후보로")
             time.sleep(0.3)
             return False
 
