@@ -1134,6 +1134,16 @@ GLOBAL_NOISE_HOSTS = (
     "cloudfront.", "doubleclick.", "googlesyndication", "googletagmanager",
     "google-analytics", "criteo.", "taboola.", "outbrain.", "kakaocdn",
     "daumcdn.", "phinf.",
+    # ⭐ 2026-06-01: 뉴스·언론사 (산후/육아 기사가 검색에 잡혀 섞임 — hani 한겨레 등)
+    "hani.", "khan.co", "hankookilbo", "segye.", "kmib.", "munhwa.com",
+    "sedaily.", "mt.co.kr", "edaily.", "newsis.", "news1.", "ytn.",
+    "sbs.co", "kbs.co", "imbc.", "jtbc.", "mbn.co", "ohmynews.",
+    "pressian.", "nocutnews.", "newspim.", "asiae.co", "etnews.",
+    "zdnet.", "inews24.", "heraldcorp.", "seoul.co.kr", "fnnews.",
+    "newsen.", "osen.", "xportsnews.", "dailian.", "ajunews.",
+    "mediatoday.", "newstomato", "biz.chosun", "wikitree.", "wowtv.",
+    "newdaily.", "tvchosun.", "channela.", "ichannela", "kookje.",
+    "kyeonggi.", "incheonilbo.", "dt.co.kr", "ddaily.", "bloter.",
 )
 
 
