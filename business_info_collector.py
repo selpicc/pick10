@@ -79,6 +79,12 @@ EMAIL_HARD_BLACKLIST = [
     "@11st.co.kr", "@interpark.com", "@ssg.com",
     "@lotteon.com", "@wemakeprice.com", "@tmon.co.kr",
     "@kurly.com", "@oliveyoung.co.kr",
+    # ⭐ 2026-06-01: 롯데/하이마트/홈쇼핑 등 추가 (himart.cs@lotte.net 오수집 차단)
+    "@lotte.net", "@lottemart.com", "@lotteshopping.com",
+    "@himart.co.kr", "@e-himart.co.kr", "@hmall.com",
+    "@gsshop.com", "@cjonstyle.com", "@hyundaihmall.com",
+    "@nsmall.com", "@kmall.com", "@homeplus.co.kr",
+    "@emart.com", "@shinsegae.com",
 
     # ⭐ ─── 포털·플랫폼 자체 메일 ───
     "@navercorp.com", "@kakaocorp.com", "@kakaomobility.com",
@@ -1278,6 +1284,11 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
 
                 combined_text = ""
                 main_text = ""
+                # ⭐ 2026-06-01: 이 후보가 '브랜드 공식 사이트'인지 판정용.
+                #   이메일은 브랜드 공식 사이트에서만 수집한다 (연락처와 동일 출처).
+                #   → cs 단어 때문에 엉뚱한 마켓 페이지 메일이 뽑히던 문제 해결.
+                cand_brand_score = 0
+                cand_domain_match = _url_domain_matches_brand(item_url, brand_name)
                 # ⭐ 메타 검증 — 메인 페이지 fetch 후 점수 매김
                 # hint_url은 검증 skip (스마트스토어 판매자 직접 등록 → 100% 신뢰)
                 meta_verified = (item_url == hint_url)
@@ -1363,6 +1374,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                                     brand_score += 60
                                     print(f"               [도메인일치] {page_url[:40]} "
                                           f"↔ {brand_name} (+60)")
+                                cand_brand_score = brand_score   # 이 후보의 브랜드 일치 점수
                                 if brand_score > best_brand_score:
                                     best_brand_score = brand_score
                                 print(f"               [브랜드일치] {brand_score}점 "
@@ -1399,6 +1411,15 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                 text_only = re.sub(r"<[^>]+>", " ", combined_text)
                 text_only = re.sub(r"&nbsp;|&amp;", " ", text_only)
                 text_only = re.sub(r"\s+", " ", text_only)
+
+                # ⭐ 2026-06-01: 이 후보가 '브랜드 공식 사이트'인가?
+                #   (도메인 일치 OR 제목/본문 브랜드일치 30점↑ OR 스마트스토어 등록 hint_url)
+                #   이메일은 공식 사이트에서만 수집 → 엉뚱한 마켓 페이지 메일 차단.
+                cand_is_official = (
+                    cand_domain_match
+                    or cand_brand_score >= 30
+                    or (item_url == hint_url and bool(hint_url))
+                )
 
                 # ─── CEO 패턴 (footer) ───
                 # ⭐ extract_ceo_from_text()와 동일 blacklist 사용 (통일)
@@ -1476,7 +1497,8 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                         #   이 페이지의 이메일은 무료메일(@naver 등)이라도 공식 컨택일
                         #   확률 높음 (코코핏 nanumcnc@naver.com 케이스).
                         #   1순위 브랜드/시스템 메일 → 없으면 무료메일까지 허용.
-                        if not info.get("email"):
+                        #   ⭐ 단, 이 후보가 '브랜드 공식 사이트'일 때만 (엉뚱한 회사 footer 차단)
+                        if cand_is_official and not info.get("email"):
                             page_cands = extract_emails_from_html(text_only)
                             pe = pick_best_email(page_cands, brand_name=brand_name)
                             if not pe:
@@ -1489,23 +1511,23 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                                 print(f"               [공식footer 이메일] {pe} "
                                       f"(사업자번호 동일 페이지)")
 
-                # ─── 이메일 추출 — ⭐ 모든 후보 모아서 전체 사이트에서 베스트 선택 ───
-                # 1) footer 패턴 (E-mail customer@...)
-                # ⭐ 구분자 확장 (2026-05-26): "E-MAIL.", "EMAIL,", "이메일·" 등 모두 매칭
-                #   기존: \s*[:\s]?\s*  → 콜론/공백만
-                #   변경: \s*[:.\,\-·│|]?\s*  → 점/콤마/하이픈/중점/세로선 등 footer 구분자
-                #   추가 라벨: "메일", "Mail", "@" 단독, "고객센터 메일"
-                for m in re.finditer(
-                    r"(?:E[-\s]?mail|이메일|EMAIL|MAIL|메일주소|문의메일|문의\s*메일|"
-                    r"고객\s*메일|상담\s*메일|메일)\s*[:.\,\-·│|]?\s*"
-                    r"([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
-                    text_only, re.IGNORECASE,
-                ):
-                    all_email_candidates.append(m.group(1).strip())
+                # ─── 이메일 추출 — ⭐ 브랜드 공식 사이트에서만 후보 수집 ───
+                # ⭐ 2026-06-01: 공식 사이트가 아닌 후보(마켓/리뷰 페이지)의 메일은
+                #   풀에 넣지 않음 → cs 단어 때문에 himart 같은 엉뚱한 메일이
+                #   뽑히던 문제 차단. 이메일은 연락처와 같은 '공식 사이트' 출처로 통일.
+                if cand_is_official:
+                    # 1) footer 패턴 (E-mail customer@...)
+                    for m in re.finditer(
+                        r"(?:E[-\s]?mail|이메일|EMAIL|MAIL|메일주소|문의메일|문의\s*메일|"
+                        r"고객\s*메일|상담\s*메일|메일)\s*[:.\,\-·│|]?\s*"
+                        r"([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
+                        text_only, re.IGNORECASE,
+                    ):
+                        all_email_candidates.append(m.group(1).strip())
 
-                # 2) 페이지 전체 일반 매칭 (footer 못 찾았을 때 대비)
-                page_emails = extract_emails_from_html(combined_text)
-                all_email_candidates.extend(page_emails)
+                    # 2) 페이지 전체 일반 매칭 (footer 못 찾았을 때 대비)
+                    page_emails = extract_emails_from_html(combined_text)
+                    all_email_candidates.extend(page_emails)
 
                 # 충분히 모았으면 다음 사이트로 이동 X (1개 사이트로 충분)
                 if info.get("ceo") and info.get("phone") and all_email_candidates:
@@ -1517,12 +1539,20 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
         # ⭐ 모든 사이트 이메일 후보 중 베스트 선택 (customer/cs > info > webmaster)
         # ⭐ brand_name 전달 → 도메인-브랜드 매칭 검증
         if all_email_candidates and not info.get("email"):
+            # ⭐ 2026-06-01: 이 풀에는 '브랜드 공식 사이트'의 메일만 모여 있음
+            #   (cand_is_official 가드). 따라서 cs/info 우선 + 무료메일 허용으로
+            #   안전하게 베스트 선택. (himart 같은 외부 마켓 메일은 애초에 안 들어옴)
             best = pick_best_email(all_email_candidates, brand_name=brand_name)
+            if not best:
+                best = pick_best_email(
+                    all_email_candidates, brand_name="", allow_free_mail=True,
+                )
             if best:
                 info["email"] = best
-                print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 중 베스트 선택: {best}")
+                print(f"           [디버그] 공식 사이트 이메일 후보 "
+                      f"{len(all_email_candidates)}개 중 베스트 선택: {best}")
             else:
-                print(f"           [디버그] 이메일 후보 {len(all_email_candidates)}개 있었으나 브랜드 매칭 X → 미선택")
+                print(f"           [디버그] 공식 사이트 이메일 후보 없음 → 미선택(수기)")
 
         # ⭐ 2026-05-30: 신뢰도 게이트용 — 순수 브랜드 일치 점수를 결과에 포함
         if info:
