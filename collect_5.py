@@ -426,9 +426,11 @@ def _process_one_candidate(
         return False
 
     # 5-1) 브랜드 재검색
-    # ⭐ 2026-06-01: display 20→40. 셀러 카탈로그를 더 넓게 봐야 만물상
-    #   (SOOAPAPA·뉴몰3 등 — 타깃 상품 몇 개 + 비타깃 다수)을 정확히 판별.
-    brand_items = search_shop(brand_name, display=40)
+    # ⭐ 2026-06-01: display 20→100(최대). 셀러 카탈로그를 최대한 넓게 봐야
+    #   만물상(SOOAPAPA·뉴몰3·케이유플러스 등 — 타깃 몇 개 + 비타깃 다수)의
+    #   '진짜 낮은 타깃 비율'이 드러나 걸러짐. (이름 검색은 타깃 상품 위주로
+    #   잡혀 비율이 실제보다 높게 보이는 문제 → 표본을 키워 완화)
+    brand_items = search_shop(brand_name, display=100)
     own_items = [
         it for it in brand_items
         if it.get("mallName", "").strip() == brand_name
