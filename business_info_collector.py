@@ -1707,19 +1707,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                         num_clean = re.sub(r"[.\s]+", "-", num.strip())
                         phone_candidates.append((score, num_clean))
 
-                    # ⭐ 2026-06-01: 라벨 매칭 실패 시 — 공식 footer면 전화 형식 번호를
-                    #   직접 추출 (FAX 제외). 라벨 없는 footer(Phone No. 누락 등) 구제.
-                    if not phone_candidates:
-                        for m in re.finditer(num_re, text_only):
-                            num = m.group(1)
-                            ctx_start = max(0, m.start() - 12)
-                            ctx = text_only[ctx_start:m.end()].lower()
-                            if "fax" in ctx or "팩스" in ctx:
-                                continue
-                            num_clean = re.sub(r"[.\s]+", "-", num.strip())
-                            # 대표번호(1588 등) 약간 우대
-                            sc = 50 if re.match(r"1[5-9]\d{2}", num_clean.replace("-", "")) else 40
-                            phone_candidates.append((sc, num_clean))
+                    # ⭐ 2026-06-01: 라벨 없는 번호 직접 추출(fallback)은 제거.
+                    #   사업자번호 등 전화 아닌 10자리 숫자를 전화로 오인 수집함
+                    #   (thenatural0501의 0250609186 = 사업자번호). 전화 라벨이
+                    #   분명히 있을 때만 수집 → 없으면 '수기 입력 필요'(틀린 것보다 빈칸).
 
                     if phone_candidates:
                         # 점수 내림차순 + 0점 이상만 선택
