@@ -416,6 +416,8 @@ def _process_one_candidate(
         "커머스", "가성비", "잇템", "빅딜", "딜몰", "특가",
         "도매", "유통", "트레이딩", "트레이드", "쇼핑몰", "쇼핑",
         "만물", "종합몰", "마켓플레이스",
+        # ⭐ 2026-06-01: '마켓' 작명 만물상 추가 (하나뿐 마켓 등)
+        "마켓",
     )
     _bn = brand_name.replace(" ", "")
     if any(tk in _bn for tk in RESELLER_NAME_TOKENS):
@@ -1033,12 +1035,17 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
 
     # ⭐ 메인 쿼리: 브랜드명 + 추출된 주력상품 키워드
     # search_keyword는 extract_product_keyword 결과 (브랜드명 제외됨)
+    # ⭐ 2026-06-01: 브랜드명을 따옴표로 감싸 '정확 일치' 검색.
+    #   "유아러브"처럼 일반어('유아')가 든 이름은 Naver가 '유아'만 매칭해
+    #   무관한 글을 잔뜩 세서 마케팅 점수가 부풀려짐 → 신생 브랜드가 확장기 오분류.
+    #   따옴표로 묶으면 '유아러브'가 통째로 든 글만 카운트 → 진짜 브랜드 언급만.
+    bn_q = f'"{brand_name}"' if brand_name else ""
     if brand_name and search_keyword:
-        query_main = f"{brand_name} {search_keyword}"
-        # 예: "프라젠트라 아토프라덤 크림"
+        query_main = f"{bn_q} {search_keyword}"
+        # 예: '"프라젠트라" 아토프라덤 크림'
     elif brand_name:
         # 주력상품 키워드 추출 실패 시 시장 컨텍스트로 fallback
-        query_main = f"{brand_name} {market_context}"
+        query_main = f"{bn_q} {market_context}"
     else:
         # 브랜드명 없으면 (드문 케이스)
         query_main = f"{search_keyword} {market_context}"
@@ -1051,7 +1058,7 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     # ⭐ Fallback: 메인 쿼리 결과가 너무 적을 시 시장 컨텍스트로 재검색
     # 작은 브랜드·신규 상품은 specific 매칭 부족할 수 있음
     if blog + cafe < 200 and brand_name and search_keyword:
-        fallback_query = f"{brand_name} {market_context}"
+        fallback_query = f"{bn_q} {market_context}"
         blog_fb = search_naver("blog", fallback_query, 1).get("total", 0)
         cafe_fb = search_naver("cafearticle", fallback_query, 1).get("total", 0)
         if blog_fb + cafe_fb > blog + cafe:

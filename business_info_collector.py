@@ -1423,7 +1423,9 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
 
                 # ─── CEO 패턴 (footer) ───
                 # ⭐ extract_ceo_from_text()와 동일 blacklist 사용 (통일)
-                if not info.get("ceo"):
+                # ⭐ 2026-06-01: 연락처/대표/사업자번호도 '브랜드 공식 사이트'에서만 수집
+                #   (아벨뷰티처럼 무관한 페이지에서 전화가 딸려오던 문제 차단)
+                if cand_is_official and not info.get("ceo"):
                     m = re.search(
                         r"(?:CEO|대표(?:이사|자|자명|자성명)?)\s*[:\s]?\s*([가-힣]{2,4})(?=\s|[<,.\)])",
                         text_only, re.IGNORECASE,
@@ -1440,7 +1442,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                 #   - "대표전화", "고객센터" 강라벨 +30
                 #   - 1588/1599/1899 대표번호 +20
                 #   - FAX/팩스 가까이 있으면 -50 (FAX 자동 차단)
-                if not info.get("phone"):
+                if cand_is_official and not info.get("phone"):
                     phone_candidates = []
                     label_re = (
                         r"(CALL|TEL|TELEPHONE|전화|문의|연락처|"
@@ -1485,7 +1487,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                                   f"후보 {len(phone_candidates)}개)")
 
                 # ─── 사업자번호 패턴 (footer) ───
-                if not info.get("business_number"):
+                if cand_is_official and not info.get("business_number"):
                     m = re.search(
                         r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자(?:등록)?번호)\s*[:\s]?\s*"
                         r"(\d{3}-?\d{2}-?\d{5})",
