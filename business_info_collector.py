@@ -1057,6 +1057,39 @@ def _brand_presence_score(html: str, brand_name: str) -> int:
     return score
 
 
+def _url_domain_matches_brand(url: str, brand_name: str) -> bool:
+    """후보 홈페이지 URL의 도메인이 브랜드명과 일치하는지 검사.
+
+    ⭐ 2026-05-30: 영문 도메인(agazzang.co.kr) ↔ 영문 브랜드명(agazzang) 매칭.
+    브랜드가 영문으로 저장됐는데 사이트 내용은 한글("아가짱")이라
+    본문 브랜드일치 점수가 0이 되는 케이스 구제 (도메인이 곧 강한 신호).
+    """
+    if not url or not brand_name:
+        return False
+    try:
+        from urllib.parse import urlparse
+        target = url if url.startswith("http") else "http://" + url
+        netloc = urlparse(target).netloc.lower()
+    except Exception:
+        return False
+    netloc = netloc.replace("www.", "")
+    domain_main = netloc.split(".")[0] if netloc else ""
+    if not domain_main or len(domain_main) < 3:
+        return False
+
+    brand_clean = brand_name.lower().strip()
+    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)", "유)"]:
+        brand_clean = brand_clean.replace(prefix, "")
+    brand_clean = brand_clean.strip().replace(" ", "")
+    if not brand_clean or len(brand_clean) < 3:
+        return False
+
+    # 도메인과 브랜드명 부분 일치 (영문 브랜드 ↔ 영문 도메인)
+    if brand_clean in domain_main or domain_main in brand_clean:
+        return True
+    return False
+
+
 def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dict:
     """공식 홈페이지에서 사업자 정보 종합 추출.
 
@@ -1323,6 +1356,13 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                                     best_meta_score = meta_score
                                 # ⭐ footer 신호 제외, 순수 브랜드명 일치 점수
                                 brand_score = _brand_presence_score(page_html, brand_name)
+                                # ⭐ 2026-05-30: 도메인이 브랜드명과 일치하면 강한 신호
+                                #   (영문 도메인 agazzang.co.kr ↔ 영문 브랜드명 agazzang).
+                                #   한글 사이트라 본문 매칭이 0이어도 도메인으로 신뢰 인정.
+                                if _url_domain_matches_brand(page_url, brand_name):
+                                    brand_score += 60
+                                    print(f"               [도메인일치] {page_url[:40]} "
+                                          f"↔ {brand_name} (+60)")
                                 if brand_score > best_brand_score:
                                     best_brand_score = brand_score
                                 print(f"               [브랜드일치] {brand_score}점 "
