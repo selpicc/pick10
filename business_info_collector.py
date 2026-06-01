@@ -1671,17 +1671,20 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                 #   - FAX/팩스 가까이 있으면 -50 (FAX 자동 차단)
                 if cand_is_official and not info.get("phone"):
                     phone_candidates = []
+                    # ⭐ 2026-06-01: 라벨 확장 (PHONE/휴대폰/예약/본사 등 — fotoccino "Phone No." 케이스)
                     label_re = (
-                        r"(CALL|TEL|TELEPHONE|전화|문의|연락처|"
+                        r"(CALL|TEL|TELEPHONE|PHONE|H\.?P\b|HP\b|MOBILE|"
+                        r"전화|휴대폰|핸드폰|문의|연락처|예약|"
                         r"고객\s*센터|고객\s*만족\s*센터|상담\s*센터|"
-                        r"대표\s*전화|대표\s*번호|cs|customer)"
+                        r"대표\s*전화|대표\s*번호|본사|cs|customer)"
                     )
+                    # ⭐ 0507 안심번호 명시 + 1588/지역/휴대폰 (사업자번호 등 오매칭 방지로 0·1 시작만)
                     num_re = (
-                        r"(1[5-9]\d{2}[-.\s]?\d{4}"              # 대표번호 1588-7601
-                        r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}"  # 일반 02-1234-5678
-                        r"|\d{2,4}[-.\s]?\d{3,4}[-.\s]?\d{4})"  # 일반 패턴
+                        r"(0507[-.\s]?\d{3,4}[-.\s]?\d{4}"       # 안심번호 0507-XXXX-XXXX
+                        r"|1[5-9]\d{2}[-.\s]?\d{4}"              # 대표번호 1588-7601
+                        r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4})"  # 02-1234-5678 / 010-...
                     )
-                    full_pattern = f"{label_re}[\\s\\.\\-:전화번호문의]{{0,15}}{num_re}"
+                    full_pattern = f"{label_re}[\\s\\.\\-:전화번호문의No]{{0,15}}{num_re}"
 
                     for m in re.finditer(full_pattern, text_only, re.IGNORECASE):
                         label = m.group(1).lower()
@@ -1703,6 +1706,20 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                         # 정리
                         num_clean = re.sub(r"[.\s]+", "-", num.strip())
                         phone_candidates.append((score, num_clean))
+
+                    # ⭐ 2026-06-01: 라벨 매칭 실패 시 — 공식 footer면 전화 형식 번호를
+                    #   직접 추출 (FAX 제외). 라벨 없는 footer(Phone No. 누락 등) 구제.
+                    if not phone_candidates:
+                        for m in re.finditer(num_re, text_only):
+                            num = m.group(1)
+                            ctx_start = max(0, m.start() - 12)
+                            ctx = text_only[ctx_start:m.end()].lower()
+                            if "fax" in ctx or "팩스" in ctx:
+                                continue
+                            num_clean = re.sub(r"[.\s]+", "-", num.strip())
+                            # 대표번호(1588 등) 약간 우대
+                            sc = 50 if re.match(r"1[5-9]\d{2}", num_clean.replace("-", "")) else 40
+                            phone_candidates.append((sc, num_clean))
 
                     if phone_candidates:
                         # 점수 내림차순 + 0점 이상만 선택

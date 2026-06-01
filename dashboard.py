@@ -1142,7 +1142,10 @@ if len(filtered) > 0:
         auto_vals = filtered.loc[main_df.index, auto_col].fillna("").astype(str).str.strip()
         manual_vals = main_df[manual_col].fillna("").astype(str).str.strip()
         # 수기 비어있으면 자동값으로 표시
-        main_df[manual_col] = manual_vals.where(manual_vals != "", auto_vals)
+        merged = manual_vals.where(manual_vals != "", auto_vals)
+        # ⭐ 2026-06-01: 자동·수기 둘 다 비면 '수기 입력 필요' 안내 (공식홈은 찾았어도
+        #   연락처/이메일이 footer에 없으면 이 칸에 노출 — 사용자 요청)
+        main_df[manual_col] = merged.where(merged.str.strip() != "", "✏️ 수기 입력 필요")
 
     _fallback_with_auto("이메일 (수기)", "이메일 (자동)")
     _fallback_with_auto("전화 (수기)",   "전화 (자동)")
@@ -1668,7 +1671,7 @@ if len(filtered) > 0:
                 # 디테일 패널은 결과 표시 + 수기 편집 전용
                 def _fmt(val):
                     v = str(val).strip()
-                    return v if v and v not in ("-", "None") else "🔍 미확인"
+                    return v if v and v not in ("-", "None") else "정보없음 — 수기 입력 필요"
 
                 # ─── 영업 컨택 박스 (자동 수집 결과 — 메일/전화 발송 대상) ───
                 contact_email_raw = str(sel_full.get('이메일 (자동)', '')).strip()
