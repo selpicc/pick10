@@ -411,6 +411,32 @@ def extract_emails_from_html(html: str) -> list:
     return unique
 
 
+def extract_labeled_email(text: str) -> str:
+    """footer에서 '이메일:/E-mail:' 라벨 바로 뒤의 메일 = 공식 지정 메일 (1순위).
+
+    ⭐ 2026-06-01 (사용자 요청): cs/customer 단어가 붙었다고 그걸 우선 뽑지 말고,
+    홈페이지 footer에 '이메일'로 명시된 주소를 그대로 1순위로 채택.
+    플랫폼/뉴스레터(HARD 블랙리스트)와 무효 메일만 거르고, 무료메일(@naver 등)은 허용.
+    """
+    if not text:
+        return ""
+    for m in re.finditer(
+        r"(?:E[-\s]?mail|이메일|EMAIL|MAIL|전자우편|메일\s*주소|문의\s*메일|"
+        r"고객\s*센터\s*메일|고객\s*메일|상담\s*메일|메일)\s*"
+        r"[:.\,\-·│|=)\]]?\s*"
+        r"([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})",
+        text, re.IGNORECASE,
+    ):
+        email = m.group(1).strip()
+        el = email.lower()
+        if any(skip in el for skip in EMAIL_HARD_BLACKLIST):
+            continue   # 스티비/플랫폼 메일은 제외
+        if not is_valid_email(email):
+            continue
+        return email   # 첫 번째 유효한 라벨 메일 채택
+    return ""
+
+
 # ─────────────────────────────────────────────────────────────────
 # Phase 1: 스마트스토어 사업자정보 페이지 스크래핑
 # ─────────────────────────────────────────────────────────────────
@@ -1412,13 +1438,33 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                 text_only = re.sub(r"&nbsp;|&amp;", " ", text_only)
                 text_only = re.sub(r"\s+", " ", text_only)
 
-                # ⭐ 2026-06-01: 이 후보가 '브랜드 공식 사이트'인가?
-                #   (도메인 일치 OR 제목/본문 브랜드일치 30점↑ OR 스마트스토어 등록 hint_url)
-                #   이메일은 공식 사이트에서만 수집 → 엉뚱한 마켓 페이지 메일 차단.
+                # ⭐ 2026-06-01: 이 후보가 '진짜 브랜드 공식몰'인가? (사용자: 확실할 때만 채우기)
+                #   조건: ① 도메인이 브랜드명과 일치  OR
+                #        ② 제목/사이트명에 브랜드명이 있음(브랜드일치 50점↑)  OR
+                #        ③ 스마트스토어 등록 hint_url
+                #   ⚠ '본문에만 브랜드명 언급'(블로그·리뷰·마켓, 30~40점)은 공식몰 아님 → 제외.
+                #   + 네이버/쿠팡/블로그 등 마켓·포털 도메인은 제목에 브랜드명이 있어도 공식몰 아님.
+                _host = ""
+                try:
+                    from urllib.parse import urlparse as _urlparse_h
+                    _u = item_url if item_url.startswith("http") else "http://" + item_url
+                    _host = _urlparse_h(_u).netloc.lower()
+                except Exception:
+                    _host = ""
+                _NONOFFICIAL_HOSTS = (
+                    "naver.", "coupang.", "11st", "gmarket.", "auction.",
+                    "tmon.", "wemakeprice.", "interpark.", "ssg.", "lotteon.",
+                    "blog.", "cafe.", "post.naver", "brunch.", "tistory.",
+                    "youtube.", "instagram.", "facebook.", "daum.", "kakao.",
+                    "wishket.", "1688.", "aliexpress.",
+                )
+                _is_marketplace = any(h in _host for h in _NONOFFICIAL_HOSTS)
                 cand_is_official = (
-                    cand_domain_match
-                    or cand_brand_score >= 30
-                    or (item_url == hint_url and bool(hint_url))
+                    (item_url == hint_url and bool(hint_url))
+                    or (
+                        not _is_marketplace
+                        and (cand_domain_match or cand_brand_score >= 50)
+                    )
                 )
 
                 # ─── CEO 패턴 (footer) ───
@@ -1498,16 +1544,19 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "") -> dic
                         # ⭐ 2026-05-30: 사업자번호가 박힌 = 진짜 공식 footer.
                         #   이 페이지의 이메일은 무료메일(@naver 등)이라도 공식 컨택일
                         #   확률 높음 (코코핏 nanumcnc@naver.com 케이스).
-                        #   1순위 브랜드/시스템 메일 → 없으면 무료메일까지 허용.
                         #   ⭐ 단, 이 후보가 '브랜드 공식 사이트'일 때만 (엉뚱한 회사 footer 차단)
                         if cand_is_official and not info.get("email"):
-                            page_cands = extract_emails_from_html(text_only)
-                            pe = pick_best_email(page_cands, brand_name=brand_name)
+                            # ⭐ 2026-06-01 (사용자 요청): footer에 '이메일:'로 명시된
+                            #   주소를 1순위. cs/customer 키워드로 엉뚱하게 뽑지 않음.
+                            pe = extract_labeled_email(text_only)
                             if not pe:
-                                pe = pick_best_email(
-                                    page_cands, brand_name="",
-                                    allow_free_mail=True,
-                                )
+                                page_cands = extract_emails_from_html(text_only)
+                                pe = pick_best_email(page_cands, brand_name=brand_name)
+                                if not pe:
+                                    pe = pick_best_email(
+                                        page_cands, brand_name="",
+                                        allow_free_mail=True,
+                                    )
                             if pe:
                                 info["email"] = pe
                                 print(f"               [공식footer 이메일] {pe} "
@@ -2011,7 +2060,10 @@ def collect_business_info(brand_name: str, store_url: str) -> dict:
     #      통과하던 문제(gileduzon) 차단. 진짜 그 브랜드 사이트만 통과.
     #   (기준 점수는 아래 TRUST_BRAND_MIN — 너무 많이 '수기 필요'면 낮추면 됨)
     # ───────────────────────────────────────────────
-    TRUST_BRAND_MIN = 30
+    # ⭐ 2026-06-01: 30→50 상향 (사용자: 확실할 때만 채우기).
+    #   본문에만 브랜드명 언급된 블로그·엉뚱한 사이트(30~40점) 차단,
+    #   제목/사이트명/도메인이 브랜드와 일치하는 진짜 공식몰(50점+)만 신뢰.
+    TRUST_BRAND_MIN = 50
     has_bizno = bool(homepage_info.get("business_number"))
     brand_score = int(homepage_info.get("brand_score", 0) or 0)
     trusted = bool(homepage_info) and has_bizno and brand_score >= TRUST_BRAND_MIN

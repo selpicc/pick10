@@ -453,27 +453,46 @@ def _process_one_candidate(
         "출산", "육아", "유아", "기저귀", "분유", "이유식",
         "수유", "임부", "임산부", "신생아", "베이비", "젖병",
     )
+    # ⭐ 2026-06-01: 네이버 카테고리 기준 '명백히 영유아 아님' (종합몰 판별 핵심)
+    #   이런 카테고리 상품을 여러 개 팔면 = 만물상 (포커스 영유아 브랜드는 0개).
+    #   키워드 추측이 아닌 네이버 공식 카테고리라 안정적.
+    CAT_NONBABY_TOKENS = (
+        "디지털", "가전", "컴퓨터", "노트북", "휴대폰",
+        "가구", "인테리어", "주방", "공구", "철물",
+        "자동차", "타이어", "스포츠", "레저", "골프", "등산", "낚시",
+        "반려", "펫", "강아지", "고양이",
+        "도서", "음반", "악기", "문구", "사무",
+        "성인", "주류",
+    )
     if len(own_brand_items) >= 3:
         target_hits = 0
         nontarget_hits = 0   # 명백히 다른 시장(c) — 만물상 강한 신호
+        nonbaby_cat_hits = 0   # ⭐ 네이버 카테고리상 명백히 영유아 아님
         for it in own_brand_items:
             title = clean_html_tags(it.get("title", ""))
             fit, _ = market_fit_check(brand_name, title)
             cat_path = " ".join(
                 str(it.get(f"category{i}", "")) for i in range(1, 5)
             )
-            if fit == "ok" or any(tk in cat_path for tk in CAT_TARGET_TOKENS):
+            is_target = fit == "ok" or any(tk in cat_path for tk in CAT_TARGET_TOKENS)
+            if is_target:
                 target_hits += 1
-            elif fit == "c":   # 시니어/펫/공구/가전 등 명백히 다른 시장
-                nontarget_hits += 1
+            else:
+                if fit == "c":   # 시니어/펫/공구/가전 등 명백히 다른 시장(키워드)
+                    nontarget_hits += 1
+                # 카테고리상 명백히 영유아 아님 (타깃 카테고리도 아닐 때만)
+                if any(tk in cat_path for tk in CAT_NONBABY_TOKENS):
+                    nonbaby_cat_hits += 1
         focus_ratio = target_hits / len(own_brand_items)
         # 잡몰 판정: ① 타깃 집중도 절반 미만  OR
-        #           ② 명백히 다른 시장 상품이 2개 이상 섞임 (포커스 브랜드면 0개)
-        if focus_ratio < FOCUS_MIN or nontarget_hits >= 2:
+        #           ② 명백히 다른 시장(키워드) 2개+  OR
+        #           ③ 영유아 아닌 카테고리 상품 2개+ (가전·가구·자동차 등)
+        if focus_ratio < FOCUS_MIN or nontarget_hits >= 2 or nonbaby_cat_hits >= 2:
             print(f"        🚫 잡동사니 몰 제외 "
                   f"(타깃 집중도 {focus_ratio:.0%} — "
                   f"{target_hits}/{len(own_brand_items)}개 타깃, "
-                  f"다른시장 {nontarget_hits}개) → 다음 후보로")
+                  f"다른시장 {nontarget_hits}개, 비영유아카테고리 {nonbaby_cat_hits}개) "
+                  f"→ 다음 후보로")
             time.sleep(0.3)
             return False
 
