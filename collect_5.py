@@ -1329,23 +1329,25 @@ elif COLLECT_MODE == "category":
 
     # 카테고리 모드도 블로그 + 카페 마이닝 (단, 첫 키워드만 — 너무 많아질 수 있음)
     # ⭐ 카페 마이닝 추가 (2026-05-13): 영유아/임산부 시장 핵심 풀 (맘카페 입소문)
-    if keywords:
+    # ⭐ 2026-06-01 버그수정: 카테고리 모드 변수는 base_keywords (keywords 아님)
+    #   → NameError로 카테고리 수집이 통째로 실패하던 문제 해결
+    if base_keywords:
         print(f"\n🔎 [1.5/6] 블로그 + 카페 마이닝 (대표 키워드 1개)...")
         # 블로그 마이닝
-        blog_brands = mine_brands_from_blog(keywords[0], max_brands=15)
+        blog_brands = mine_brands_from_blog(base_keywords[0], max_brands=15)
         for item in blog_brands:
-            item["_keyword"] = f"{keywords[0]} (블로그)"
+            item["_keyword"] = f"{base_keywords[0]} (블로그)"
             item["_category_preset"] = TARGET_CATEGORY
             item["_rank"] = 99
             candidates.append(item)
         # 카페 마이닝
-        cafe_brands = mine_brands_from_cafe(keywords[0], max_brands=15)
+        cafe_brands = mine_brands_from_cafe(base_keywords[0], max_brands=15)
         for item in cafe_brands:
-            item["_keyword"] = f"{keywords[0]} (카페)"
+            item["_keyword"] = f"{base_keywords[0]} (카페)"
             item["_category_preset"] = TARGET_CATEGORY
             item["_rank"] = 99
             candidates.append(item)
-        print(f"   ✓ '{keywords[0]}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
+        print(f"   ✓ '{base_keywords[0]}' → 블로그 {len(blog_brands)}건 · 카페 {len(cafe_brands)}건")
 
 else:
     # 모드 1 (기본): 자동 — 10개 카테고리 전체 시장 발굴
