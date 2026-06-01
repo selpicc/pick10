@@ -127,6 +127,7 @@ from market_filter import (
     expand_keyword,
     expand_keyword_synonym_only,   # 매칭 풀 구성용 (PRODUCT_SYNONYMS 제외)
     generate_space_variants,   # 띄어쓰기 변형 자동 생성
+    is_excluded_brand,         # ⭐ 수동 제외 목록 (종합몰 등)
 )
 
 # 사업자 정보 자동 수집 (Phase 1+2+3)
@@ -409,6 +410,11 @@ def _process_one_candidate(
     if not brand_name or brand_name in processed_brands:
         return False
     processed_brands.add(brand_name)
+
+    # ⭐ 2026-06-01: 수동 제외 목록(종합몰 등) 즉시 차단
+    if is_excluded_brand(brand_name):
+        print(f"        🚫 수동 제외 목록 차단: {brand_name} → 다음 후보로")
+        return False
 
     mark = " [확장]" if is_expansion else ""
     print(f"\n   ▶ {brand_name}{mark}  (Selpic 점수 {sel['_score']})")
