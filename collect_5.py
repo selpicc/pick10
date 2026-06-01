@@ -1678,6 +1678,23 @@ def _collect_service_candidates(queries, category_label, target):
 
 # ⭐ 서비스 업체 수집 (출산서비스 카테고리 / 키워드 / 자동) — 상품 수집 전에 일부 채움
 SERVICE_CATEGORIES = {"출산 서비스"}
+
+# ⭐ 2026-06-01: 키워드가 '서비스 키워드'인지 판별.
+#   청소·마사지·도우미·사진 등 서비스 단어가 든 키워드만 서비스(공식홈) 발굴.
+#   '튼살크림'·'분유' 같은 상품 키워드는 서비스 발굴 안 함 → 상품(스마트스토어)만.
+SERVICE_HINT_TOKENS = (
+    "청소", "마사지", "도우미", "조리원", "산후조리", "사진", "촬영",
+    "만삭", "앨범", "스튜디오", "요가", "필라테스", "에스테틱",
+    "베이비시터", "시터", "출장", "방문", "교육", "클래스", "레슨",
+    "컨설팅", "산후관리", "산후케어", "산후회복", "체형관리",
+)
+
+
+def _is_service_keyword(kw: str) -> bool:
+    k = (kw or "").replace(" ", "")
+    return any(t in k for t in SERVICE_HINT_TOKENS)
+
+
 # ⭐ 2026-06-01: '출산 서비스' 카테고리 = 서비스 전용 → 상품(스마트스토어) 수집 안 함.
 #   (서비스로 다 못 채워도 의류 등 상품으로 빈자리 채우지 않음 — 사용자 요청)
 is_service_only = (COLLECT_MODE == "category" and TARGET_CATEGORY in SERVICE_CATEGORIES)
@@ -1687,8 +1704,11 @@ if COLLECT_MODE == "category" and TARGET_CATEGORY in SERVICE_CATEGORIES:
     _svc_queries = CATEGORY_PRESETS.get(TARGET_CATEGORY, [])
     _svc_target = TARGET_COUNT                      # 서비스 카테고리 → 전부 서비스
 elif COLLECT_MODE == "keywords":
-    _svc_queries = USER_KEYWORDS
-    _svc_target = max(1, TARGET_COUNT // 2)         # 키워드 → 절반은 서비스, 절반 상품
+    # ⭐ 서비스 단어가 든 키워드만 서비스 발굴 (튼살크림 등 상품 키워드는 제외)
+    _svc_queries = [k for k in USER_KEYWORDS if _is_service_keyword(k)]
+    _svc_target = max(1, TARGET_COUNT // 2) if _svc_queries else 0
+    if not _svc_queries:
+        print("   ℹ️ 서비스 단어 없는 상품 키워드 → 서비스 발굴 생략 (상품만 수집)")
 elif COLLECT_MODE == "auto":
     _svc_queries = CATEGORY_PRESETS.get("출산 서비스", [])[:2]
     _svc_target = min(2, TARGET_COUNT)              # 자동 → 소수만
