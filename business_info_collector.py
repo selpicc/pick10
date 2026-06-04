@@ -867,13 +867,26 @@ def _brand_match_tokens(brand_name: str) -> list:
     if no_space != brand_clean and no_space:
         tokens.append(no_space)
 
-    # 공백으로 분리된 각 단어 (3자 이상만, false positive 방지)
-    # 길이순으로 정렬 (긴 단어가 핵심 브랜드명일 가능성)
+    # ⭐ 2026-06-02: 일반 단어는 단독 매칭 토큰에서 제외 (오아센 케이스)
+    #   "아토피 연구소 오아센" → 예전엔 '아토피'·'연구소'만 남고 핵심 '오아센'을 버림
+    #   → 일반어로 엉뚱한 사이트 매칭(오수집) + 진짜 공식몰(오아센) 매칭 실패.
+    #   일반어를 거르고 식별력 있는 단어를 남긴다.
+    GENERIC_WORDS = {
+        "아토피", "연구소", "베이비", "아기", "유아", "신생아", "영유아",
+        "임산부", "산모", "마미", "맘스", "키즈", "어린이", "주니어",
+        "공식", "코리아", "스토어", "마켓", "컴퍼니", "그룹", "본사",
+        "코스메틱", "화장품", "뷰티", "생활건강", "주식회사", "브랜드",
+        "official", "korea", "store", "shop", "baby", "kids", "mall",
+        "studio", "company", "cosmetic", "beauty",
+    }
     words = sorted(
-        [w for w in brand_clean.split() if len(w) >= 3],
+        [
+            w for w in brand_clean.split()
+            if len(w) >= 3 and w not in GENERIC_WORDS
+        ],
         key=len, reverse=True,
     )
-    for w in words[:2]:   # 상위 2개만 (false positive 방지)
+    for w in words[:3]:   # 식별 단어 상위 3개 (false positive 방지)
         if w not in tokens:
             tokens.append(w)
 
@@ -965,8 +978,14 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
     if desc_match:
         meta_score += _match_score(desc_match.group(1), 15)
 
-    # ⭐ 6. body text (처음 30KB) — 보조 점수
-    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
+    # ⭐ 6. body text — 보조 점수
+    #   2026-06-02: 앞 30KB + '뒤 15KB'(footer) 함께 검사.
+    #   렌더링된 대형 페이지는 사업자번호 footer가 30KB 밖에 있어
+    #   footer 신호가 0점 처리되던 버그 (오아센/pnsls 케이스).
+    _scan_html = html[:30000] + (
+        " " + html[-15000:] if len(html) > 30000 else ""
+    )
+    body_text = re.sub(r"<[^>]+>", " ", _scan_html).lower()
     body_text = re.sub(r"\s+", " ", body_text)
     body_text_ns = body_text.replace(" ", "")   # ⭐ 띄어쓰기 무시 비교용
 
@@ -1084,7 +1103,11 @@ def _brand_presence_score(html: str, brand_name: str) -> int:
         score += _match_score(desc.group(1), 15)
 
     # body 본문에 브랜드명 등장 — ⭐ 띄어쓰기 무시 비교 포함
-    body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
+    #   2026-06-02: 앞 30KB + 뒤 15KB(footer 브랜드 표기) 함께 검사
+    _scan_html = html[:30000] + (
+        " " + html[-15000:] if len(html) > 30000 else ""
+    )
+    body_text = re.sub(r"<[^>]+>", " ", _scan_html).lower()
     body_text = re.sub(r"\s+", " ", body_text)
     body_text_ns = body_text.replace(" ", "")
     for idx, token in enumerate(tokens):
@@ -1505,6 +1528,31 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                 except Exception:
                     continue
 
+        # ⭐ 2026-06-02: 깊은 페이지 후보의 '도메인 루트'를 함께 후보에 추가.
+        #   오아센 케이스: 검색이 pnsls.co.kr/bbs/...(게시판)만 줘서 진짜 공식몰
+        #   루트(pnsls.co.kr/)를 검사조차 못 함 → 루트를 깊은 URL 앞에 끼워넣음.
+        try:
+            from urllib.parse import urlparse as _up_root
+            _expanded = []
+            _seen_u = set()
+            for _u in candidate_urls:
+                try:
+                    _p = _up_root(_u)
+                    if _p.scheme in ("http", "https") and _p.netloc:
+                        _root = f"{_p.scheme}://{_p.netloc}/"
+                        # 루트가 아닌 깊은 URL이면, 루트를 먼저 후보에 추가
+                        if _root.rstrip("/") != _u.rstrip("/") and _root not in _seen_u:
+                            _expanded.append(_root)
+                            _seen_u.add(_root)
+                except Exception:
+                    pass
+                if _u not in _seen_u:
+                    _expanded.append(_u)
+                    _seen_u.add(_u)
+            candidate_urls = _expanded
+        except Exception:
+            pass
+
         # ⭐ 스마트스토어 판매자 등록 외부 URL 있으면 최우선 후보로 (100% 신뢰)
         if hint_url and hint_url.startswith("http"):
             if only_hint:
@@ -1522,10 +1570,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
         # 메타 검증 점수 30점 이상 사이트만 사용 (잘못된 사이트 자동 차단)
         all_email_candidates = []   # 사이트별 후보 모아서 마지막에 베스트 선택
 
-        # ⭐ 2026-05-30: 브라우저 렌더링은 느리므로 셀러당 최대 3곳까지만 허용.
-        #    공식몰은 보통 검색 상위에 있어 3곳이면 충분. (시간 초과 방지)
+        # ⭐ 2026-05-30: 브라우저 렌더링은 느리므로 셀러당 렌더링 횟수 제한.
+        #    (2026-06-02: 3→5 상향 — '점수미달 루트 렌더링 재채점' 추가로)
         #    list로 감싼 이유: 중첩 함수 _fetch_with_retry에서 값 변경하기 위함.
-        render_budget = [3]
+        render_budget = [5]
 
         # ⭐ 2026-05-30: 브랜드 일치 최고 점수 추적 (신뢰도 게이트용)
         #    best_meta_score: footer 신호 포함 (참고/로그용)
@@ -1624,7 +1672,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                             continue
 
                     # ⭐ SPA 감지: 태그 제거 후 보이는 글자가 너무 적으면 JS 렌더링 사이트
-                    #    단, 렌더링 예산(셀러당 3회)이 남아있을 때만 (시간 초과 방지)
+                    #    단, 렌더링 예산이 남아있을 때만 (시간 초과 방지)
                     visible_len = (
                         len(re.sub(r"<[^>]+>", " ", html).strip()) if html else 0
                     )
@@ -1661,6 +1709,33 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                             if idx == 0 and not meta_verified:
                                 meta_score = _verify_homepage_match(page_html, brand_name)
                                 print(f"               [메타검증] {page_url[:50]} → {meta_score}점")
+                                # ⭐ 2026-06-02: 점수 미달인 '루트 페이지'는 JS 쉘일 수
+                                #   있음 (오아센/pnsls: 쉘 메뉴에 브랜드명은 보이지만
+                                #   title/og가 비어 meta=0 → body//4 = 15점으로 탈락).
+                                #   → 브라우저로 실제 화면을 렌더링해 '재채점' 한다.
+                                if meta_score < 25 and render_budget[0] > 0:
+                                    try:
+                                        from urllib.parse import urlparse as _up_rr
+                                        _is_root_pg = (
+                                            (_up_rr(page_url).path or "/").strip("/") == ""
+                                        )
+                                    except Exception:
+                                        _is_root_pg = False
+                                    if _is_root_pg:
+                                        render_budget[0] -= 1
+                                        _rendered = render_html_with_browser(
+                                            page_url, timeout=12
+                                        )
+                                        if _rendered:
+                                            _rescore = _verify_homepage_match(
+                                                _rendered, brand_name
+                                            )
+                                            print(f"               🌐 쉘 의심 → 렌더링 "
+                                                  f"재채점: {meta_score} → {_rescore}점 "
+                                                  f"(남은 예산 {render_budget[0]})")
+                                            if _rescore > meta_score:
+                                                page_html = _rendered
+                                                meta_score = _rescore
                                 if meta_score < 25:
                                     print(f"               ⚠ 메타+body 점수 미달 (<25) → 이 사이트 skip")
                                     break   # 점수 미달 → 이 후보 URL 자체를 skip
@@ -1685,6 +1760,41 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                                     # 신뢰 게이트(brand_score>=50)와 일관성 보장
                                     if brand_score < 60:
                                         brand_score = 60
+                                # ⭐ 2026-06-02: '자사 브랜드몰' 판정 (오아센/pnsls 케이스)
+                                #   운영사명(피앤에스생명과학) 사이트라 title/og/도메인이
+                                #   전부 브랜드와 불일치하지만, 보이는 텍스트에 브랜드가
+                                #   압도적으로 반복(26회)되는 자사 브랜드 전문몰.
+                                #   루트 페이지 + 메타검증 통과 + 브랜드 8회 이상 반복이면
+                                #   공식몰 인정. 허브몰 루트는 입점 브랜드가 한두 번
+                                #   스치는 정도(8회 미달)라 기존 차단 유지.
+                                if not cand_own_site and not cand_domain_match:
+                                    try:
+                                        from urllib.parse import urlparse as _up_bm
+                                        _is_root_c = (
+                                            (_up_bm(page_url).path or "/").strip("/") == ""
+                                        )
+                                    except Exception:
+                                        _is_root_c = False
+                                    if _is_root_c:
+                                        _vis = re.sub(
+                                            r"(?is)<(script|style|noscript)[^>]*>.*?</\1>",
+                                            " ", page_html,
+                                        )
+                                        _vis = re.sub(r"<[^>]+>", " ", _vis).lower()
+                                        _vis_ns = _vis.replace(" ", "")
+                                        _occ = 0
+                                        for _t in _brand_match_tokens(brand_name):
+                                            _occ = max(
+                                                _occ,
+                                                _vis.count(_t),
+                                                _vis_ns.count(_t.replace(" ", "")),
+                                            )
+                                        if _occ >= 8:
+                                            cand_own_site = True
+                                            print(f"               [자사브랜드몰] "
+                                                  f"브랜드명 {_occ}회 반복 → 공식몰 인정")
+                                            if brand_score < 60:
+                                                brand_score = 60
                                 if brand_score > best_brand_score:
                                     best_brand_score = brand_score
                                 print(f"               [브랜드일치] {brand_score}점 "
