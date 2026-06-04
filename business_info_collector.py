@@ -908,11 +908,14 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
         - 전체 브랜드명 매칭 → full_pts
         - 공백제거 매칭 → full_pts - 5
         - 핵심 단어 매칭 → full_pts // 2 (절반)
+        ⭐ 2026-06-02: 띄어쓰기 무시 비교 추가 — 사이트가 "편강 율"처럼
+          띄어 쓰면 "편강율"과 매칭 실패해 1차 관문(25점)에서 잘리던 버그.
         """
         text_lower = text.lower()
+        text_ns = text_lower.replace(" ", "")
         # 우선순위: 전체 → 공백제거 → 핵심 단어
         for idx, token in enumerate(tokens):
-            if token in text_lower:
+            if token in text_lower or token.replace(" ", "") in text_ns:
                 if idx == 0:
                     return full_pts
                 elif idx == 1:
@@ -965,10 +968,12 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
     # ⭐ 6. body text (처음 30KB) — 보조 점수
     body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
     body_text = re.sub(r"\s+", " ", body_text)
+    body_text_ns = body_text.replace(" ", "")   # ⭐ 띄어쓰기 무시 비교용
 
     for idx, token in enumerate(tokens):
-        if token in body_text:
-            occ = body_text.count(token)
+        token_ns = token.replace(" ", "")
+        if token in body_text or token_ns in body_text_ns:
+            occ = max(body_text.count(token), body_text_ns.count(token_ns))
             base = 40 if idx == 0 else (35 if idx == 1 else 20)
             if occ >= 5:
                 body_score = base
@@ -1036,9 +1041,11 @@ def _brand_presence_score(html: str, brand_name: str) -> int:
         return 0
 
     def _match_score(text: str, full_pts: int) -> int:
+        # ⭐ 2026-06-02: 띄어쓰기 무시 비교 ("편강 율" ↔ "편강율")
         text_lower = text.lower()
+        text_ns = text_lower.replace(" ", "")
         for idx, token in enumerate(tokens):
-            if token in text_lower:
+            if token in text_lower or token.replace(" ", "") in text_ns:
                 if idx == 0:
                     return full_pts
                 elif idx == 1:
@@ -1076,12 +1083,14 @@ def _brand_presence_score(html: str, brand_name: str) -> int:
     if desc:
         score += _match_score(desc.group(1), 15)
 
-    # body 본문에 브랜드명 등장
+    # body 본문에 브랜드명 등장 — ⭐ 띄어쓰기 무시 비교 포함
     body_text = re.sub(r"<[^>]+>", " ", html[:30000]).lower()
     body_text = re.sub(r"\s+", " ", body_text)
+    body_text_ns = body_text.replace(" ", "")
     for idx, token in enumerate(tokens):
-        if token in body_text:
-            occ = body_text.count(token)
+        token_ns = token.replace(" ", "")
+        if token in body_text or token_ns in body_text_ns:
+            occ = max(body_text.count(token), body_text_ns.count(token_ns))
             base = 40 if idx == 0 else (35 if idx == 1 else 20)
             if occ >= 5:
                 score += base
