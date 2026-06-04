@@ -1584,6 +1584,36 @@ big_company_skipped = []   # 대기업으로 제외된 셀러 기록
 processed_brands = set()   # 같은 브랜드 중복 처리 방지
 
 
+def _is_accessible_homepage(url: str) -> bool:
+    """⭐ 2026-06-02: 비공개/준비중/접속불가 사이트 판별 (수집 제외용).
+    '열기' 눌렀을 때 비공개로 뜨는 사이트는 영업처로 쓸 수 없음.
+    """
+    try:
+        r = requests.get(
+            url,
+            headers={"User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            )},
+            timeout=8,
+            allow_redirects=True,
+        )
+        if r.status_code != 200:
+            return False
+        body = re.sub(r"<[^>]+>", " ", r.text or "")[:3000]
+        CLOSED_MARKERS = (
+            "비공개", "준비중인 사이트", "사이트 준비중", "쇼핑몰 준비중",
+            "접근이 제한", "접속이 제한", "휴면", "운영이 중지", "운영중지",
+            "사용할 수 없", "권한이 없", "폐쇄", "서비스가 종료",
+        )
+        if any(mk in body for mk in CLOSED_MARKERS):
+            return False
+        return True
+    except Exception:
+        return False
+
+
 def _collect_service_candidates(queries, category_label, target):
     """⭐ 2026-06-01: 서비스 업체(청소·마사지·산후도우미) 수집.
     스마트스토어 상품이 아니라 웹검색으로 업체 홈페이지를 찾고,
@@ -1604,21 +1634,26 @@ def _collect_service_candidates(queries, category_label, target):
             if not url:
                 continue
             # 도메인 중복 제거 (두 소스에서 같은 업체가 나올 수 있음)
+            # ⭐ 2026-06-02: 모바일 주소(m.) 정규화 — 'm'이 브랜드명 되던 문제 + 중복 방지
             try:
                 from urllib.parse import urlparse as _up_dom
                 _dom = _up_dom(url).netloc.replace("www.", "").lower()
+                if _dom.startswith("m."):
+                    _dom = _dom[2:]
+                    url = f"https://{_dom}"   # 모바일 → 데스크톱 주소로 통일
             except Exception:
                 _dom = url
             if _dom in seen_domains:
                 continue
             seen_domains.add(_dom)
+
+            # ⭐ 2026-06-02: 비공개/접속불가 사이트 제외 (열어도 못 보는 링크 수집 방지)
+            if not _is_accessible_homepage(url):
+                print(f"        🚫 비공개/접속불가 사이트 제외: {url}")
+                continue
+
             # 도메인명 (검색·브랜드 매칭 기준 — hint_url과 도메인 일치 → 공식 신뢰)
-            domain_name = ""
-            try:
-                from urllib.parse import urlparse as _up_svc
-                domain_name = _up_svc(url).netloc.replace("www.", "").split(".")[0]
-            except Exception:
-                domain_name = ""
+            domain_name = _dom.split(".")[0] if "." in _dom else ""
             search_name = domain_name or (hp.get("name") or "")[:30]
 
             # 홈페이지 footer에서 연락처 수집 — ⭐ only_hint: 이 홈페이지만 읽음(검색 X)
@@ -1626,9 +1661,10 @@ def _collect_service_candidates(queries, category_label, target):
                 search_name, hint_url=url, only_hint=True
             )
 
-            # 표시 브랜드명: 푸터 상호 > 도메인명 > 검색 제목
+            # 표시 브랜드명: ⭐ 사이트명(한글) > 푸터 상호 > 도메인명 > 검색 제목
             name = (
-                info.get("company_name") or domain_name or (hp.get("name") or "")
+                info.get("site_name") or info.get("company_name")
+                or domain_name or (hp.get("name") or "")
             ).strip()[:40]
             if not name or name in processed_brands or name in already_collected:
                 continue

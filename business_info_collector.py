@@ -1089,6 +1089,40 @@ def _brand_presence_score(html: str, brand_name: str) -> int:
     return score
 
 
+def _is_brand_own_site(html: str, brand_name: str) -> bool:
+    """이 사이트의 '정체(사이트명)'가 곧 그 브랜드인지 판정.
+
+    ⭐ 2026-06-02: 멀티브랜드 허브몰(코니허브·cowave 등)은 페이지 제목·본문에
+    입점 브랜드명이 들어가서 '제목에 브랜드명 있으면 공식몰' 기준을 계속 뚫었음.
+    → 사이트가 선언하는 사이트명(og:site_name)이 브랜드와 일치해야 공식몰.
+      (허브는 og:site_name이 자기 이름이라 자동 탈락)
+    → og:site_name 없으면 제목 '맨 앞부분(25자)'이 브랜드로 시작하는지로 판정.
+      (허브 제목은 자기 이름으로 시작: "코니허브 - 아토랩...")
+    """
+    if not html or not brand_name:
+        return False
+    tokens = _brand_match_tokens(brand_name)
+    if not tokens:
+        return False
+
+    # 1) og:site_name = 사이트의 자기 선언 이름 (가장 확실)
+    og_site = re.search(
+        r'<meta[^>]*property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)["\']',
+        html, re.IGNORECASE,
+    )
+    if og_site:
+        site_name = og_site.group(1).lower()
+        return any(t in site_name for t in tokens)
+
+    # 2) og:site_name 없으면 — 제목 맨 앞 25자에 브랜드가 있어야 (공식몰 제목은 브랜드로 시작)
+    title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+    if title_match:
+        head = title_match.group(1).lower()[:25]
+        return any(t in head for t in tokens)
+
+    return False
+
+
 def _url_domain_matches_brand(url: str, brand_name: str) -> bool:
     """후보 홈페이지 URL의 도메인이 브랜드명과 일치하는지 검사.
 
@@ -1219,12 +1253,16 @@ def find_service_business_homepages(query: str, max_results: int = 10) -> list:
         # 블로그/뉴스/포털/쇼핑/정부공공 제외
         if _is_skip_host(netloc):
             continue
-        # 도메인 메인(www. 제거) 기준 중복 제거 → 업체 1곳당 1개
-        domain_key = netloc.replace("www.", "")
+        # ⭐ 2026-06-02: 모바일 주소(m.) 정규화 — m.babyu.co.kr → babyu.co.kr
+        #   ('m'이 브랜드명으로 잘려 들어가고 같은 업체가 중복 수집되던 문제)
+        clean_netloc = netloc.replace("www.", "")
+        if clean_netloc.startswith("m."):
+            clean_netloc = clean_netloc[2:]
+        domain_key = clean_netloc
         if domain_key in seen_domains:
             continue
         seen_domains.add(domain_key)
-        homepage = f"https://{netloc}"
+        homepage = f"https://{clean_netloc}"
         results.append({"name": title, "url": homepage})
         if len(results) >= max_results:
             break
@@ -1291,6 +1329,33 @@ def find_powerlink_businesses(query: str, max_results: int = 8) -> list:
 
     print(f"           [파워링크] '{query}' → 광고/상위 업체 {len(results)}곳")
     return results
+
+
+def _is_homepage_like(url: str) -> bool:
+    """후보 URL이 '공식몰 홈'다운 URL인지 (루트/얕은 경로).
+
+    ⭐ 2026-06-01: cowave.kr 같은 멀티브랜드 쇼핑몰의 '상품 상세 페이지'는
+    제목에 브랜드명이 들어가서(예: "프라젠트라 ○○크림") 공식몰 판정을 뚫었음.
+    상품/게시글 상세 URL은 공식몰 홈이 아니므로 제외 → 엉뚱한 몰 footer 차단.
+    """
+    if not url:
+        return False
+    low = url.lower()
+    BAD_PATH_TOKENS = (
+        "/product", "/goods", "/item", "/detail", "/board", "/article",
+        "/view", "?product_no", "/prod/", "/review", "/event",
+        "/search", "?keyword", "?query", "/category",
+    )
+    if any(b in low for b in BAD_PATH_TOKENS):
+        return False
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(url if url.startswith("http") else "http://" + url)
+        path = (p.path or "/")
+    except Exception:
+        return False
+    depth = len([seg for seg in path.split("/") if seg])
+    return depth <= 1   # 루트 또는 1단계 경로까지만 (공식몰 홈/소개 수준)
 
 
 def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
@@ -1495,6 +1560,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                 #   이메일은 브랜드 공식 사이트에서만 수집한다 (연락처와 동일 출처).
                 #   → cs 단어 때문에 엉뚱한 마켓 페이지 메일이 뽑히던 문제 해결.
                 cand_brand_score = 0
+                cand_own_site = False   # ⭐ 사이트명(og:site_name/제목 시작)이 곧 브랜드인가
                 cand_domain_match = _url_domain_matches_brand(item_url, brand_name)
                 # ⭐ 메타 검증 — 메인 페이지 fetch 후 점수 매김
                 # hint_url은 검증 skip (스마트스토어 판매자 직접 등록 → 100% 신뢰)
@@ -1582,6 +1648,13 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                                     print(f"               [도메인일치] {page_url[:40]} "
                                           f"↔ {brand_name} (+60)")
                                 cand_brand_score = brand_score   # 이 후보의 브랜드 일치 점수
+                                # ⭐ 2026-06-02: 사이트명이 곧 브랜드인지 (허브몰 차단 핵심)
+                                cand_own_site = _is_brand_own_site(page_html, brand_name)
+                                if cand_own_site:
+                                    print(f"               [사이트명일치] 이 사이트의 정체 = 브랜드 ✓")
+                                    # 신뢰 게이트(brand_score>=50)와 일관성 보장
+                                    if brand_score < 60:
+                                        brand_score = 60
                                 if brand_score > best_brand_score:
                                     best_brand_score = brand_score
                                 print(f"               [브랜드일치] {brand_score}점 "
@@ -1590,6 +1663,28 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                             combined_text += page_html + "\n"
                             if idx == 0:
                                 main_text = page_html
+                                # ⭐ 2026-06-02: 사이트명 추출 (서비스 업체 한글 표기용)
+                                #   babyu → '베이비유'처럼 사이트가 선언한 이름을 브랜드명으로
+                                if not info.get("site_name"):
+                                    _sn = ""
+                                    _m_og = re.search(
+                                        r'<meta[^>]*property=["\']og:site_name["\']'
+                                        r'[^>]*content=["\']([^"\']+)["\']',
+                                        page_html, re.IGNORECASE,
+                                    )
+                                    if _m_og:
+                                        _sn = _m_og.group(1).strip()
+                                    else:
+                                        _m_t = re.search(
+                                            r"<title[^>]*>([^<]+)</title>",
+                                            page_html, re.IGNORECASE,
+                                        )
+                                        if _m_t:
+                                            _sn = re.split(
+                                                r"[\|\-–:·,]", _m_t.group(1)
+                                            )[0].strip()
+                                    if _sn:
+                                        info["site_name"] = _sn[:30]
                                 # 메인 페이지에서 contact/about/agreement 링크 추가 발견
                                 for link_match in re.finditer(
                                     r'href=["\']([^"\']*(?:contact|about|company|info|cs|footer|agreement|privacy|guide|shopinfo)[^"\']*\.(?:html?|php|asp))["\']',
@@ -1638,13 +1733,20 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                     "blog.", "cafe.", "post.naver", "brunch.", "tistory.",
                     "youtube.", "instagram.", "facebook.", "daum.", "kakao.",
                     "wishket.", "1688.", "aliexpress.",
+                    "cowave.",   # ⭐ 멀티브랜드 몰 (코코핏·프라젠트라 오수집 반복범)
+                    "conyhub.",  # ⭐ 멀티브랜드 허브몰 (모두안 아토랩 오수집)
                 )
                 _is_marketplace = any(h in _host for h in _NONOFFICIAL_HOSTS)
+                # ⭐ 2026-06-01: '홈페이지다운 URL'(루트/얕은 경로)일 때만 공식몰 인정.
+                # ⭐ 2026-06-02: '제목에 브랜드명' 기준(50점) 폐지 → 사이트명(og:site_name/
+                #   제목 시작)이 곧 브랜드일 때만(cand_own_site). 허브몰(코니허브 등)이
+                #   입점 브랜드명으로 뚫던 문제 근절.
                 cand_is_official = (
                     (item_url == hint_url and bool(hint_url))
                     or (
                         not _is_marketplace
-                        and (cand_domain_match or cand_brand_score >= 50)
+                        and _is_homepage_like(item_url)
+                        and (cand_domain_match or cand_own_site)
                     )
                 )
 
