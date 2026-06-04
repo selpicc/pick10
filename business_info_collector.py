@@ -402,6 +402,11 @@ def extract_emails_from_html(html: str) -> list:
 
     # 모든 이메일 후보 (중복 제거)
     emails = re.findall(r"\b([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})\b", text)
+    # ⭐ 2026-06-02: mailto: 링크 안의 주소도 수집 — 화면엔 '마케팅문의' 글자만 있고
+    #   주소는 링크에만 있는 경우(베베가닉), 태그 제거 시 사라지던 문제 해결
+    emails += re.findall(
+        r"mailto:([\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,})", html, re.IGNORECASE
+    )
     seen = set()
     unique = []
     for e in emails:
@@ -1861,8 +1866,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
 
                 # ─── 사업자번호 패턴 (footer) ───
                 if cand_is_official and not info.get("business_number"):
+                    # ⭐ 2026-06-02: "사업자 등록번호"(띄어쓰기) 표기 인식 — 베베가닉 케이스
+                    #   띄어쓰기 안 잡혀서 신뢰게이트 탈락 → 전체 수집 실패하던 버그
                     m = re.search(
-                        r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자(?:등록)?번호)\s*[:\s]?\s*"
+                        r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자\s*(?:등록)?\s*번호)\s*[:\s]?\s*"
                         r"(\d{3}-?\d{2}-?\d{5})",
                         text_only, re.IGNORECASE,
                     )
@@ -1877,7 +1884,8 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                             #   주소를 1순위. cs/customer 키워드로 엉뚱하게 뽑지 않음.
                             pe = extract_labeled_email(text_only)
                             if not pe:
-                                page_cands = extract_emails_from_html(text_only)
+                                # ⭐ 원본 HTML 전달 (mailto: 링크 주소 포함 수집)
+                                page_cands = extract_emails_from_html(combined_text)
                                 pe = pick_best_email(page_cands, brand_name=brand_name)
                                 if not pe:
                                     pe = pick_best_email(
