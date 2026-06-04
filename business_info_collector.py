@@ -1189,6 +1189,13 @@ def _url_domain_matches_brand(url: str, brand_name: str) -> bool:
         return False
     netloc = netloc.replace("www.", "")
     domain_main = netloc.split(".")[0] if netloc else ""
+    # ⭐ 2026-06-04: 한글 도메인(punycode) 해독 — "까꿍맘마.com"이
+    #   "xn--hl0bo2a92t2b.com"으로 들어와 브랜드와 매칭 실패하던 케이스.
+    if domain_main.startswith("xn--"):
+        try:
+            domain_main = domain_main.encode("ascii").decode("idna")
+        except Exception:
+            pass
     if not domain_main or len(domain_main) < 3:
         return False
 
