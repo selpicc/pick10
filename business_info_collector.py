@@ -1110,20 +1110,32 @@ def _is_brand_own_site(html: str, brand_name: str) -> bool:
     if not tokens:
         return False
 
-    # 1) og:site_name = 사이트의 자기 선언 이름 (가장 확실)
+    def _hit(text: str, limit: int = 0) -> bool:
+        """토큰 매칭 — ⭐ 띄어쓰기 무시 비교 포함 (벨보이 스튜디오 ↔ 벨보이스튜디오)."""
+        t = text.lower()
+        if limit:
+            t = t[:limit]
+        t_ns = t.replace(" ", "")
+        for tok in tokens:
+            if tok in t or tok.replace(" ", "") in t_ns:
+                return True
+        return False
+
+    # 1) og:site_name = 사이트의 자기 선언 이름 — 일치하면 공식 확정
+    #    ⭐ 2026-06-02: 불일치해도 탈락시키지 않고 제목 검사로 넘어감.
+    #    (벨보이스튜디오: og가 영문 "Bellboystudio"라 한글 브랜드와 불일치
+    #     → 제목 "벨보이 스튜디오"는 일치하는데도 통째로 탈락하던 버그)
     og_site = re.search(
         r'<meta[^>]*property=["\']og:site_name["\'][^>]*content=["\']([^"\']+)["\']',
         html, re.IGNORECASE,
     )
-    if og_site:
-        site_name = og_site.group(1).lower()
-        return any(t in site_name for t in tokens)
+    if og_site and _hit(og_site.group(1)):
+        return True
 
-    # 2) og:site_name 없으면 — 제목 맨 앞 25자에 브랜드가 있어야 (공식몰 제목은 브랜드로 시작)
+    # 2) 제목 맨 앞 25자에 브랜드 (공식몰 제목은 브랜드로 시작 — 허브몰은 자기 이름으로 시작)
     title_match = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
-    if title_match:
-        head = title_match.group(1).lower()[:25]
-        return any(t in head for t in tokens)
+    if title_match and _hit(title_match.group(1), limit=25):
+        return True
 
     return False
 
@@ -1866,10 +1878,12 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
 
                 # ─── 사업자번호 패턴 (footer) ───
                 if cand_is_official and not info.get("business_number"):
-                    # ⭐ 2026-06-02: "사업자 등록번호"(띄어쓰기) 표기 인식 — 베베가닉 케이스
-                    #   띄어쓰기 안 잡혀서 신뢰게이트 탈락 → 전체 수집 실패하던 버그
+                    # ⭐ 2026-06-02: "사업자 등록번호"(띄어쓰기, 베베가닉) +
+                    #   "[134-25-05373]"(대괄호, 벨보이스튜디오) 표기 모두 인식
+                    #   — 표기 변형 때문에 신뢰게이트 탈락 → 전체 수집 실패하던 버그
                     m = re.search(
-                        r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자\s*(?:등록)?\s*번호)\s*[:\s]?\s*"
+                        r"(?:BUSINESS\s*(?:LICENSE|NO)?|사업자\s*(?:등록)?\s*번호)"
+                        r"[\s:\.\[\(]*"
                         r"(\d{3}-?\d{2}-?\d{5})",
                         text_only, re.IGNORECASE,
                     )
