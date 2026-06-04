@@ -1556,6 +1556,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
 
                 combined_text = ""
                 main_text = ""
+                # ⭐ 2026-06-02: 전화번호 추출용 텍스트 (약관·개인정보방침 페이지 제외)
+                #   그 페이지들엔 화면에 안 보이는 '등록용 옛 번호'가 박혀있어
+                #   (페르바도 1688-2470 케이스) 실제 표기 번호와 달라짐.
+                phone_text = ""
                 # ⭐ 2026-06-01: 이 후보가 '브랜드 공식 사이트'인지 판정용.
                 #   이메일은 브랜드 공식 사이트에서만 수집한다 (연락처와 동일 출처).
                 #   → cs 단어 때문에 엉뚱한 마켓 페이지 메일이 뽑히던 문제 해결.
@@ -1661,6 +1665,11 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                                       f"(이 점수로 신뢰 판단)")
 
                             combined_text += page_html + "\n"
+                            # ⭐ 전화용 텍스트: 약관·개인정보방침 페이지 제외
+                            _PHONE_EXCLUDE = ("agreement", "privacy", "terms",
+                                              "policy", "약관", "개인정보")
+                            if not any(t in page_url.lower() for t in _PHONE_EXCLUDE):
+                                phone_text += page_html + "\n"
                             if idx == 0:
                                 main_text = page_html
                                 # ⭐ 2026-06-02: 사이트명 추출 (서비스 업체 한글 표기용)
@@ -1700,6 +1709,14 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                                             sub_page = requests.get(sub_link, headers=HTTP_HEADERS, timeout=6)
                                             if sub_page.status_code == 200:
                                                 combined_text += sub_page.text + "\n"
+                                                # ⭐ 전화용: 약관·개인정보 링크 제외
+                                                if not any(
+                                                    t in sub_link.lower()
+                                                    for t in ("agreement", "privacy",
+                                                              "terms", "policy",
+                                                              "약관", "개인정보")
+                                                ):
+                                                    phone_text += sub_page.text + "\n"
                                         except Exception:
                                             pass
                         time.sleep(0.05)
@@ -1713,6 +1730,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                 text_only = re.sub(r"<[^>]+>", " ", combined_text)
                 text_only = re.sub(r"&nbsp;|&amp;", " ", text_only)
                 text_only = re.sub(r"\s+", " ", text_only)
+                # ⭐ 전화 추출 전용 텍스트 (약관·개인정보방침 제외본)
+                phone_only = re.sub(r"<[^>]+>", " ", phone_text)
+                phone_only = re.sub(r"&nbsp;|&amp;", " ", phone_only)
+                phone_only = re.sub(r"\s+", " ", phone_only)
 
                 # ⭐ 2026-06-01: 이 후보가 '진짜 브랜드 공식몰'인가? (사용자: 확실할 때만 채우기)
                 #   조건: ① 도메인이 브랜드명과 일치  OR
@@ -1750,6 +1771,14 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                     )
                 )
 
+                # ⭐ 2026-06-02 (사용자 원칙): 공식홈에 '이메일:'로 표기된 주소 = 무조건 1순위.
+                #   사업자번호 유무와 무관하게, 공식 사이트로 판정되면 표기 메일부터 채택.
+                if cand_is_official and not info.get("email"):
+                    _labeled = extract_labeled_email(text_only)
+                    if _labeled:
+                        info["email"] = _labeled
+                        print(f"               [표기 이메일 최우선] {_labeled} (공식홈 라벨)")
+
                 # ─── CEO 패턴 (footer) ───
                 # ⭐ extract_ceo_from_text()와 동일 blacklist 사용 (통일)
                 # ⭐ 2026-06-01: 연락처/대표/사업자번호도 '브랜드 공식 사이트'에서만 수집
@@ -1786,9 +1815,16 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                         r"|1[5-9]\d{2}[-.\s]?\d{4}"              # 대표번호 1588-7601
                         r"|0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4})"  # 02-1234-5678 / 010-...
                     )
-                    full_pattern = f"{label_re}[\\s\\.\\-:전화번호문의No]{{0,15}}{num_re}"
+                    # ⭐ 2026-06-02: 라벨~번호 사이 이메일 허용
+                    #   "제품사입/입점 문의 pervado@naver.com 02-557-9871" 패턴 인식
+                    full_pattern = (
+                        f"{label_re}[\\s\\.\\-:전화번호문의No]{{0,15}}"
+                        f"(?:[\\w._%+-]+@[\\w.-]+\\.[a-zA-Z]{{2,}}[\\s\\u3000]{{0,12}})?"
+                        f"{num_re}"
+                    )
 
-                    for m in re.finditer(full_pattern, text_only, re.IGNORECASE):
+                    # ⭐ 약관·개인정보방침 제외본(phone_only)에서만 전화 추출
+                    for m in re.finditer(full_pattern, phone_only, re.IGNORECASE):
                         label = m.group(1).lower()
                         num = m.group(2)
                         score = 50   # 기본
@@ -1802,7 +1838,7 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                             score += 20
                         # FAX/팩스 근처 검사 (앞 30글자) → 감산
                         context_start = max(0, m.start() - 30)
-                        context = text_only[context_start:m.end()].lower()
+                        context = phone_only[context_start:m.end()].lower()
                         if "fax" in context or "팩스" in context:
                             score -= 80   # 강력 차단
                         # 정리
