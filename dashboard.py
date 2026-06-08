@@ -17,6 +17,18 @@ import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
+
+# ⭐ 2026-06: 클라우드 배포(Streamlit Cloud) 대응.
+#   클라우드엔 .env가 없고 비밀키가 st.secrets로 들어옴 → 그 값을
+#   os.environ 으로 옮겨서 기존 os.getenv 코드가 그대로 작동하게 한다.
+#   (supabase_client 가 import 시 os.getenv 를 읽으므로 그 전에 실행)
+try:
+    if hasattr(st, "secrets") and len(st.secrets):
+        for _k in st.secrets.keys():
+            os.environ.setdefault(_k, str(st.secrets[_k]))
+except Exception:
+    pass
+
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode
 
 from supabase_client import (
@@ -871,6 +883,118 @@ if df.empty:
 
 
 # ─────────────────────────────────────────────────────────────────
+# ✉️ 영업메일 초안 일괄 생성 (완전자동)
+#   - 이메일 있는 브랜드 → 템플릿 본문 → Gmail '초안' 생성 (발송 X)
+#   - 첨부·전송은 사용자가 Gmail에서 직접
+#   - 중복 방지: drafted_brands.json 에 생성한 브랜드 기록
+# ─────────────────────────────────────────────────────────────────
+import json as _json_mail
+
+_DRAFTED_PATH = "drafted_brands.json"
+
+
+def _load_drafted() -> set:
+    if os.path.exists(_DRAFTED_PATH):
+        try:
+            with open(_DRAFTED_PATH, encoding="utf-8") as f:
+                return set(_json_mail.load(f))
+        except Exception:
+            return set()
+    return set()
+
+
+def _save_drafted(s: set):
+    try:
+        with open(_DRAFTED_PATH, "w", encoding="utf-8") as f:
+            _json_mail.dump(sorted(s), f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+with st.expander("✉️ 영업메일 초안 일괄 생성 (Gmail 임시보관함)", expanded=False):
+    st.caption(
+        "이메일이 수집된 브랜드별로 맞춤 영업메일을 만들어 Gmail **초안**으로 저장합니다. "
+        "발송은 하지 않아요 — 초안에서 회사소개서 파일을 첨부한 뒤 직접 보내시면 됩니다. "
+        "(최초 1회 Gmail 연동 필요 — Gmail_연동_설정가이드.md 참고)"
+    )
+    _mc1, _mc2 = st.columns([1, 2])
+    with _mc1:
+        _gen_mail = st.button("영업메일 초안 일괄 생성", use_container_width=True,
+                              key="gen_mail_btn")
+    with _mc2:
+        _only_new = st.checkbox("이미 초안 만든 브랜드는 건너뛰기", value=True,
+                                key="mail_only_new")
+
+    if _gen_mail:
+        try:
+            from email_templates import build_email
+            import gmail_drafts
+            _svc = gmail_drafts.get_service()
+        except RuntimeError as _e:
+            _svc = None
+            st.error(str(_e))
+        except Exception as _e:
+            _svc = None
+            st.error(f"모듈 로드 오류: {_e}")
+
+        if _svc is None:
+            st.warning(
+                "Gmail 인증이 아직 안 됐어요 (token.json 없음). "
+                "**Gmail_연동_설정가이드.md** 를 따라 최초 1회 설정한 뒤 다시 눌러주세요."
+            )
+        else:
+            _sb = get_supabase_client()
+            _rows, _pg = [], 0
+            while True:
+                _res = (
+                    _sb.table(TABLE_NAME).select("*")
+                    .range(_pg * 1000, _pg * 1000 + 999).execute()
+                )
+                _b = _res.data or []
+                _rows.extend(_b)
+                if len(_b) < 1000:
+                    break
+                _pg += 1
+
+            _drafted = _load_drafted()
+            _created, _skipped = [], []
+            with st.spinner(f"{len(_rows)}개 브랜드 확인 중..."):
+                for _r in _rows:
+                    _bn = (_r.get("brand_name") or "").strip()
+                    _built = build_email(_r)
+                    if _built["skip"]:
+                        _skipped.append((_bn, _built["skip_reason"]))
+                        continue
+                    if _only_new and _bn in _drafted:
+                        _skipped.append((_bn, "이미 초안 생성됨"))
+                        continue
+                    try:
+                        gmail_drafts.create_draft(
+                            _svc, _built["to"], _built["subject"],
+                            _built["html"], _built["plain"],
+                        )
+                        _created.append((_bn, _built["to"], _built["template"]))
+                        _drafted.add(_bn)
+                    except Exception as _e:
+                        _skipped.append((_bn, f"초안 생성 오류: {_e}"))
+            _save_drafted(_drafted)
+
+            st.success(f"✅ 초안 {len(_created)}건 생성 — Gmail 임시보관함을 확인하세요")
+            if _created:
+                _p = sum(1 for _, _, t in _created if t == "product")
+                _s = sum(1 for _, _, t in _created if t == "service")
+                st.write(f"제품형 {_p}건 · 서비스형 {_s}건")
+                st.write("· " + " / ".join(b for b, _, _ in _created))
+            if _skipped:
+                with st.expander(f"건너뛴 {len(_skipped)}건 (이메일 없음·중복 등)"):
+                    for _b, _reason in _skipped:
+                        st.write(f"- {_b} — {_reason}")
+
+
+st.markdown("---")
+
+
+# ─────────────────────────────────────────────────────────────────
 # 사이드바 — 필터
 # ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("## 필터")
@@ -1150,6 +1274,49 @@ if len(filtered) > 0:
     _fallback_with_auto("이메일 (수기)", "이메일 (자동)")
     _fallback_with_auto("전화 (수기)",   "전화 (자동)")
 
+    # ── ✉️ 브랜드별 Gmail 작성 링크 (메일 주소 있는 브랜드만) ──
+    #   셀 클릭 → Gmail 작성창이 '맞춤 본문'으로 열림 (OAuth 불필요).
+    #   사용자는 회사소개서만 첨부해서 바로 보내기 누르면 됨.
+    from urllib.parse import quote as _q
+    try:
+        from email_templates import build_email as _bemail
+    except Exception:
+        _bemail = None
+    _mail_url_by_brand = {}
+    if _bemail is not None:
+        for _, _frow in filtered.iterrows():
+            _brand = str(_frow.get("브랜드명", "")).strip()
+            if not _brand:
+                continue
+            _email = (
+                str(_frow.get("이메일 (수기)", "")).strip()
+                or str(_frow.get("이메일 (자동)", "")).strip()
+            )
+            if not _email or "@" not in _email:
+                _mail_url_by_brand[_brand] = ""
+                continue
+            try:
+                _b = _bemail({
+                    "brand_name": _brand,
+                    "manual_email": _email,
+                    "auto_email": "",
+                    "category": str(_frow.get("발견 카테고리", "")).strip(),
+                    "product_category": str(_frow.get("상품 카테고리", "")).strip(),
+                    "flagship_product": str(_frow.get("주력상품명", "")).strip(),
+                    "auto_biz_confidence": "",
+                })
+                if _b.get("skip"):
+                    _mail_url_by_brand[_brand] = ""
+                    continue
+                _mail_url_by_brand[_brand] = (
+                    "https://mail.google.com/mail/?view=cm&fs=1"
+                    "&to=" + _q(_b["to"], safe="")
+                    + "&su=" + _q(_b["subject"], safe="")
+                    + "&body=" + _q(_b["plain"], safe="")
+                )
+            except Exception:
+                _mail_url_by_brand[_brand] = ""
+
     # 정렬: 수집일 desc만 적용 (안정 정렬)
     # 내부 동일 날짜는 load_all_data의 id desc 순서 그대로 유지 → 방금 INSERT한 게 위로
     if "수집일" in main_df.columns:
@@ -1181,13 +1348,14 @@ if len(filtered) > 0:
         return STAGE_DISPLAY.get(first_word, first_word)
 
     display_df = main_df[safe_main_cols].copy()
+    # ⭐ 2026-06: 마케팅 활동 단계는 리스트에서 숨김 (셀러 디테일에서만 노출).
+    #   해당 칸 자리에 브랜드별 'Gmail 메일 작성' 버튼을 넣는다.
     if "마케팅 활동 단계 (자동)" in display_df.columns:
-        display_df["마케팅 활동 단계 (자동)"] = (
-            display_df["마케팅 활동 단계 (자동)"]
-            .fillna("")
-            .astype(str)
-            .apply(stage_to_display)
-        )
+        display_df = display_df.drop(columns=["마케팅 활동 단계 (자동)"])
+    # 메일 작성 링크 칸 (메일 주소 있는 브랜드만 값 채워짐 → 버튼 표시)
+    display_df["메일"] = display_df["브랜드명"].map(
+        lambda b: _mail_url_by_brand.get(str(b).strip(), "")
+    )
 
     # 순번 열 추가 (역순) — 최근 수집이 큰 숫자
     # 표는 수집일 desc로 정렬됨 → 위쪽이 최신 → 위쪽 행에 N, 아래로 갈수록 1
@@ -1252,6 +1420,32 @@ if len(filtered) > 0:
                 "cursor": "pointer",
                 "text-align": "center",
                 "font-weight": "500",
+            },
+            onCellClicked=JsCode("""
+            function(params) {
+                if (params.value) {
+                    window.open(params.value, '_blank', 'noopener');
+                }
+            }
+            """),
+        )
+
+    # ── ✉️ 메일 버튼 컬럼 — 클릭 시 Gmail 작성창이 맞춤 본문으로 열림 ──
+    #   값(Gmail URL)이 있는 브랜드만 '✉️ 메일'로 보이고, 없으면 빈 칸.
+    if "메일" in display_df.columns:
+        gb.configure_column(
+            "메일",
+            headerName="메일",
+            width=90,
+            valueFormatter=JsCode(
+                "function(params){ return params.value ? '✉️ 메일' : ''; }"
+            ),
+            cellStyle={
+                "color": "#dc2626",
+                "text-decoration": "underline",
+                "cursor": "pointer",
+                "text-align": "center",
+                "font-weight": "600",
             },
             onCellClicked=JsCode("""
             function(params) {
@@ -1606,6 +1800,18 @@ if len(filtered) > 0:
 
                 st.markdown("")
 
+                # 마케팅 활동 단계 — 리스트에서 숨겼으므로 디테일에서 노출
+                _stage_raw = str(sel_full.get("마케팅 활동 단계 (자동)", "")).strip()
+                if _stage_raw:
+                    _stage_word = _stage_raw.split(" ")[0]
+                    _stage_emoji = {
+                        "도입기": "⚪", "성장기": "🟢", "확장기": "🟡",
+                        "초기": "⚪", "안정기": "🟡",
+                    }.get(_stage_word, "")
+                    st.caption("마케팅 활동 단계")
+                    st.markdown(f"**{_stage_emoji} {_stage_raw}**")
+                    st.markdown("")
+
                 # 마케팅 노출 — 4개 강조 메트릭 카드 (★ 강세 채널)
                 exposure = parse_marketing_exposure(
                     sel_full.get("마케팅 채널별 노출 (자동)", "")
@@ -1738,6 +1944,43 @@ if len(filtered) > 0:
                         placeholder="연락처 (자동 채워질 수 있음)",
                         key=f"phone_{sel_brand}",
                     )
+
+                # ─── ✉️ 이 브랜드 맞춤 영업메일 (Gmail 작성창 열기, OAuth 불필요) ───
+                #   위 '이메일' 칸 값으로 Gmail 작성창이 '맞춤 본문'으로 열림.
+                #   오수집 이메일은 칸에서 고친 뒤 눌러도 그 값으로 열림.
+                #   사용자는 회사소개서만 첨부해서 바로 보내기 누르면 됨.
+                _to_mail = (new_email or "").strip()
+                if _to_mail and "@" in _to_mail:
+                    try:
+                        from urllib.parse import quote as _q2
+                        from email_templates import build_email as _be2
+                        _bb = _be2({
+                            "brand_name": sel_brand,
+                            "manual_email": _to_mail,
+                            "auto_email": "",
+                            "category": str(sel_full.get("발견 카테고리", "")).strip(),
+                            "product_category": str(sel_full.get("상품 카테고리", "")).strip(),
+                            "flagship_product": str(sel_full.get("주력상품명", "")).strip(),
+                            "auto_biz_confidence": "",
+                        })
+                        if _bb.get("skip"):
+                            st.caption(f"메일 작성 보류: {_bb['skip_reason']}")
+                        else:
+                            _gurl = (
+                                "https://mail.google.com/mail/?view=cm&fs=1"
+                                "&to=" + _q2(_bb["to"], safe="")
+                                + "&su=" + _q2(_bb["subject"], safe="")
+                                + "&body=" + _q2(_bb["plain"], safe="")
+                            )
+                            st.link_button("✉️ Gmail로 맞춤 영업메일 작성", _gurl)
+                            st.caption(
+                                "새 탭에서 Gmail 작성창이 맞춤 본문으로 열려요. "
+                                "회사소개서 첨부 후 보내기."
+                            )
+                    except Exception as _e:
+                        st.caption(f"메일 작성 링크 생성 오류: {_e}")
+                else:
+                    st.caption("✉️ 이메일을 입력/확인하면 'Gmail로 메일 작성' 버튼이 나타나요.")
 
                 # ⭐ 영업 상태 (하단 재배치) — 활동메모 바로 위
                 new_status = st.selectbox(

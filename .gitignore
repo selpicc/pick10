@@ -32,3 +32,13 @@ Thumbs.db
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Gmail 인증 (절대 공개 X)
+credentials.json
+token.json
+
+# 작업 산출물 (공유 불필요)
+backup_sellers_*.json
+drafted_brands.json
+email_leads.json
+diag_*.py
