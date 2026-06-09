@@ -1964,6 +1964,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                     label_re = (
                         r"(CALL|TEL|TELEPHONE|PHONE|H\.?P\b|HP\b|MOBILE|"
                         r"전화|휴대폰|핸드폰|문의|연락처|예약|"
+                        # ⭐ 2026-06-09: "CS CENTER : 010-..."(영문, 코스테일러) 인식.
+                        #   "cs"만 매칭하면 'CENTER' 글자에서 끊겨 번호를 못 읽던 버그 →
+                        #   "CS CENTER" 통째 라벨로 인식.
+                        r"CS\s*CENTER|C\s*/\s*S\s*CENTER|"
                         r"고객\s*센터|고객\s*만족\s*센터|상담\s*센터|"
                         r"대표\s*전화|대표\s*번호|본사|cs|customer)"
                     )
