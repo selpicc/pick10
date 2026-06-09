@@ -9,6 +9,7 @@ Gmail '초안(임시보관함)'으로 저장합니다. (발송 X — 첨부·전
   venv\\Scripts\\python 메일초안_생성.py              # 이메일 있는 신규 브랜드 전부
   venv\\Scripts\\python 메일초안_생성.py --all          # 이미 만든 것도 다시 (중복 무시)
   venv\\Scripts\\python 메일초안_생성.py --brand 엘빈즈   # 특정 브랜드 1개만
+  venv\\Scripts\\python 메일초안_생성.py --brands "엘빈즈,비쥬앤허그"  # 지정한 브랜드들만 (방금 수집한 N개)
   venv\\Scripts\\python 메일초안_생성.py --limit 5       # 최대 5건만
 
 전제: Gmail 1회 연동(token.json) 필요 — Gmail_연동_설정가이드.md 참고.
@@ -51,11 +52,18 @@ def main():
     args = sys.argv[1:]
     only_new = "--all" not in args
     brand_filter = None
+    brand_set = None  # --brands 로 지정한 여러 브랜드 (방금 수집한 N개만)
     limit = None
     if "--brand" in args:
         i = args.index("--brand")
         if i + 1 < len(args):
             brand_filter = args[i + 1].strip()
+    if "--brands" in args:
+        i = args.index("--brands")
+        if i + 1 < len(args):
+            brand_set = {
+                b.strip() for b in args[i + 1].split(",") if b.strip()
+            } or None
     if "--limit" in args:
         i = args.index("--limit")
         if i + 1 < len(args):
@@ -101,11 +109,15 @@ def main():
         bn = (r.get("brand_name") or "").strip()
         if brand_filter and bn != brand_filter:
             continue
+        if brand_set is not None and bn not in brand_set:
+            continue
         built = build_email(r)
         if built["skip"]:
             skipped.append((bn, built["skip_reason"]))
             continue
-        if only_new and not brand_filter and bn in drafted:
+        # 브랜드를 명시(--brand/--brands)하면 의도적 지정이므로 중복 스킵 안 함
+        explicit = bool(brand_filter) or brand_set is not None
+        if only_new and not explicit and bn in drafted:
             skipped.append((bn, "이미 초안 생성됨"))
             continue
         try:
@@ -132,6 +144,14 @@ def main():
         print(f"     제품형 {p}건 · 서비스형 {s}건")
     if skipped:
         print(f"  건너뜀: {len(skipped)}건 (이메일 없음·중복 등)")
+    # --brands 로 지정했는데 초안이 안 만들어진 브랜드 안내 (DB에 없거나 이메일 없음)
+    if brand_set is not None:
+        made = {bn for bn, _, _ in created}
+        seen = made | {bn for bn, _ in skipped}
+        missing = sorted(brand_set - seen)
+        if missing:
+            print(f"  ⚠ 지정했지만 초안 못 만든 브랜드: {', '.join(missing)}")
+            print(f"     (DB에 없거나 이메일 미수집 — 이메일 칸 확인 필요)")
     print("=" * 50)
     print("  → Gmail 임시보관함에서 회사소개서 첨부 후 발송하세요.")
 
