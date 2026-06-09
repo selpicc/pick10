@@ -1234,6 +1234,9 @@ GLOBAL_NOISE_HOSTS = (
     "mediatoday.", "newstomato", "biz.chosun", "wikitree.", "wowtv.",
     "newdaily.", "tvchosun.", "channela.", "ichannela", "kookje.",
     "kyeonggi.", "incheonilbo.", "dt.co.kr", "ddaily.", "bloter.",
+    # ⭐ 2026-06-09: 진단 로그에서 잡힌 추가 노이즈 (뉴스·앱스토어)
+    "ibabynews.", "siminilbo.", "cosinkorea.", "play.google",
+    "wikitree.", "newsway.", "newspim.", "biz.heraldcorp",
 )
 
 
@@ -1590,6 +1593,18 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
 
         for item_url in candidate_urls[:8]:
             url = item_url
+            # ⭐ 2026-06-09: 뉴스·언론사·CDN·SNS 도메인은 공식몰이 아니므로 건너뜀.
+            #   브랜드 기사가 실린 뉴스(dailian/wowtv/fnnews 등)가 브랜드명 가득해서
+            #   점수 높게 나와 '공식몰인 척' 통과 + 브라우저 렌더링까지 하며
+            #   시간을 대량 낭비하던 문제. (hint_url=스마트스토어 직접등록은 예외)
+            try:
+                from urllib.parse import urlparse as _up_nf
+                _nf_host = _up_nf(item_url).netloc.lower()
+            except Exception:
+                _nf_host = ""
+            if (item_url != hint_url and _nf_host
+                    and any(g in _nf_host for g in GLOBAL_NOISE_HOSTS)):
+                continue
             try:
                 # 메인 페이지 + 다양한 쇼핑몰 솔루션의 사업자 정보 페이지
                 # ⭐ 2026-05-26 강화: cafe24/godo/imweb/makeshop/sixshop 모두 지원
@@ -2055,8 +2070,14 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                     page_emails = extract_emails_from_html(combined_text)
                     all_email_candidates.extend(page_emails)
 
-                # 충분히 모았으면 다음 사이트로 이동 X (1개 사이트로 충분)
-                if info.get("ceo") and info.get("phone") and all_email_candidates:
+                # ⭐ 2026-06-09: 공식몰에서 핵심 정보를 다 채웠으면 즉시 중단.
+                #   기존 조건은 ceo(대표) 필수였는데 대표는 대개 footer에 없어서
+                #   거의 안 멈췄음 → 엘빈즈가 1번 후보(alvins.co.kr)에서 이메일·전화·
+                #   사업자번호 다 잡았는데도 뒤의 8개 후보(play.google·뉴스 등)를
+                #   끝까지 확인하며 2분 넘게 낭비. → 사업자번호+전화+이메일이 채워지면
+                #   '완전한 신뢰 결과'이므로 더 볼 필요 없이 멈춘다.
+                if (info.get("business_number") and info.get("phone")
+                        and (info.get("email") or all_email_candidates)):
                     break
 
             except Exception:

@@ -741,8 +741,10 @@ if st.session_state.get("collect_running"):
     mm, ss = elapsed // 60, elapsed % 60
     ret = proc.poll()
 
-    # 15분 초과 → 강제 종료 (무한 대기 방지)
-    if ret is None and elapsed > 900:
+    # 25분 초과 → 강제 종료 (무한 대기 방지)
+    #   2026-06: 클라우드 무료 사양은 날마다 속도 편차가 커서 15분(900s)에
+    #   아슬아슬하게 걸리던 케이스 → 25분(1500s)으로 여유 확대.
+    if ret is None and elapsed > 1500:
         try:
             proc.kill()
         except Exception:
@@ -861,7 +863,7 @@ if "last_collect_summary" in st.session_state:
             st.info(info_msg)
         elif s.get("timeout"):
             st.error(
-                "⏱ 시간 초과 (15분)로 중단했어요. 수집 건수를 줄이거나(1~2건) "
+                "⏱ 시간 초과 (25분)로 중단했어요. 수집 건수를 줄이거나(1~2건) "
                 "잠시 후 다시 시도해 주세요."
             )
         else:
