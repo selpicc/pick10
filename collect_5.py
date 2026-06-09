@@ -350,6 +350,27 @@ def _build_keyword_match_context(
                         user_kw_tokens.append(list(vtokens))
                         seen_tokens.add(vtokens)
 
+        # 5. ⭐ 2026-06-09: 검색에 쓴 '확장 키워드'(스트레치마크/산모 크림/임산부 크림 등)도
+        #    매칭 풀에 '구절 통째로' 추가.
+        #    문제: 검색은 expand_keyword(상품 동의어 포함)로 넓게 하면서 매칭은
+        #    expand_keyword_synonym_only(상품 동의어 제외)로 좁게 해서, 같은 제품을
+        #    다른 이름으로 파는 진짜 브랜드(파더마 등 임산부 브랜드)가 '키워드 관련 0%'로
+        #    거절되던 불균형. → 검색=매칭 키워드 일치시킴.
+        #    단, 구절을 쪼갠 '단독 토큰'(산모/크림)은 추가 X — 예전 false positive 원인이
+        #    단독 generic 토큰이었으므로, 구절 전체(substring)와 AND 토큰만 인정.
+        if mode == "keywords":
+            for exp_kw in expand_keyword(kw):
+                for variant in generate_space_variants(exp_kw):
+                    v = variant.lower().strip()
+                    if v:
+                        search_kw_pool.add(v)
+                exp_tokens = tuple(
+                    t.strip().lower() for t in exp_kw.split() if len(t.strip()) >= 2
+                )
+                if len(exp_tokens) >= 2 and exp_tokens not in seen_tokens:
+                    user_kw_tokens.append(list(exp_tokens))
+                    seen_tokens.add(exp_tokens)
+
     if mode == "keywords":
         for kw in user_keywords:
             _process_keyword(kw)
