@@ -175,6 +175,25 @@ def _esc(s: str) -> str:
     return _html.escape(s or "", quote=False)
 
 
+def _josa(word: str, with_batchim: str, without_batchim: str) -> str:
+    """앞 단어의 받침 유무에 따라 조사 선택.
+    예: _josa("제품","을","를")→"을", _josa("베이비","을","를")→"를"
+    한글이면 받침 계산, 영문은 모음(a/e/i/o/u/y)으로 끝나면 받침 없음 취급.
+    """
+    w = (word or "").strip()
+    if not w:
+        return without_batchim
+    ch = w[-1]
+    code = ord(ch)
+    if 0xAC00 <= code <= 0xD7A3:          # 한글 음절
+        return with_batchim if (code - 0xAC00) % 28 != 0 else without_batchim
+    if ch.isalpha():                       # 영문
+        return without_batchim if ch.lower() in "aeiouy" else with_batchim
+    if ch.isdigit():                       # 숫자 발음 받침 (1일/3삼/6육/7칠/8팔/0영)
+        return with_batchim if ch in "0136780" else without_batchim
+    return with_batchim                    # 기타 기호 → 받침 있는 것처럼
+
+
 def _short_flagship(flagship: str, brand: str) -> str:
     """주력상품명이 너무 길면 핵심만. 브랜드명 중복 제거."""
     f = (flagship or "").strip()
@@ -234,8 +253,9 @@ def _build_product(row: dict) -> dict:
     inner = (
         f'안녕하세요, <b>{_esc(brand)}</b> 담당자님.<br>'
         '셀픽이앤에스 영업팀 서민지입니다.<br><br>'
-        f'{_esc(brand)}의 {hook_noun}을(를) 인상 깊게 보고 연락드립니다.<br>'
-        f'출산 직후 부모가 브랜드를 <b>처음 만나는 시점</b>에 {_esc(brand)}를 알릴 수 있는 방법이 있어,<br>'
+        f'{_esc(brand)}의 {hook_noun}{_josa(hook_noun, "을", "를")} 인상 깊게 보고 연락드립니다.<br>'
+        f'출산 직후 부모가 브랜드를 <b>처음 만나는 시점</b>에 '
+        f'{_esc(brand)}{_josa(brand, "을", "를")} 알릴 수 있는 방법이 있어,<br>'
         '짧게 제안드리고자 메일 드립니다.<br><br>'
         f'{SELPIC_INTRO_HTML}<br><br>'
         f'{insight}<br><br>'
@@ -267,8 +287,9 @@ def _build_product(row: dict) -> dict:
     plain = (
         f"안녕하세요, {brand} 담당자님.\n"
         "셀픽이앤에스 영업팀 서민지입니다.\n\n"
-        f"{brand}의 {hook_noun}을(를) 인상 깊게 보고 연락드립니다.\n"
-        f"출산 직후 부모가 브랜드를 처음 만나는 시점에 {brand}를 알릴 수 있는 방법이 있어,\n"
+        f"{brand}의 {hook_noun}{_josa(hook_noun, '을', '를')} 인상 깊게 보고 연락드립니다.\n"
+        f"출산 직후 부모가 브랜드를 처음 만나는 시점에 "
+        f"{brand}{_josa(brand, '을', '를')} 알릴 수 있는 방법이 있어,\n"
         "짧게 제안드리고자 메일 드립니다.\n\n"
         f"{SELPIC_INTRO_PLAIN}\n\n"
         f"{insight}\n\n"
