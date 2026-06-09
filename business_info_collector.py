@@ -1963,6 +1963,8 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
                     # ⭐ 2026-06-01: 라벨 확장 (PHONE/휴대폰/예약/본사 등 — fotoccino "Phone No." 케이스)
                     label_re = (
                         r"(CALL|TEL|TELEPHONE|PHONE|H\.?P\b|HP\b|MOBILE|"
+                        # ⭐ 2026-06-09: "Contact. 0507-..."(영문, 비쥬앤허그 등 cafe24/imweb) 인식
+                        r"CONTACT|"
                         r"전화|휴대폰|핸드폰|문의|연락처|예약|"
                         # ⭐ 2026-06-09: "CS CENTER : 010-..."(영문, 코스테일러) 인식.
                         #   "cs"만 매칭하면 'CENTER' 글자에서 끊겨 번호를 못 읽던 버그 →

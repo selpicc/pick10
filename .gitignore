@@ -42,3 +42,7 @@ backup_sellers_*.json
 drafted_brands.json
 email_leads.json
 diag_*.py
+
+# 실행 시 재생성되는 로그 (공유 불필요)
+연락처테스트_로그.txt
+진단_로그.txt
