@@ -27,7 +27,7 @@ SIG_HTML = (
     '<b>셀픽이앤에스</b> / 영업팀<br>'
     '<b>서민지</b> 선임 매니저<br>'
     'M. 010-2421-6905<br>'
-    'E. ondayon1@nate.com<br>'
+    'E. selpic100@gmail.com<br>'
     '셀픽 홈페이지 <a href="https://selpic.kr/" '
     'style="color:#1a73e8;text-decoration:none;">www.selpic.kr</a>'
     '</div>'
@@ -37,7 +37,7 @@ SIG_PLAIN = (
     "셀픽이앤에스 / 영업팀\n"
     "서민지 선임 매니저\n"
     "M. 010-2421-6905\n"
-    "E. ondayon1@nate.com\n"
+    "E. selpic100@gmail.com\n"
     "셀픽 홈페이지 selpic.kr\n"
     "============================================"
 )
