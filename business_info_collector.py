@@ -890,6 +890,33 @@ def _brand_match_tokens(brand_name: str) -> list:
         if w not in tokens:
             tokens.append(w)
 
+    # ⭐ 2026-06-29: 공백 없이 '붙어있는' 일반 접미사 제거 → 핵심어 추출
+    #   위 split 은 공백 기준이라 "앙덤스토어"(공백 없음)는 핵심어 '앙덤'을 못 뽑는다.
+    #   스마트스토어 표시명엔 "○○스토어 / ○○공식몰" 처럼 접미사가 붙는데,
+    #   정작 공식몰엔 '앙덤 / angdom' 으로만 표기 → 브랜드일치 0점으로 수집 실패.
+    #   (실제 사례: 앙덤스토어 → www.angdom.com 매칭 실패, 2026-06-29)
+    #   끝에 붙은 몰 접미사를 떼어 핵심 토큰을 만든다. 한글 핵심어는 2글자도 식별력 있음.
+    GLUED_SUFFIXES = [
+        "공식스토어", "공식스토아", "공식몰", "공식샵", "스토어", "스토아",
+        "스튜디오", "코스메틱", "컴퍼니", "마켓", "공식", "몰", "샵",
+        "officialstore", "official", "cosmetic", "company",
+        "store", "studio", "market", "shop", "mall",
+    ]
+    core = no_space
+    changed = True
+    while changed:
+        changed = False
+        for suf in GLUED_SUFFIXES:
+            if core.endswith(suf) and len(core) - len(suf) >= 2:
+                core = core[: -len(suf)]
+                changed = True
+                break
+    if core and core not in tokens:
+        has_hangul = any("가" <= ch <= "힣" for ch in core)
+        # 한글 핵심어는 2글자도 식별력 있음 / 영문은 4글자 이상만 (노이즈 방지)
+        if (has_hangul and len(core) >= 2) or len(core) >= 4:
+            tokens.append(core)
+
     return tokens
 
 
