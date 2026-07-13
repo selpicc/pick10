@@ -11,8 +11,17 @@
   venv\\Scripts\\python 수집_상태확인.py
 """
 import os
+import sys
 import json
 import time
+
+# 윈도우 콘솔 기본 인코딩(cp949)에서 이모지(🟢✅ 등)를 출력하면 UnicodeEncodeError가
+# 난다. 출력 인코딩을 UTF-8로 고정해 방지.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_PATH = os.path.join(SCRIPT_DIR, "수집로그_최근.log")
