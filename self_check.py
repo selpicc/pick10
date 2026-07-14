@@ -175,7 +175,18 @@ def _():
     # 이메일 없으면 skip
     skip = build_email({"brand_name": "노메일", "auto_email": ""})
     assert skip["skip"] is True, "이메일 없음 skip 처리 실패"
-    return "제품형/서비스형 분기 + 금액 미노출 + 레퍼런스/CTA + skip 정상"
+
+    # 수기 이메일이 자동 수집을 이겨야 한다 (사람이 고친 값이 최우선)
+    fixed = build_email({
+        "brand_name": "수정브랜드",
+        "auto_email": "wrong@auto.kr",       # 자동 수집이 틀리게 잡은 주소
+        "manual_email": "right@manual.kr",   # 사람이 대시보드에서 고친 주소
+        "category": "수유용품", "auto_biz_confidence": "높음",
+    })
+    assert fixed["to"] == "right@manual.kr", (
+        f"수기 이메일이 무시됨 → {fixed['to']} (자동값이 이기면 안 됨)"
+    )
+    return "제품형/서비스형 분기 + 금액 미노출 + 레퍼런스/CTA + 수기이메일 우선 + skip 정상"
 
 
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")

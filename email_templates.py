@@ -501,7 +501,13 @@ def _build_service(row: dict) -> dict:
 def build_email(row: dict) -> dict:
     """브랜드 row → 영업메일. 이메일 없으면 skip=True."""
     brand = (row.get("brand_name") or "").strip()
-    email = (row.get("auto_email") or row.get("manual_email") or "").strip()
+    # 수기 입력이 자동 수집을 항상 이긴다.
+    # 사람이 대시보드에서 이메일을 고쳤다는 건 '자동 수집이 틀렸다'는 뜻이므로,
+    # 자동값을 먼저 쓰면 애써 고친 주소가 조용히 무시된다. (2026-07 수정)
+    email = (
+        (row.get("manual_email") or "").strip()
+        or (row.get("auto_email") or "").strip()
+    )
 
     base = {"to": email, "subject": "", "html": "", "plain": "",
             "template": "", "skip": False, "skip_reason": ""}

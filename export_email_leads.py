@@ -46,8 +46,11 @@ print(f"전체 {len(rows)}행 조회")
 
 leads = []
 for r in rows:
-    # 이메일: 자동 우선, 없으면 수기
-    email = (r.get("auto_email") or r.get("manual_email") or "").strip()
+    # 이메일: 수기 우선 (사람이 고친 값이 자동 수집을 이긴다), 없으면 자동
+    email = (
+        (r.get("manual_email") or "").strip()
+        or (r.get("auto_email") or "").strip()
+    )
     if not email or "@" not in email:
         continue
 

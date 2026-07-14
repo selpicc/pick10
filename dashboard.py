@@ -1588,8 +1588,19 @@ if len(filtered) > 0:
                 #   못 넘겨서 지역 분기(김해 권역 등)와 AI 맞춤 도입부가 빠진 반쪽
                 #   메일이 나갔다. 그래서 명령(메일초안_생성.py)과 '완전히 같은 경로'로
                 #   초안을 만든다 — DB 원본 행 + AI 도입부 + Gmail 초안 API.
+                # Gmail 열쇠(token.json)는 사용자 PC에만 있고 클라우드에는 올리지 않는다
+                # (올리면 Gmail 계정 접근 권한이 외부 서버에 놓임 → .gitignore 처리).
+                # 그래서 클라우드에서는 이 버튼이 눌러도 안 되니 아예 감춘다.
+                _gmail_ready = os.path.exists("token.json")
+
                 _to_mail = (new_email or "").strip()
-                if _to_mail and "@" in _to_mail:
+                if not _gmail_ready:
+                    st.caption(
+                        "✉️ 메일 초안 만들기는 **내 컴퓨터에서 띄운 대시보드**에서만 됩니다. "
+                        "(Gmail 열쇠가 PC에만 있어서 클라우드에서는 불가) → "
+                        "`venv\\Scripts\\streamlit run dashboard.py` 로 열어서 만드세요."
+                    )
+                elif _to_mail and "@" in _to_mail:
                     _mk = st.button(
                         "✉️ 이 브랜드 메일 초안 만들기",
                         key=f"mkdraft_{sel_brand}",
