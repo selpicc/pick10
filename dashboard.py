@@ -1595,11 +1595,8 @@ if len(filtered) > 0:
 
                 _to_mail = (new_email or "").strip()
                 if not _gmail_ready:
-                    st.caption(
-                        "✉️ 메일 초안 만들기는 **내 컴퓨터에서 띄운 대시보드**에서만 됩니다. "
-                        "(Gmail 열쇠가 PC에만 있어서 클라우드에서는 불가) → "
-                        "`venv\\Scripts\\streamlit run dashboard.py` 로 열어서 만드세요."
-                    )
+                    # 클라우드(열쇠 없음): 안내 문구도 띄우지 않고 조용히 감춘다.
+                    pass
                 elif _to_mail and "@" in _to_mail:
                     _mk = st.button(
                         "✉️ 이 브랜드 메일 초안 만들기",
