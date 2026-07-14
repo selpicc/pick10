@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venv/Scripts/python *)",
+      "Bash(venv\\Scripts\\python *)",
+      "Bash(venv/Scripts/streamlit run *)",
+      "Bash(venv\\Scripts\\streamlit run *)",
+      "Bash(start *)",
+      "Bash(tasklist)",
+      "PowerShell(venv\\Scripts\\python *)",
+      "PowerShell(venv\\Scripts\\streamlit run *)",
+      "PowerShell(winget install *)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__list_organizations"
+    ]
+  }
+}
