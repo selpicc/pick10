@@ -844,6 +844,16 @@ def find_email_from_homepage(brand_name: str, hint_url: str = "") -> Optional[st
     return info.get("email") if info else None
 
 
+# 브랜드 표시명 끝에 붙는 몰/스토어 접미사 (매칭·검색 양쪽에서 공용)
+#   예) "앙덤스토어" → 앙덤 / "프라젠트라 공식 스토어" → 프라젠트라
+GLUED_SUFFIXES = [
+    "공식스토어", "공식스토아", "공식몰", "공식샵", "스토어", "스토아",
+    "스튜디오", "코스메틱", "컴퍼니", "마켓", "공식", "몰", "샵",
+    "officialstore", "official", "cosmetic", "company",
+    "store", "studio", "market", "shop", "mall",
+]
+
+
 def _brand_match_tokens(brand_name: str) -> list:
     """브랜드명에서 매칭 가능한 토큰들 추출.
 
@@ -896,12 +906,7 @@ def _brand_match_tokens(brand_name: str) -> list:
     #   정작 공식몰엔 '앙덤 / angdom' 으로만 표기 → 브랜드일치 0점으로 수집 실패.
     #   (실제 사례: 앙덤스토어 → www.angdom.com 매칭 실패, 2026-06-29)
     #   끝에 붙은 몰 접미사를 떼어 핵심 토큰을 만든다. 한글 핵심어는 2글자도 식별력 있음.
-    GLUED_SUFFIXES = [
-        "공식스토어", "공식스토아", "공식몰", "공식샵", "스토어", "스토아",
-        "스튜디오", "코스메틱", "컴퍼니", "마켓", "공식", "몰", "샵",
-        "officialstore", "official", "cosmetic", "company",
-        "store", "studio", "market", "shop", "mall",
-    ]
+    #   (접미사 목록은 모듈 상단 GLUED_SUFFIXES — 검색 쿼리 생성과 공용)
     core = no_space
     changed = True
     while changed:
@@ -1066,6 +1071,46 @@ def _verify_homepage_match(html: str, brand_name: str) -> int:
 
     # 메타 매칭 있으면 종합 점수
     return meta_score + body_score + footer_signal_score
+
+
+def _core_brand_name(brand_name: str) -> str:
+    """표시명에서 몰 접미사를 뗀 '검색용 핵심 브랜드명'. 뗄 게 없으면 빈 문자열.
+
+    왜 필요한가 (2026-07, 프라젠트라 케이스):
+      스마트스토어 표시명은 "프라젠트라 공식 스토어"처럼 몰 접미사가 붙는다.
+      이 이름 그대로 검색하면 결과가 전부 스토어/판매 페이지로 채워지고,
+      정작 진짜 공식몰(plagentra.kr)은 후보 목록에 들어오지도 못한다.
+      → 핵심어 '프라젠트라'로도 검색해야 공식몰이 잡힌다.
+
+    주의: 접미사를 실제로 떼어냈을 때만 값을 돌려준다.
+      "아토피 연구소 오아센"처럼 뗄 게 없는 이름은 공백을 지운 형태가
+      오히려 검색에 불리하므로 빈 문자열을 돌려 원래 이름을 쓰게 한다.
+    """
+    if not brand_name:
+        return ""
+    name = brand_name.strip()
+    for prefix in ["주식회사", "(주)", "주)", "유한회사", "(유)"]:
+        name = name.replace(prefix, "")
+    name = name.strip()
+
+    # 접미사는 공백이 있든("프라젠트라 공식 스토어") 없든("앙덤스토어") 떼어낸다
+    core = name.replace(" ", "")
+    original = core
+    changed = True
+    while changed:
+        changed = False
+        for suf in GLUED_SUFFIXES:
+            if core.lower().endswith(suf) and len(core) - len(suf) >= 2:
+                core = core[: -len(suf)]
+                changed = True
+                break
+
+    if core == original:
+        return ""          # 뗀 게 없음 → 원래 브랜드명을 그대로 쓰라는 뜻
+    has_hangul = any("가" <= ch <= "힣" for ch in core)
+    if (has_hangul and len(core) >= 2) or len(core) >= 4:
+        return core
+    return ""
 
 
 def _brand_presence_score(html: str, brand_name: str) -> int:
@@ -1478,16 +1523,26 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
         # mall/store/공식 + 영문도 시도 (영문 도메인 사이트 잡기 위함)
         # ⭐ 2026-05-26: 브랜드명 단독 검색 추가 (SEO 1위 = 공식몰일 확률 높음)
         # 메타 검증으로 잘못된 사이트는 자동 차단되므로 안전
+        # ⭐ 2026-07 (프라젠트라 케이스): 표시명에 몰 접미사가 붙어 있으면
+        #   그 이름으로 검색해봐야 스토어/판매 페이지만 나오고 공식몰은 안 잡힌다.
+        #   ("프라젠트라 공식 스토어 공식몰" → 결과가 전부 네이버 스토어)
+        #   핵심어('프라젠트라')로 먼저 검색해야 plagentra.kr 이 후보에 들어온다.
+        core = _core_brand_name(brand_name)
+        sname = core or brand_name          # 검색에 쓸 이름 (핵심어 우선)
+
         search_queries = [
-            f"{brand_name}",                # ⭐ 브랜드명 단독 (가장 자연스러운 검색)
-            f"{brand_name} 공식 홈페이지",
-            f"{brand_name} 공식몰",
-            f"{brand_name} 쇼핑몰",
-            f"{brand_name} 공식 사이트",
-            f"{brand_name} 이메일",
-            f"{brand_name} 고객센터",   # footer 이메일 잡기 좋은 키워드
-            f"{brand_name} cs",          # 영문 CS 페이지
+            f"{sname}",                 # ⭐ 핵심어 단독 (가장 자연스러운 검색)
+            f"{sname} 공식 홈페이지",
+            f"{sname} 공식몰",
+            f"{sname} 쇼핑몰",
+            f"{sname} 공식 사이트",
+            f"{sname} 이메일",
+            f"{sname} 고객센터",        # footer 이메일 잡기 좋은 키워드
+            f"{sname} cs",              # 영문 CS 페이지
         ]
+        # 핵심어를 따로 뽑았다면 원래 표시명 검색도 한 번은 남겨둔다 (보험)
+        if core:
+            search_queries.append(brand_name)
 
         # 무관 사이트 도메인 (Naver/Google 둘 다 사용)
         SKIP_DOMAINS = [
@@ -1539,10 +1594,10 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
         if GOOGLE_API_KEY and GOOGLE_CX:
             # ⭐ 브랜드명 단독 추가 (Google SEO 강함, 공식몰 1위 노출)
             google_queries = [
-                f"{brand_name}",                # ⭐ 브랜드명 단독
-                f"{brand_name} 공식몰",
-                f"{brand_name} 공식 사이트",
-                f"{brand_name} cs 고객센터",   # footer/CS 페이지 직접 노출
+                f"{sname}",                 # ⭐ 핵심어 단독 (몰 접미사 뗀 이름)
+                f"{sname} 공식몰",
+                f"{sname} 공식 사이트",
+                f"{sname} cs 고객센터",     # footer/CS 페이지 직접 노출
             ]
             for gquery in google_queries:
                 try:
