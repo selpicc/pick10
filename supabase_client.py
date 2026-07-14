@@ -64,6 +64,14 @@ DB_TO_KOR = {
     "hq_ceo":                 "본사 대표 (자동)",
     "hq_phone":               "본사 전화 (자동)",
     "hq_address":             "본사 주소 (자동)",
+    # ⭐ 2026-07 추가: 메일 발송·회신 추적 (메일_추적.py 가 Gmail에서 읽어 채움)
+    #   대시보드는 이 값을 '메일 상태'로 보여준다 (수기 편집 대상 아님)
+    "mail_draft_id":          "메일 초안ID",
+    "mail_thread_id":         "메일 스레드ID",
+    "mail_sent_at":           "메일 발송일",
+    "mail_replied_at":        "메일 회신일",
+    "mail_followup_count":    "팔로업 횟수",
+    "mail_last_followup_at":  "마지막 팔로업일",
 }
 
 # 한글 → 영문 (역매핑)

@@ -837,6 +837,51 @@ if search_brand:
 
 
 # ─────────────────────────────────────────────────────────────────
+# ⭐ 2026-07: 메일 알림 — 회신 온 브랜드 / 팔로업할 때가 된 브랜드
+#   회신을 놓치면 영업 기회를 통째로 날린다 → 표보다 위에 띄운다.
+#   값은 메일_추적.py 가 Gmail에서 읽어 DB에 채운다 (여기선 읽기만).
+# ─────────────────────────────────────────────────────────────────
+if "메일 스레드ID" in df.columns:
+    _tracked = df[df["메일 스레드ID"].fillna("").astype(str).str.strip() != ""]
+    _replied = _tracked[
+        _tracked["메일 회신일"].fillna("").astype(str).str.strip() != ""
+    ] if "메일 회신일" in _tracked.columns else _tracked.iloc[0:0]
+
+    # 팔로업 대상: 발송 7일 경과 · 회신 없음 · 팔로업 2회 미만
+    _fu = []
+    if "메일 발송일" in _tracked.columns:
+        for _, _r in _tracked.iterrows():
+            if str(_r.get("메일 회신일", "") or "").strip():
+                continue
+            _sent = str(_r.get("메일 발송일", "") or "").strip()
+            if not _sent:
+                continue
+            try:
+                _d = datetime.fromisoformat(_sent.replace("Z", "+00:00"))
+                _days = (datetime.now(_d.tzinfo) - _d).days
+            except Exception:
+                continue
+            try:
+                _c = int(_r.get("팔로업 횟수", 0) or 0)
+            except Exception:
+                _c = 0
+            if _days >= 7 and _c < 2:
+                _fu.append(str(_r.get("브랜드명", "")))
+
+    if len(_replied) > 0:
+        st.error(
+            f"💬 **회신 온 브랜드 {len(_replied)}건** — "
+            + ", ".join(_replied["브랜드명"].astype(str).tolist())
+            + "  · Gmail에서 확인하세요"
+        )
+    if _fu:
+        st.warning(
+            f"🔔 **팔로업할 때가 된 브랜드 {len(_fu)}건** — " + ", ".join(_fu)
+            + "  · 초안 만들기: `venv\\Scripts\\python 메일_추적.py --followup`"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────
 # 영업 후보 셀러 테이블 (메인)
 # ─────────────────────────────────────────────────────────────────
 st.markdown(f"## 영업 후보")
@@ -965,9 +1010,15 @@ if len(filtered) > 0:
     ]
     safe_main_cols = [c for c in main_cols if c in filtered.columns]
 
+    # ⭐ 2026-07: 메일 상태 계산에 필요한 추적 컬럼 (표시용으로만 끌어옴)
+    _mail_cols = [
+        c for c in ["메일 스레드ID", "메일 발송일", "메일 회신일", "팔로업 횟수"]
+        if c in filtered.columns
+    ]
+
     extra_cols = ["_source_file"] if "_source_file" in filtered.columns else []
     main_df = filtered[
-        safe_main_cols + extra_cols +
+        safe_main_cols + extra_cols + _mail_cols +
         (["Selpic 점수"] if "Selpic 점수" in filtered.columns else [])
     ].copy()   # ⭐ copy()로 안전한 복사본 (SettingWithCopyWarning 회피)
 
@@ -1029,6 +1080,40 @@ if len(filtered) > 0:
     #   그 링크는 DB 원본 행을 못 넘겨 지역 분기·AI 도입부가 빠진 반쪽 메일을 만들었다.
     #   메일은 행을 클릭해 열리는 '셀러 디테일'의 초안 버튼으로 일원화한다.
 
+    # ─────────────────────────────────────────────────────────
+    # ⭐ 2026-07: 메일 상태 (발송·회신 추적 결과를 한 칸으로)
+    #   값은 메일_추적.py 가 Gmail에서 읽어 DB에 채운다. 여기서는 표시만 한다.
+    #   (클라우드 대시보드에서도 '누가 답장했나'는 볼 수 있어야 하므로 DB 기반)
+    # ─────────────────────────────────────────────────────────
+    def _mail_state(row) -> str:
+        thread = str(row.get("메일 스레드ID", "") or "").strip()
+        if not thread:
+            return ""                        # 초안을 만든 적 없음
+        replied = str(row.get("메일 회신일", "") or "").strip()
+        if replied:
+            return "💬 회신"                  # ← 최우선. 이걸 놓치면 안 된다
+        sent = str(row.get("메일 발송일", "") or "").strip()
+        if not sent:
+            return "📝 초안"                  # 만들었지만 아직 안 보냄
+        try:
+            d = datetime.fromisoformat(sent.replace("Z", "+00:00"))
+            days = (datetime.now(d.tzinfo) - d).days
+        except Exception:
+            days = -1
+        try:
+            fu = int(row.get("팔로업 횟수", 0) or 0)
+        except Exception:
+            fu = 0
+        label = f"발송 {days}일" if days >= 0 else "발송"
+        if fu:
+            label += f" · 팔로업{fu}"
+        if days >= 7 and fu < 2:
+            label = "🔔 " + label            # 팔로업할 때가 됨
+        return label
+
+    if "메일 스레드ID" in main_df.columns:
+        display_df["메일"] = main_df.apply(_mail_state, axis=1)
+
     # 순번 열 추가 (역순) — 최근 수집이 큰 숫자
     # 표는 수집일 desc로 정렬됨 → 위쪽이 최신 → 위쪽 행에 N, 아래로 갈수록 1
     # 신규 수집 시 가장 큰 번호 부여 → 누적 흐름 한눈에
@@ -1072,6 +1157,28 @@ if len(filtered) > 0:
         gb.configure_column("전화 (수기)", headerName="연락처", width=140)
     if "마케팅 활동 단계 (자동)" in display_df.columns:
         gb.configure_column("마케팅 활동 단계 (자동)", headerName="마케팅 활동", width=130)
+
+    # ⭐ 메일 상태 — 회신 온 브랜드는 빨간 굵은 글씨로 (놓치면 안 되는 신호)
+    if "메일" in display_df.columns:
+        gb.configure_column(
+            "메일",
+            headerName="메일",
+            width=130,
+            cellStyle=JsCode("""
+            function(params) {
+                var v = params.value || '';
+                if (v.indexOf('회신') >= 0) {
+                    return {'color': '#dc2626', 'fontWeight': '700',
+                            'text-align': 'center'};
+                }
+                if (v.indexOf('🔔') >= 0) {
+                    return {'color': '#e8590c', 'fontWeight': '600',
+                            'text-align': 'center'};
+                }
+                return {'color': '#6b7280', 'text-align': 'center'};
+            }
+            """),
+        )
 
     # 스토어 링크 컬럼 — "열기" 텍스트 + 클릭 시 새 탭으로 이동
     # ⚠️ AG Grid는 React 래핑이라 DOM 엘리먼트 직접 반환 불가
