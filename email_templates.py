@@ -498,6 +498,82 @@ def _build_service(row: dict) -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────
+# 팔로업 (1차 메일에 답이 없을 때 같은 대화에 붙이는 짧은 리마인드)
+#   원칙:
+#     - 짧게. 3~4줄. 첫 메일을 다시 설명하지 않는다 (스레드에 그대로 있다).
+#     - 재촉하지 않는다. "지금이 아니면 언제쯤"으로 문을 열어둔다.
+#     - 최대 2회. 그 이상은 스팸으로 인식된다.
+#   1차와 2차의 논조를 다르게 둔다 (같은 말 두 번 하면 읽지도 않는다).
+# ─────────────────────────────────────────────────────────
+def build_followup(row: dict, round_no: int = 1) -> dict:
+    """팔로업 메일. round_no: 1(첫 리마인드) / 2(마지막)"""
+    brand = (row.get("brand_name") or "").strip()
+    manual = (row.get("manual_email") or "").strip()
+    email = manual or (row.get("auto_email") or "").strip()
+
+    base = {"to": email, "subject": "", "html": "", "plain": "",
+            "template": f"followup{round_no}", "skip": False, "skip_reason": ""}
+    if not brand:
+        base.update(skip=True, skip_reason="브랜드명 없음")
+        return base
+    if not email or "@" not in email:
+        base.update(skip=True, skip_reason="이메일 없음")
+        return base
+
+    is_service = ("서비스" in (row.get("category") or "")
+                  or "서비스" in (row.get("product_category") or ""))
+    _, region = _detect_region(row)
+
+    if round_no <= 1:
+        # 1차: 새로운 정보 하나를 얹는다 (같은 말 반복 X)
+        if is_service and region:
+            body_lines = [
+                f"지난주 보내드린 제안 관련해 한 가지만 덧붙입니다.",
+                f"키오스크 광고는 월 단위로 열리고 지역별로 자리가 정해져 있어, "
+                f"{region} 권역은 노출 자리가 많지 않습니다.",
+                f"{brand}에 맞는 규모로 먼저 짚어보고 싶습니다.",
+            ]
+        else:
+            body_lines = [
+                "지난주 보내드린 제안 관련해 한 가지만 덧붙입니다.",
+                "조리원 광고는 월 단위로 열리기 때문에, 시작 시점에 따라 "
+                "노출이 닿는 산모가 완전히 달라집니다.",
+                f"{brand}에 맞는 규모로 먼저 짚어보고 싶습니다.",
+            ]
+        closing = ("15분 통화면 충분합니다. 편하신 시간만 알려주시면 "
+                   "맞춰서 연락드리겠습니다.")
+    else:
+        # 2차(마지막): 부담을 완전히 내려놓고 문만 열어둔다
+        body_lines = [
+            "앞서 두 번 연락드렸는데, 지금은 검토 시점이 아닌 것 같습니다.",
+            "더 보내드리지 않겠습니다.",
+            "다만 산후조리원 쪽 접점이 필요해지는 시점이 오면 그때 편하게 "
+            "연락 주세요. 자료는 그대로 두겠습니다.",
+        ]
+        closing = "그동안 감사했습니다."
+
+    subject = f"{brand} 제안 관련 — 다시 한번 연락드립니다"
+    if round_no > 1:
+        subject = f"{brand} 제안 관련 — 마지막으로 남깁니다"
+
+    inner = (
+        f'안녕하세요, <b>{_esc(brand)}</b> 담당자님.<br>'
+        '셀픽이앤에스 서민지입니다.<br><br>'
+        + "<br>".join(_esc(l) for l in body_lines)
+        + f'<br><br>{_esc(closing)}<br><br>{SIG_HTML}'
+    )
+    plain = (
+        f"안녕하세요, {brand} 담당자님.\n"
+        "셀픽이앤에스 서민지입니다.\n\n"
+        + "\n".join(body_lines)
+        + f"\n\n{closing}\n\n{SIG_PLAIN}"
+    )
+
+    base.update(subject=subject, html=_wrap_html(inner), plain=plain)
+    return base
+
+
 def build_email(row: dict) -> dict:
     """브랜드 row → 영업메일. 이메일 없으면 skip=True."""
     brand = (row.get("brand_name") or "").strip()

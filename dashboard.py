@@ -1641,10 +1641,22 @@ if len(filtered) > 0:
                                 st.warning(f"초안 보류: {_bb['skip_reason']}")
                             else:
                                 try:
-                                    _gd.create_draft(
+                                    _ids = _gd.create_draft(
                                         _svc2, _bb["to"], _bb["subject"],
                                         _bb["html"], _bb["plain"],
                                     )
+                                    # 발송·회신 추적용 ID 기록 (메일_추적.py 가 사용)
+                                    try:
+                                        _sb2.table(TABLE_NAME).update({
+                                            "mail_draft_id": _ids.get("draft_id", ""),
+                                            "mail_thread_id": _ids.get("thread_id", ""),
+                                            "mail_sent_at": None,
+                                            "mail_replied_at": None,
+                                            "mail_followup_count": 0,
+                                            "mail_last_followup_at": None,
+                                        }).eq("brand_name", sel_brand).execute()
+                                    except Exception as _e2:
+                                        st.caption(f"(추적 정보 저장 못 함 — {_e2})")
                                     st.success(
                                         f"✅ 초안 생성 완료 → {_bb['to']}  "
                                         f"(Gmail 임시보관함 확인)"

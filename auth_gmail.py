@@ -17,7 +17,13 @@ try:
 except Exception:
     pass
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.compose"]
+# gmail_drafts.py 와 반드시 같아야 한다 (다르면 token.json 이 무효가 된다)
+#   compose  = 초안 생성 (발송 X)
+#   readonly = 보낸편지함·회신 확인 (읽기 전용 — 발송/삭제 불가)
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 if not os.path.exists("credentials.json"):
     print("❌ credentials.json 이 없습니다.")
@@ -41,4 +47,6 @@ with open("token.json", "w", encoding="utf-8") as f:
     f.write(creds.to_json())
 
 print("\n✅ 인증 완료! token.json 이 생성되었습니다.")
-print("   이제 대시보드에서 '영업메일 초안 일괄 생성' 버튼을 쓸 수 있어요.")
+print("   - 초안 생성: 대시보드 셀러 디테일의 '메일 초안 만들기' 버튼")
+print("   - 발송·회신 추적: venv\\Scripts\\python 메일_추적.py")
+print("   (발송은 자동으로 하지 않습니다 — 읽기 권한은 확인 용도입니다)")

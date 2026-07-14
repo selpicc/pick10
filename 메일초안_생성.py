@@ -54,6 +54,27 @@ def _save_drafted(s: set):
         pass
 
 
+def _save_mail_ids(sb, brand: str, ids: dict):
+    """초안ID·스레드ID를 sellers 테이블에 기록 (발송·회신 추적용).
+
+    새 초안을 만들면 이전 추적 기록(발송일·회신일·팔로업 횟수)은 초기화한다.
+    같은 브랜드에 메일을 새로 쓰는 것이므로 옛 상태를 끌고 가면 안 된다.
+    컬럼이 아직 없으면(SQL 미실행) 조용히 넘어간다 — 초안 생성은 성공했으므로
+    그걸 실패로 만들지 않는다.
+    """
+    try:
+        sb.table(TABLE_NAME).update({
+            "mail_draft_id": ids.get("draft_id", ""),
+            "mail_thread_id": ids.get("thread_id", ""),
+            "mail_sent_at": None,
+            "mail_replied_at": None,
+            "mail_followup_count": 0,
+            "mail_last_followup_at": None,
+        }).eq("brand_name", brand).execute()
+    except Exception as e:
+        print(f"     (추적 정보 저장 못 함 — {e})")
+
+
 def main():
     args = sys.argv[1:]
     only_new = "--all" not in args
@@ -144,10 +165,13 @@ def main():
             skipped.append((bn, "이미 초안 생성됨"))
             continue
         try:
-            gmail_drafts.create_draft(
+            ids = gmail_drafts.create_draft(
                 service, built["to"], built["subject"],
                 built["html"], built["plain"],
             )
+            # ⭐ 초안ID·스레드ID를 DB에 남긴다 — 나중에 '보냈는지 / 회신 왔는지'를
+            #   Gmail에 물어보려면 이 두 개가 필요하다. (메일_추적.py)
+            _save_mail_ids(sb, bn, ids)
             created.append((bn, built["to"], built["template"]))
             drafted.add(bn)
             print(f"  ✅ {bn} → {built['to']} ({built['template']}형)")

@@ -62,7 +62,9 @@ def _():
     py_compile.compile("collect_5.py", doraise=True)
     py_compile.compile("dashboard.py", doraise=True)
     py_compile.compile("메일초안_생성.py", doraise=True)
-    return "순수모듈 6개 import + 스크립트 3개 문법 정상"
+    py_compile.compile("메일_추적.py", doraise=True)
+    py_compile.compile("auth_gmail.py", doraise=True)
+    return "순수모듈 6개 import + 스크립트 5개 문법 정상"
 
 
 # ─────────────────────────────────────────────────────────
@@ -221,6 +223,28 @@ def _():
     })
     assert auto_only["skip"], "미발견 자동수집값이 그대로 통과함 (보류해야 함)"
     return "제품형/서비스형 분기 + 금액 미노출 + 레퍼런스/CTA + 수기이메일 우선 + skip 정상"
+
+
+@check("3-5b. 팔로업 메일 (1차/2차 + 금액 미노출)")
+def _():
+    from email_templates import build_followup
+    row = {
+        "brand_name": "테스트브랜드", "auto_email": "a@b.kr",
+        "category": "임산부 뷰티", "auto_biz_confidence": "높음",
+    }
+    f1 = build_followup(row, round_no=1)
+    f2 = build_followup(row, round_no=2)
+    assert not f1["skip"] and not f2["skip"], "팔로업 생성 실패"
+    assert f1["plain"] != f2["plain"], "1차·2차 팔로업 문구가 같음 (같은 말 반복 X)"
+    # 마지막 팔로업은 '더 안 보내겠다'고 닫아야 한다 (재촉 금지)
+    assert "더 보내드리지 않" in f2["plain"], "2차 팔로업이 문을 닫지 않음"
+    # 팔로업에도 금액은 안 들어간다 (첫 메일과 같은 원칙)
+    for m in ("만원", "150원", "vat", "VAT"):
+        for t in (f1["plain"], f2["plain"]):
+            assert m not in t, f"팔로업에 가격 문구('{m}')가 들어감"
+    # 이메일 없으면 skip
+    assert build_followup({"brand_name": "노메일"}, 1)["skip"], "이메일 없음 skip 실패"
+    return "1차/2차 분기 · 마지막은 문 닫기 · 금액 미노출 · skip 정상"
 
 
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
