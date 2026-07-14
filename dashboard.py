@@ -102,16 +102,24 @@ EXCLUDE_IDS = {"main", "search", "category", "popup"}
 MANUAL_COLUMNS = SUPA_MANUAL_COLUMNS
 
 # 영업 상태 선택지 (드롭다운)
+# 2026-07 정리: 미접촉·응답 대기·미팅 중 제거, '컨택중' 하나로 통합.
+#   (미접촉 = 빈값과 사실상 같고, 응답대기/미팅중은 실무에서 '컨택중' 하나로 충분)
 SALES_STATUS_OPTIONS = [
     "",            # 빈값 (기본)
-    "미접촉",
     "메일 발송",
-    "응답 대기",
-    "미팅 중",
+    "컨택중",
     "계약 완료",
     "거절",
     "기타) 패싱",   # 의도적 보류/스킵 (다음 라운드에 다시 검토)
 ]
+
+# 옛 데이터 호환 — 사라진 상태값이 DB에 남아 있어도 드롭다운/필터가 깨지지 않게 매핑.
+#   (수기로 입력해둔 값을 조용히 날리지 않는다)
+LEGACY_STATUS_MAP = {
+    "미접촉": "",
+    "응답 대기": "컨택중",
+    "미팅 중": "컨택중",
+}
 
 
 # fetch_smartstore_link() / resolve_real_store_url() / needs_fix() 제거됨 (2026-07)
@@ -148,8 +156,11 @@ def parse_marketing_exposure(text) -> dict:
 # 시장 미적합 브랜드 검사 + 삭제 (A+B+C 필터 기반)
 # 영업 진행 중인 브랜드는 자동 보호
 # ─────────────────────────────────────────────────────────────────
+# 영업 진행 중이면 자동 삭제에서 보호. 옛 상태값(응답 대기·미팅 중)도 그대로 두어
+# 아직 DB에 남아 있는 legacy 행이 보호에서 빠지지 않게 한다.
 PROTECTED_STATUSES = {
-    "메일 발송", "응답 대기", "미팅 중", "계약 완료", "거절", "기타) 패싱"
+    "메일 발송", "컨택중", "계약 완료", "거절", "기타) 패싱",
+    "응답 대기", "미팅 중",   # legacy
 }
 
 
@@ -748,7 +759,8 @@ else:
 # 마케팅 등급은 비노출 (마케팅 활동 단계로 통합됨)
 selected_grades = None
 
-# 마케팅 활동 단계 (도입기/성장기/확장기) — legacy 자동 정규화
+# 마케팅 활동 단계 필터 제거됨 (2026-07, 사용자 요청) — 사이드바·표 상단 양쪽.
+#   단계 값 자체는 셀러 디테일에 그대로 표시되므로 _단계명 정규화는 유지한다.
 selected_sizes = None
 size_col = "마케팅 활동 단계 (자동)"
 if size_col in df.columns:
@@ -757,13 +769,6 @@ if size_col in df.columns:
     # Legacy → 신규 매핑 (옛 데이터 "초기/안정기"를 새 단계로 정규화)
     LEGACY_STAGE_MAP = {"초기": "도입기", "안정기": "확장기"}
     df["_단계명"] = df["_단계명"].replace(LEGACY_STAGE_MAP)
-    # 사이드바 표시는 항상 3단계 (legacy는 위에서 이미 매핑됨)
-    all_sizes = ["도입기", "성장기", "확장기"]
-    selected_sizes = st.sidebar.multiselect(
-        "마케팅 활동 단계",
-        all_sizes,
-        default=all_sizes,
-    )
 
 # 카테고리
 selected_cats = None
@@ -802,10 +807,7 @@ filtered = df[
     (df["Selpic 점수"] >= score_range[0])
     & (df["Selpic 점수"] <= score_range[1])
 ]
-# 마케팅 등급은 비노출 (필터 미적용)
-if selected_sizes is not None and "_단계명" in filtered.columns:
-    # 저장된 텍스트의 단계명만 비교 (예: "확장기 — 카페..." → "확장기")
-    filtered = filtered[filtered["_단계명"].isin(selected_sizes)]
+# 마케팅 등급·활동 단계는 필터 미적용 (필터 UI 제거됨 — 2026-07)
 if selected_cats is not None:
     filtered = filtered[filtered["발견 카테고리"].isin(selected_cats)]
 if selected_statuses is not None and "영업 상태 (수기)" in filtered.columns:
@@ -844,7 +846,7 @@ st.markdown(f"## 영업 후보")
 # 멀티 셀렉트 → 여러 값 동시 선택 가능 / 빈 값 = 전체
 # 브랜드 검색을 맨 왼쪽 — 가장 자주 쓰는 필터
 # ─────────────────────────────────────────────────────────────────
-ft_col1, ft_col2, ft_col3, ft_col4, ft_col5 = st.columns([1.4, 1.4, 1.4, 1.4, 1.5])
+ft_col1, ft_col2, ft_col3, ft_col5 = st.columns([1.4, 1.4, 1.4, 2.9])
 
 with ft_col1:
     sel_brand_search_tbl = st.text_input(
@@ -884,17 +886,8 @@ with ft_col3:
         label_visibility="visible",
     )
 
-with ft_col4:
-    # 표시는 3단계만 — legacy 데이터는 내부 매핑으로 처리
-    stage_options = ["도입기", "성장기", "확장기"]
-    sel_grades_tbl = st.multiselect(
-        "마케팅 활동",
-        options=stage_options,
-        default=[],
-        placeholder="전체",
-        key="tbl_filter_grade",
-        label_visibility="visible",
-    )
+# '마케팅 활동' 필터 제거됨 (2026-07, 사용자 요청)
+#   단계 정보 자체는 셀러 디테일에 그대로 표시된다.
 
 # 필터 적용
 if sel_categories_tbl:
@@ -903,9 +896,6 @@ if sel_statuses_tbl:
     filtered = filtered[
         filtered["영업 상태 (수기)"].fillna("").astype(str).isin(sel_statuses_tbl)
     ]
-if sel_grades_tbl and "_단계명" in filtered.columns:
-    # 단계명 추출하여 비교 (저장값: "확장기 — 카페...")
-    filtered = filtered[filtered["_단계명"].isin(sel_grades_tbl)]
 if sel_brand_search_tbl.strip():
     keyword = sel_brand_search_tbl.strip().lower()
     filtered = filtered[
@@ -916,7 +906,6 @@ with ft_col5:
     active_filters = sum([
         bool(sel_categories_tbl),
         bool(sel_statuses_tbl),
-        bool(sel_grades_tbl),
         bool(sel_brand_search_tbl.strip()),
     ])
     st.markdown(
@@ -1507,6 +1496,8 @@ if len(filtered) > 0:
                 #   - 영업상태 → 활동메모 위로 이동 (하단으로 재배치)
                 # current_status는 하단 selectbox에서 사용
                 current_status = str(sel_full.get("영업 상태 (수기)", ""))
+                # 옛 상태값(미접촉/응답 대기/미팅 중)이 저장돼 있으면 새 값으로 보여준다
+                current_status = LEGACY_STATUS_MAP.get(current_status, current_status)
                 if current_status not in SALES_STATUS_OPTIONS:
                     current_status = ""
 
