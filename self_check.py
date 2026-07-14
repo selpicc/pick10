@@ -247,6 +247,28 @@ def _():
     return "1차/2차 분기 · 마지막은 문 닫기 · 금액 미노출 · skip 정상"
 
 
+@check("3-5c. 영업 상태 자동변경 — 사람이 정한 값 보호")
+def _():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mail_track", "메일_추적.py")
+    mt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mt)
+    f = mt._auto_status
+
+    # 비어 있으면 자동으로 채운다
+    assert f("", sent=True, replied=False) == "메일 발송", "발송 → 상태 자동설정 실패"
+    assert f("", sent=True, replied=True) == "컨택중", "회신 → 상태 자동설정 실패"
+    # 프로그램이 넣은 '메일 발송'은 회신이 오면 '컨택중'으로 승격 가능
+    assert f("메일 발송", sent=True, replied=True) == "컨택중", "회신 시 승격 실패"
+    # ⚠ 사람이 정한 값은 절대 덮어쓰지 않는다 (덮어쓰면 수기 입력이 조용히 날아감)
+    for human in ("계약 완료", "거절", "기타) 패싱", "컨택중"):
+        assert f(human, sent=True, replied=True) == "", \
+            f"사람이 정한 값('{human}')을 덮어씀"
+    # 바꿀 이유가 없으면 그대로 둔다
+    assert f("메일 발송", sent=True, replied=False) == "", "불필요한 재설정 발생"
+    return "발송/회신 자동설정 · 사람이 정한 값 4종 보호 · 중복 갱신 없음"
+
+
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
 def _():
     from brand_intro import _is_safe

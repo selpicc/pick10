@@ -5,7 +5,9 @@
 
   ① 보냈는지 확인   — 초안이 임시보관함에서 사라지고 보낸편지함에 있으면 발송됨
   ② 회신 왔는지 확인 — 같은 대화에 상대방 메시지가 있으면 회신 (자동응답은 제외)
-  ③ 팔로업          — 보낸 지 N일 지났는데 답이 없으면 같은 대화에 리마인드 초안
+  ③ 영업 상태 자동  — 발송 → '메일 발송' / 회신 → '컨택중'
+                     ⚠ 사람이 바꿔놓은 값(계약 완료·거절·패싱·컨택중)은 절대 안 건드림
+  ④ 팔로업          — 보낸 지 N일 지났는데 답이 없으면 같은 대화에 리마인드 초안
 
 콜드메일 회신의 상당수는 첫 메일이 아니라 팔로업에서 나온다.
 다만 재촉은 역효과다 — 최대 2회, 7일 간격이 기본값.
@@ -28,10 +30,15 @@ import io
 import os
 from datetime import datetime, timezone, timedelta
 
-try:
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-except Exception:
-    pass
+def _force_utf8_stdout():
+    """콘솔(cp949)에서 한글·이모지가 깨지지 않게. 스크립트로 실행할 때만 호출한다.
+    import 될 때 하면 부르는 쪽(self_check 등)의 stdout까지 갈아엎어 출력이 깨진다.
+    """
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    except Exception:
+        pass
+
 
 from supabase_client import get_supabase_client, TABLE_NAME
 from email_templates import build_followup
@@ -42,6 +49,32 @@ FOLLOWUP_MAX = 2            # 최대 팔로업 횟수 (그 이상은 스팸)
 
 # 팔로업을 보내면 안 되는 상태 (사람이 이미 판단을 내린 브랜드)
 STOP_STATUSES = {"계약 완료", "거절", "기타) 패싱"}
+
+# ─────────────────────────────────────────────────────────
+# 영업 상태 자동 변경 — 사람이 내린 판단은 절대 덮어쓰지 않는다
+#   발송 감지 → "메일 발송" / 회신 감지 → "컨택중"
+#   단, 아래 두 경우에만 바꾼다:
+#     ① 상태가 비어 있다
+#     ② 상태가 '프로그램이 넣었을 법한 값'(메일 발송) 그대로다
+#   밍이 계약 완료·거절·패싱·컨택중으로 바꿔놨으면 손대지 않는다.
+#   (수기값을 조용히 되돌리면 "내가 바꾼 게 왜 사라졌지?"가 된다)
+# ─────────────────────────────────────────────────────────
+AUTO_SET_SENT = "메일 발송"
+AUTO_SET_REPLIED = "컨택중"
+# 이 값들만 자동 변경 대상. 그 외(계약 완료/거절/패싱/컨택중)는 사람 판단 → 보호.
+OVERWRITABLE = {"", AUTO_SET_SENT}
+
+
+def _auto_status(current: str, sent: bool, replied: bool) -> str:
+    """자동으로 바꿔야 할 새 상태. 바꾸면 안 되면 빈 문자열."""
+    cur = (current or "").strip()
+    if cur not in OVERWRITABLE:
+        return ""                       # 사람이 정한 값 → 보호
+    if replied and cur != AUTO_SET_REPLIED:
+        return AUTO_SET_REPLIED
+    if sent and cur != AUTO_SET_SENT and not replied:
+        return AUTO_SET_SENT
+    return ""
 
 
 def _now():
@@ -133,10 +166,22 @@ def main():
             upd["mail_sent_at"] = st["sent_at"]
         if st["replied"] and not r.get("mail_replied_at"):
             upd["mail_replied_at"] = st["replied_at"]
+
+        # 영업 상태 자동 변경 (사람이 정한 값은 보호 — _auto_status 참고)
+        new_status = _auto_status(
+            r.get("sales_status") or "",
+            bool(st["sent"] or r.get("mail_sent_at")),
+            bool(st["replied"] or r.get("mail_replied_at")),
+        )
+        if new_status:
+            upd["sales_status"] = new_status
+
         if upd:
             try:
                 sb.table(TABLE_NAME).update(upd).eq("brand_name", bn).execute()
                 r.update(upd)
+                if new_status:
+                    print(f"  · {bn} — 영업 상태 → '{new_status}' (자동)")
             except Exception as e:
                 print(f"  ⚠ {bn} DB 갱신 실패: {e}")
 
@@ -225,4 +270,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _force_utf8_stdout()
     main()
