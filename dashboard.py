@@ -114,96 +114,10 @@ SALES_STATUS_OPTIONS = [
 ]
 
 
-def fetch_smartstore_link(brand_name: str) -> str:
-    """브랜드명으로 검색 → 그 셀러의 link 받기 (검색 API 응답)"""
-    if not brand_name or not CLIENT_ID or not CLIENT_SECRET:
-        return ""
-    api_url = "https://openapi.naver.com/v1/search/shop.json"
-    headers = {
-        "X-Naver-Client-Id": CLIENT_ID,
-        "X-Naver-Client-Secret": CLIENT_SECRET,
-    }
-    params = {"query": brand_name, "display": 10, "sort": "sim"}
-    try:
-        resp = requests.get(api_url, headers=headers, params=params, timeout=10)
-        if resp.status_code == 200:
-            items = resp.json().get("items", [])
-            for item in items:
-                if (
-                    item.get("mallName", "").strip() == brand_name.strip()
-                    and "smartstore.naver.com" in item.get("link", "")
-                ):
-                    return item.get("link", "")
-    except Exception:
-        pass
-    return ""
-
-
-def resolve_real_store_url(link: str) -> str:
-    """검색 API link → redirect 추적 + HTML 파싱 → 진짜 storeId 형태 URL"""
-    if not link:
-        return ""
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-        "Accept-Encoding": "gzip, deflate, br",
-    }
-
-    def match_url(url: str) -> str:
-        if not url:
-            return ""
-        m = re.match(r"https?://smartstore\.naver\.com/([^/?#]+)", url)
-        if m and m.group(1) not in EXCLUDE_IDS:
-            return f"https://smartstore.naver.com/{m.group(1)}"
-        m = re.match(r"https?://brand\.naver\.com/([^/?#]+)", url)
-        if m and m.group(1) not in EXCLUDE_IDS:
-            return f"https://brand.naver.com/{m.group(1)}"
-        return ""
-
-    try:
-        resp = requests.get(link, headers=headers, allow_redirects=True, timeout=15)
-        # 1) redirect 후 최종 URL
-        result = match_url(resp.url)
-        if result:
-            return result
-
-        # 2) HTML에서 og:url
-        html = resp.text or ""
-        og_match = re.search(
-            r'<meta\s+property=["\']og:url["\']\s+content=["\']([^"\']+)["\']',
-            html, re.IGNORECASE,
-        )
-        if og_match:
-            result = match_url(og_match.group(1))
-            if result:
-                return result
-
-        # 3) HTML에서 canonical
-        canonical_match = re.search(
-            r'<link\s+rel=["\']canonical["\']\s+href=["\']([^"\']+)["\']',
-            html, re.IGNORECASE,
-        )
-        if canonical_match:
-            result = match_url(canonical_match.group(1))
-            if result:
-                return result
-
-        # 4) HTML 본문의 첫 smartstore/brand 링크
-        for sid in re.findall(r"https?://smartstore\.naver\.com/([a-zA-Z0-9_\-]+)", html):
-            if sid not in EXCLUDE_IDS:
-                return f"https://smartstore.naver.com/{sid}"
-        for bid in re.findall(r"https?://brand\.naver\.com/([a-zA-Z0-9_\-]+)", html):
-            if bid not in EXCLUDE_IDS:
-                return f"https://brand.naver.com/{bid}"
-    except Exception:
-        pass
-    return ""
+# fetch_smartstore_link() / resolve_real_store_url() / needs_fix() 제거됨 (2026-07)
+#   '빈 스토어 채우기' 버튼 전용 함수들이었고, 버튼과 함께 삭제했다.
+#   같은 기능이 필요하면 독립 스크립트가 그대로 있다:
+#     venv\Scripts\python fix_smartstore_urls.py
 
 
 def parse_marketing_exposure(text) -> dict:
@@ -225,85 +139,9 @@ def parse_marketing_exposure(text) -> dict:
     return result
 
 
-def needs_fix(addr: str) -> bool:
-    """이 주소가 갱신 필요한지 판정.
-    - 빈 값
-    - 검색 페이지 fallback
-    - /main/products/ 통합 URL (일부 셀러는 로그인 redirect됨 → 진짜 storeId 필요)
-    """
-    if not addr:
-        return True
-    if "search.shopping.naver.com" in addr:
-        return True
-    if "/main/products/" in addr:
-        return True
-    return False
 
-
-def fill_empty_urls_in_all_csvs() -> dict:
-    """Supabase에서 갱신 필요한 스마트스토어 URL 일괄 보강.
-
-    영구 보장 패턴 — 빈 칸 절대 안 남김:
-      1. 검색 API + redirect 추적 (성공: 진짜 셀러 메인 URL)
-      2. 실패 시 검색 페이지 URL fallback (항상 작동)
-    """
-    sb = get_supabase_client()
-    if not sb:
-        return {"fixed": 0, "not_found": [], "files": 0}
-
-    fixed_count = 0
-    fallback_count = 0
-
-    try:
-        result = sb.table(TABLE_NAME).select("brand_name, smartstore_url").execute()
-        for row in result.data:
-            addr = (row.get("smartstore_url") or "").strip()
-            if not needs_fix(addr):
-                continue
-            brand = (row.get("brand_name") or "").strip()
-            if not brand:
-                continue
-
-            # 3중 fallback 전략 (검색 페이지는 최후 안전망)
-            # 1순위: redirect 추적 → 셀러 메인 URL
-            # 2순위: API 원본 link → 상품 상세 페이지 (진짜 스마트스토어)
-            # 3순위 (최후): 검색 페이지 — API link도 없는 비정상 케이스
-            real_url = ""
-            link = fetch_smartstore_link(brand)
-            if link:
-                real_url = resolve_real_store_url(link)
-
-            # 2차: redirect 실패 → API 원본 link 보존 (상품 페이지)
-            if not real_url and link and (
-                "smartstore.naver.com" in link or "brand.naver.com" in link
-            ):
-                real_url = link
-                fallback_count += 1   # 상품 페이지 fallback 카운트
-
-            # 3차 (최후): API link도 없으면 검색 페이지
-            if not real_url:
-                real_url = (
-                    f"https://search.shopping.naver.com/search/all?"
-                    f"query={urllib.parse.quote(brand)}"
-                )
-                fallback_count += 1
-
-            sb.table(TABLE_NAME).update(
-                {"smartstore_url": real_url}
-            ).eq("brand_name", brand).execute()
-            fixed_count += 1
-            time.sleep(0.3)
-    except Exception:
-        pass
-
-    not_found_list = []
-    if fallback_count > 0:
-        not_found_list.append(
-            f"{fallback_count}건은 검색 페이지 URL로 fallback "
-            "(클릭 시 그 브랜드 검색 결과로 이동)"
-        )
-
-    return {"fixed": fixed_count, "not_found": not_found_list, "files": 1}
+# fill_empty_urls_in_all_csvs() 제거됨 (2026-07) — '빈 스토어 채우기' 버튼과 함께 삭제.
+# 이 함수를 부르는 곳이 더 이상 없다.
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -620,7 +458,6 @@ if collect_mode == "자동 (전체)":
             "</div>",
             unsafe_allow_html=True,
         )
-    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
 
 elif collect_mode == "카테고리 지정":
     c_col1, c_col2, c_col3, c_col4 = st.columns([1.4, 0.7, 1.5, 2.4])
@@ -650,7 +487,6 @@ elif collect_mode == "카테고리 지정":
             "</div>",
             unsafe_allow_html=True,
         )
-    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
 
 else:   # 키워드 입력
     k_col1, k_col2, k_col3 = st.columns([3.5, 0.7, 1.5])
@@ -675,7 +511,6 @@ else:   # 키워드 입력
             key="collect_btn_kw",
             disabled=not collect_keywords.strip(),
         )
-    # 빈 스토어 채우기 버튼은 메인 표 상단으로 이동됨
     st.markdown(
         "<div style='color: #6b7280; font-size: 12px; margin-top: 6px;'>"
         "쉼표(,)로 여러 키워드 가능 · 각 키워드별 검색 후 점수 상위 통합 추출"
@@ -884,116 +719,11 @@ if df.empty:
     st.stop()
 
 
-# ─────────────────────────────────────────────────────────────────
-# ✉️ 영업메일 초안 일괄 생성 (완전자동)
-#   - 이메일 있는 브랜드 → 템플릿 본문 → Gmail '초안' 생성 (발송 X)
-#   - 첨부·전송은 사용자가 Gmail에서 직접
-#   - 중복 방지: drafted_brands.json 에 생성한 브랜드 기록
-# ─────────────────────────────────────────────────────────────────
-import json as _json_mail
-
-_DRAFTED_PATH = "drafted_brands.json"
-
-
-def _load_drafted() -> set:
-    if os.path.exists(_DRAFTED_PATH):
-        try:
-            with open(_DRAFTED_PATH, encoding="utf-8") as f:
-                return set(_json_mail.load(f))
-        except Exception:
-            return set()
-    return set()
-
-
-def _save_drafted(s: set):
-    try:
-        with open(_DRAFTED_PATH, "w", encoding="utf-8") as f:
-            _json_mail.dump(sorted(s), f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-
-with st.expander("✉️ 영업메일 초안 일괄 생성 (Gmail 임시보관함)", expanded=False):
-    st.caption(
-        "이메일이 수집된 브랜드별로 맞춤 영업메일을 만들어 Gmail **초안**으로 저장합니다. "
-        "발송은 하지 않아요 — 초안에서 회사소개서 파일을 첨부한 뒤 직접 보내시면 됩니다. "
-        "(최초 1회 Gmail 연동 필요 — Gmail_연동_설정가이드.md 참고)"
-    )
-    _mc1, _mc2 = st.columns([1, 2])
-    with _mc1:
-        _gen_mail = st.button("영업메일 초안 일괄 생성", use_container_width=True,
-                              key="gen_mail_btn")
-    with _mc2:
-        _only_new = st.checkbox("이미 초안 만든 브랜드는 건너뛰기", value=True,
-                                key="mail_only_new")
-
-    if _gen_mail:
-        try:
-            from email_templates import build_email
-            import gmail_drafts
-            _svc = gmail_drafts.get_service()
-        except RuntimeError as _e:
-            _svc = None
-            st.error(str(_e))
-        except Exception as _e:
-            _svc = None
-            st.error(f"모듈 로드 오류: {_e}")
-
-        if _svc is None:
-            st.warning(
-                "Gmail 인증이 아직 안 됐어요 (token.json 없음). "
-                "**Gmail_연동_설정가이드.md** 를 따라 최초 1회 설정한 뒤 다시 눌러주세요."
-            )
-        else:
-            _sb = get_supabase_client()
-            _rows, _pg = [], 0
-            while True:
-                _res = (
-                    _sb.table(TABLE_NAME).select("*")
-                    .range(_pg * 1000, _pg * 1000 + 999).execute()
-                )
-                _b = _res.data or []
-                _rows.extend(_b)
-                if len(_b) < 1000:
-                    break
-                _pg += 1
-
-            _drafted = _load_drafted()
-            _created, _skipped = [], []
-            with st.spinner(f"{len(_rows)}개 브랜드 확인 중..."):
-                for _r in _rows:
-                    _bn = (_r.get("brand_name") or "").strip()
-                    _built = build_email(_r)
-                    if _built["skip"]:
-                        _skipped.append((_bn, _built["skip_reason"]))
-                        continue
-                    if _only_new and _bn in _drafted:
-                        _skipped.append((_bn, "이미 초안 생성됨"))
-                        continue
-                    try:
-                        gmail_drafts.create_draft(
-                            _svc, _built["to"], _built["subject"],
-                            _built["html"], _built["plain"],
-                        )
-                        _created.append((_bn, _built["to"], _built["template"]))
-                        _drafted.add(_bn)
-                    except Exception as _e:
-                        _skipped.append((_bn, f"초안 생성 오류: {_e}"))
-            _save_drafted(_drafted)
-
-            st.success(f"✅ 초안 {len(_created)}건 생성 — Gmail 임시보관함을 확인하세요")
-            if _created:
-                _p = sum(1 for _, _, t in _created if t == "product")
-                _s = sum(1 for _, _, t in _created if t == "service")
-                st.write(f"제품형 {_p}건 · 서비스형 {_s}건")
-                st.write("· " + " / ".join(b for b, _, _ in _created))
-            if _skipped:
-                with st.expander(f"건너뛴 {len(_skipped)}건 (이메일 없음·중복 등)"):
-                    for _b, _reason in _skipped:
-                        st.write(f"- {_b} — {_reason}")
-
-
-st.markdown("---")
+# 영업메일 초안 일괄 생성 버튼은 제거됨 (2026-07).
+# 이유: 대시보드에서 전체 브랜드를 대상으로 한 번에 만들면 원치 않는 초안이 무더기로
+#       생긴다. 초안은 '방금 수집한 브랜드'에만 만드는 게 맞아서 명령으로 일원화했다.
+#   venv\Scripts\python 메일초안_생성.py --brands "브랜드A,브랜드B"
+# (위 712행의 구분선 하나로 충분 — 여기 있던 두 번째 구분선은 빈 띠를 만들어 삭제)
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1197,10 +927,6 @@ with ft_col5:
         unsafe_allow_html=True,
     )
 
-# 빈 스토어 채우기 클릭 처리 (표 상단 버튼)
-# fix_clicked_table 핸들러는 버튼 정의(CSV 옆) 이후로 이동
-
-
 def save_one_brand(brand: str, new_values: dict) -> bool:
     """한 셀러의 수기 컬럼 값을 Supabase에 update.
     new_values: 한글 컬럼명 → 값 (예: {'영업 상태 (수기)': '미팅 중'})
@@ -1276,49 +1002,6 @@ if len(filtered) > 0:
     _fallback_with_auto("이메일 (수기)", "이메일 (자동)")
     _fallback_with_auto("전화 (수기)",   "전화 (자동)")
 
-    # ── ✉️ 브랜드별 Gmail 작성 링크 (메일 주소 있는 브랜드만) ──
-    #   셀 클릭 → Gmail 작성창이 '맞춤 본문'으로 열림 (OAuth 불필요).
-    #   사용자는 회사소개서만 첨부해서 바로 보내기 누르면 됨.
-    from urllib.parse import quote as _q
-    try:
-        from email_templates import build_email as _bemail
-    except Exception:
-        _bemail = None
-    _mail_url_by_brand = {}
-    if _bemail is not None:
-        for _, _frow in filtered.iterrows():
-            _brand = str(_frow.get("브랜드명", "")).strip()
-            if not _brand:
-                continue
-            _email = (
-                str(_frow.get("이메일 (수기)", "")).strip()
-                or str(_frow.get("이메일 (자동)", "")).strip()
-            )
-            if not _email or "@" not in _email:
-                _mail_url_by_brand[_brand] = ""
-                continue
-            try:
-                _b = _bemail({
-                    "brand_name": _brand,
-                    "manual_email": _email,
-                    "auto_email": "",
-                    "category": str(_frow.get("발견 카테고리", "")).strip(),
-                    "product_category": str(_frow.get("상품 카테고리", "")).strip(),
-                    "flagship_product": str(_frow.get("주력상품명", "")).strip(),
-                    "auto_biz_confidence": "",
-                })
-                if _b.get("skip"):
-                    _mail_url_by_brand[_brand] = ""
-                    continue
-                _mail_url_by_brand[_brand] = (
-                    "https://mail.google.com/mail/?view=cm&fs=1"
-                    "&to=" + _q(_b["to"], safe="")
-                    + "&su=" + _q(_b["subject"], safe="")
-                    + "&body=" + _q(_b["plain"], safe="")
-                )
-            except Exception:
-                _mail_url_by_brand[_brand] = ""
-
     # 정렬: 수집일 desc만 적용 (안정 정렬)
     # 내부 동일 날짜는 load_all_data의 id desc 순서 그대로 유지 → 방금 INSERT한 게 위로
     if "수집일" in main_df.columns:
@@ -1351,13 +1034,11 @@ if len(filtered) > 0:
 
     display_df = main_df[safe_main_cols].copy()
     # ⭐ 2026-06: 마케팅 활동 단계는 리스트에서 숨김 (셀러 디테일에서만 노출).
-    #   해당 칸 자리에 브랜드별 'Gmail 메일 작성' 버튼을 넣는다.
     if "마케팅 활동 단계 (자동)" in display_df.columns:
         display_df = display_df.drop(columns=["마케팅 활동 단계 (자동)"])
-    # 메일 작성 링크 칸 (메일 주소 있는 브랜드만 값 채워짐 → 버튼 표시)
-    display_df["메일"] = display_df["브랜드명"].map(
-        lambda b: _mail_url_by_brand.get(str(b).strip(), "")
-    )
+    # 2026-07: 표의 '✉️ 메일' 컬럼(Gmail 작성창 링크) 제거.
+    #   그 링크는 DB 원본 행을 못 넘겨 지역 분기·AI 도입부가 빠진 반쪽 메일을 만들었다.
+    #   메일은 행을 클릭해 열리는 '셀러 디테일'의 초안 버튼으로 일원화한다.
 
     # 순번 열 추가 (역순) — 최근 수집이 큰 숫자
     # 표는 수집일 desc로 정렬됨 → 위쪽이 최신 → 위쪽 행에 N, 아래로 갈수록 1
@@ -1432,31 +1113,7 @@ if len(filtered) > 0:
             """),
         )
 
-    # ── ✉️ 메일 버튼 컬럼 — 클릭 시 Gmail 작성창이 맞춤 본문으로 열림 ──
-    #   값(Gmail URL)이 있는 브랜드만 '✉️ 메일'로 보이고, 없으면 빈 칸.
-    if "메일" in display_df.columns:
-        gb.configure_column(
-            "메일",
-            headerName="메일",
-            width=90,
-            valueFormatter=JsCode(
-                "function(params){ return params.value ? '✉️ 메일' : ''; }"
-            ),
-            cellStyle={
-                "color": "#dc2626",
-                "text-decoration": "underline",
-                "cursor": "pointer",
-                "text-align": "center",
-                "font-weight": "600",
-            },
-            onCellClicked=JsCode("""
-            function(params) {
-                if (params.value) {
-                    window.open(params.value, '_blank', 'noopener');
-                }
-            }
-            """),
-        )
+    # '✉️ 메일' 컬럼 제거됨 (2026-07) — 메일 초안은 행 클릭 → 셀러 디테일의 버튼으로.
 
     # 다중 선택 + 체크박스 (1열에 표시)
     # 행 클릭 = 그 행만 선택 (다른 선택 해제) → 디테일 열림
@@ -1610,11 +1267,11 @@ if len(filtered) > 0:
                             st.session_state["pending_delete_brands"] = []
                             st.rerun()
 
-    # CSV 다운로드 + 빈 스토어 채우기 (테이블 아래 액션 영역)
+    # CSV 다운로드 (테이블 아래 액션 영역)
     # 체크박스 선택 우선:
     #   - 1개 이상 체크: 체크된 행만 다운로드
     #   - 미체크: 현재 필터 결과 전체 다운로드
-    download_col1, download_col2, download_col3 = st.columns([1.3, 1, 3.7])
+    download_col1, download_col2 = st.columns([1.3, 4.7])
     with download_col1:
         # CSV 내보내기 시 비노출 컬럼 (사용자 요청)
         # 내부용·기술적 컬럼은 영업자에게 불필요
@@ -1718,29 +1375,8 @@ if len(filtered) > 0:
             use_container_width=True,
             disabled=(export_count == 0),
         )
-    with download_col2:
-        fix_clicked_table = st.button(
-            "빈 스토어 채우기",
-            use_container_width=True,
-            key="fix_btn_table",
-            help="스토어 주소가 비어있거나 검색 페이지로 fallback된 행을 다시 검색해 진짜 스마트스토어 URL로 갱신",
-        )
-
+    # '빈 스토어 채우기' 버튼 제거됨 (2026-07, 사용자 요청)
     # 일괄 삭제 expander 제거 — 메인 표 체크박스로 충분
-
-    # 빈 스토어 채우기 클릭 처리 (버튼 정의 직후)
-    if fix_clicked_table:
-        with st.spinner("빈 스토어 주소 갱신 중..."):
-            try:
-                result = fill_empty_urls_in_all_csvs()
-                st.cache_data.clear()
-                if result["fixed"] > 0:
-                    st.toast(f"✅ {result['fixed']}건 갱신 완료", icon="✅")
-                else:
-                    st.toast("이미 모두 정상입니다", icon="ℹ️")
-                st.rerun()
-            except Exception:
-                st.toast("갱신 중 오류 발생", icon="⚠️")
 
     # ─────────────────────────────────────────────────────────
     # 디테일 패널 — 선택된 행이 있을 때만
@@ -1947,42 +1583,82 @@ if len(filtered) > 0:
                         key=f"phone_{sel_brand}",
                     )
 
-                # ─── ✉️ 이 브랜드 맞춤 영업메일 (Gmail 작성창 열기, OAuth 불필요) ───
-                #   위 '이메일' 칸 값으로 Gmail 작성창이 '맞춤 본문'으로 열림.
-                #   오수집 이메일은 칸에서 고친 뒤 눌러도 그 값으로 열림.
-                #   사용자는 회사소개서만 첨부해서 바로 보내기 누르면 됨.
+                # ─── ✉️ 이 브랜드 영업메일 초안 만들기 (Gmail 임시보관함) ───
+                #   예전에는 Gmail '작성창'을 URL로 열었는데, 그 방식은 DB 원본 행을
+                #   못 넘겨서 지역 분기(김해 권역 등)와 AI 맞춤 도입부가 빠진 반쪽
+                #   메일이 나갔다. 그래서 명령(메일초안_생성.py)과 '완전히 같은 경로'로
+                #   초안을 만든다 — DB 원본 행 + AI 도입부 + Gmail 초안 API.
                 _to_mail = (new_email or "").strip()
                 if _to_mail and "@" in _to_mail:
-                    try:
-                        from urllib.parse import quote as _q2
-                        from email_templates import build_email as _be2
-                        _bb = _be2({
-                            "brand_name": sel_brand,
-                            "manual_email": _to_mail,
-                            "auto_email": "",
-                            "category": str(sel_full.get("발견 카테고리", "")).strip(),
-                            "product_category": str(sel_full.get("상품 카테고리", "")).strip(),
-                            "flagship_product": str(sel_full.get("주력상품명", "")).strip(),
-                            "auto_biz_confidence": "",
-                        })
-                        if _bb.get("skip"):
-                            st.caption(f"메일 작성 보류: {_bb['skip_reason']}")
+                    _mk = st.button(
+                        "✉️ 이 브랜드 메일 초안 만들기",
+                        key=f"mkdraft_{sel_brand}",
+                        help="Gmail 임시보관함에 초안을 만듭니다 (발송 X). "
+                             "위 이메일 칸의 주소로 만들어져요.",
+                    )
+                    st.caption(
+                        "Gmail 임시보관함에 초안이 생겨요. 셀픽 소개서를 첨부한 뒤 "
+                        "직접 보내시면 됩니다. (발송은 자동으로 안 함)"
+                    )
+                    if _mk:
+                        try:
+                            from email_templates import build_email as _be2
+                            from brand_intro import make_opener as _mko
+                            import gmail_drafts as _gd
+                            _svc2 = _gd.get_service()
+                        except RuntimeError as _e:
+                            _svc2 = None
+                            st.error(str(_e))
+                        except Exception as _e:
+                            _svc2 = None
+                            st.error(f"모듈 로드 오류: {_e}")
+
+                        if _svc2 is None:
+                            st.warning(
+                                "Gmail 연동이 아직 안 됐어요 (token.json 없음). "
+                                "**Gmail_연동_설정가이드.md** 대로 1회 설정한 뒤 다시 눌러주세요."
+                            )
                         else:
-                            _gurl = (
-                                "https://mail.google.com/mail/?view=cm&fs=1"
-                                "&to=" + _q2(_bb["to"], safe="")
-                                + "&su=" + _q2(_bb["subject"], safe="")
-                                + "&body=" + _q2(_bb["plain"], safe="")
+                            # DB 원본 행을 그대로 가져온다 (전화·주소 → 지역 분기에 필요)
+                            _sb2 = get_supabase_client()
+                            _res2 = (
+                                _sb2.table(TABLE_NAME).select("*")
+                                .eq("brand_name", sel_brand).limit(1).execute()
                             )
-                            st.link_button("✉️ Gmail로 맞춤 영업메일 작성", _gurl)
-                            st.caption(
-                                "새 탭에서 Gmail 작성창이 맞춤 본문으로 열려요. "
-                                "회사소개서 첨부 후 보내기."
-                            )
-                    except Exception as _e:
-                        st.caption(f"메일 작성 링크 생성 오류: {_e}")
+                            _row2 = (_res2.data or [{}])[0]
+                            # 디테일 패널에서 고친 이메일이 항상 우선
+                            _row2["manual_email"] = _to_mail
+
+                            with st.spinner("브랜드 홈페이지를 읽고 맞춤 도입부를 쓰는 중..."):
+                                try:
+                                    _op = _mko(_row2)
+                                except Exception:
+                                    _op = ""
+                            if _op:
+                                _row2["ai_opener"] = _op
+
+                            _bb = _be2(_row2)
+                            if _bb.get("skip"):
+                                st.warning(f"초안 보류: {_bb['skip_reason']}")
+                            else:
+                                try:
+                                    _gd.create_draft(
+                                        _svc2, _bb["to"], _bb["subject"],
+                                        _bb["html"], _bb["plain"],
+                                    )
+                                    st.success(
+                                        f"✅ 초안 생성 완료 → {_bb['to']}  "
+                                        f"(Gmail 임시보관함 확인)"
+                                    )
+                                    st.caption(
+                                        ("브랜드 맞춤 도입부 포함" if _op
+                                         else "맞춤 도입부 미생성 → 카테고리 문구 사용")
+                                        + f" · 제목: {_bb['subject']}"
+                                    )
+                                except Exception as _e:
+                                    st.error(f"초안 생성 오류: {_e}")
                 else:
-                    st.caption("✉️ 이메일을 입력/확인하면 'Gmail로 메일 작성' 버튼이 나타나요.")
+                    st.caption("✉️ 이메일을 입력/확인하면 '메일 초안 만들기' 버튼이 나타나요.")
 
                 # ⭐ 영업 상태 (하단 재배치) — 활동메모 바로 위
                 new_status = st.selectbox(

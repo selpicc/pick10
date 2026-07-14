@@ -57,10 +57,12 @@ def _():
     #   → import 하면 안 됨. 문법 오류만 컴파일로 검사한다 (실행 X).
     import email_templates          # noqa  (순수 모듈)
     import gmail_drafts             # noqa  (구글 라이브러리는 함수 안에서 lazy import)
+    import brand_intro              # noqa  (AI 도입부 — 키 없어도 import 는 되어야 함)
     import py_compile
     py_compile.compile("collect_5.py", doraise=True)
     py_compile.compile("dashboard.py", doraise=True)
-    return "순수모듈 5개 import + 스크립트 2개 문법 정상"
+    py_compile.compile("메일초안_생성.py", doraise=True)
+    return "순수모듈 6개 import + 스크립트 3개 문법 정상"
 
 
 # ─────────────────────────────────────────────────────────
@@ -160,11 +162,49 @@ def _():
         "flagship_product": "산후 마사지", "auto_biz_confidence": "높음",
     })
     assert svc["template"] == "service", "서비스형 분기 실패"
-    assert "월 500만원" in svc["plain"], "서비스형 가격 문구 누락"
+    # 가격 미노출 정책 (2026-07) — 첫 메일에 금액을 넣으면 거절 트리거가 된다.
+    # 견적은 회신·미팅에서. 금액 문구가 다시 들어오면 여기서 잡는다.
+    for m in ("만원", "150원", "vat", "VAT"):
+        for t in (prod["plain"], svc["plain"]):
+            assert m not in t, f"메일에 가격 문구('{m}')가 들어감 — 첫 메일은 금액 미노출"
+    # 신뢰 근거(레퍼런스) + 소개서 첨부 안내 + 미팅 유도 CTA 가 살아있는지
+    for t in (prod["plain"], svc["plain"]):
+        assert "네슬레" in t, "레퍼런스 문구 누락"
+        assert "셀픽 소개서" in t, "소개서 첨부 안내 누락"
+        assert "찾아뵙고" in t, "유선·미팅 유도 CTA 누락"
     # 이메일 없으면 skip
     skip = build_email({"brand_name": "노메일", "auto_email": ""})
     assert skip["skip"] is True, "이메일 없음 skip 처리 실패"
-    return "제품형/서비스형 분기 + skip 정상"
+    return "제품형/서비스형 분기 + 금액 미노출 + 레퍼런스/CTA + skip 정상"
+
+
+@check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
+def _():
+    from brand_intro import _is_safe
+    from email_templates import build_email
+
+    # 검증 불가능한 주장은 반드시 폐기되어야 한다 (메일에 나가면 신뢰가 깨짐)
+    bad = [
+        "업계 1위 브랜드로 알고 있습니다. 인상 깊게 봤습니다.",       # 순위
+        "누적 판매 30만개를 돌파하신 걸 보고 연락드립니다.",          # 숫자
+        "대한민국 대표 유아 브랜드로 유명하신 걸 알고 있습니다.",      # 검증 불가
+        "짧다",                                                    # 너무 짧음
+    ]
+    for s in bad:
+        assert not _is_safe(s), f"차단됐어야 할 문장이 통과함: {s}"
+
+    good = "무향과 순한 성분을 앞세우신 걸 보고 연락드립니다. 성분을 깐깐하게 보는 시기라고 봤습니다."
+    assert _is_safe(good), f"정상 문장이 차단됨: {good}"
+
+    # ai_opener 가 있으면 도입부로 쓰이고, 없으면 카테고리 문구로 폴백해야 한다
+    row = {
+        "brand_name": "테스트", "auto_email": "a@b.kr",
+        "category": "베이비 스킨케어", "auto_biz_confidence": "높음",
+    }
+    assert good not in build_email(row)["plain"], "폴백 경로가 AI 문장을 끌어옴"
+    row["ai_opener"] = good
+    assert good in build_email(row)["plain"], "ai_opener 가 본문에 반영 안 됨"
+    return "거짓 주장 4종 차단 · 정상 문장 통과 · 폴백 정상"
 
 
 # ─────────────────────────────────────────────────────────

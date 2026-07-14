@@ -11,6 +11,11 @@ Gmail '초안(임시보관함)'으로 저장합니다. (발송 X — 첨부·전
   venv\\Scripts\\python 메일초안_생성.py --brand 엘빈즈   # 특정 브랜드 1개만
   venv\\Scripts\\python 메일초안_생성.py --brands "엘빈즈,비쥬앤허그"  # 지정한 브랜드들만 (방금 수집한 N개)
   venv\\Scripts\\python 메일초안_생성.py --limit 5       # 최대 5건만
+  venv\\Scripts\\python 메일초안_생성.py --no-ai        # AI 맞춤 도입부 끄기
+
+도입부는 기본적으로 AI(Gemini)가 브랜드 홈페이지를 읽고 1~2줄 맞춤으로 씁니다.
+키가 없거나 생성이 미덥지 않으면(숫자·수상 등 검증 불가 표현) 자동으로
+기존 카테고리 문구로 되돌아갑니다 — 메일은 어떤 경우에도 정상 생성됩니다.
 
 전제: Gmail 1회 연동(token.json) 필요 — Gmail_연동_설정가이드.md 참고.
 """
@@ -26,6 +31,7 @@ except Exception:
 
 from supabase_client import get_supabase_client, TABLE_NAME
 from email_templates import build_email
+from brand_intro import make_opener
 
 DRAFTED_PATH = "drafted_brands.json"
 
@@ -51,6 +57,8 @@ def _save_drafted(s: set):
 def main():
     args = sys.argv[1:]
     only_new = "--all" not in args
+    use_ai = "--no-ai" not in args   # 기본 켜짐. 끄면 카테고리 문구만 사용
+    ai_used = []
     brand_filter = None
     brand_set = None  # --brands 로 지정한 여러 브랜드 (방금 수집한 N개만)
     limit = None
@@ -111,6 +119,21 @@ def main():
             continue
         if brand_set is not None and bn not in brand_set:
             continue
+
+        # 브랜드 맞춤 도입부 (홈페이지를 읽고 AI가 1~2줄 작성).
+        # 실패하면 빈 문자열 → 템플릿이 기존 카테고리 문구로 자동 복귀한다.
+        if use_ai:
+            try:
+                opener = make_opener(r)
+            except Exception as e:
+                opener = ""
+                print(f"  ⚠ {bn} — 도입부 생성 실패({e}). 카테고리 문구로 진행합니다.")
+            if opener:
+                r["ai_opener"] = opener
+                ai_used.append(bn)
+            else:
+                print(f"  · {bn} — 맞춤 도입부 미생성 → 카테고리 문구 사용")
+
         built = build_email(r)
         if built["skip"]:
             skipped.append((bn, built["skip_reason"]))
@@ -142,6 +165,10 @@ def main():
         p = sum(1 for _, _, t in created if t == "product")
         s = sum(1 for _, _, t in created if t == "service")
         print(f"     제품형 {p}건 · 서비스형 {s}건")
+    if use_ai:
+        made = {bn for bn, _, _ in created}
+        n_ai = len([b for b in ai_used if b in made])
+        print(f"     브랜드 맞춤 도입부(AI): {n_ai}건 / 나머지는 카테고리 문구")
     if skipped:
         print(f"  건너뜀: {len(skipped)}건 (이메일 없음·중복 등)")
     # --brands 로 지정했는데 초안이 안 만들어진 브랜드 안내 (DB에 없거나 이메일 없음)
@@ -153,7 +180,8 @@ def main():
             print(f"  ⚠ 지정했지만 초안 못 만든 브랜드: {', '.join(missing)}")
             print(f"     (DB에 없거나 이메일 미수집 — 이메일 칸 확인 필요)")
     print("=" * 50)
-    print("  → Gmail 임시보관함에서 회사소개서 첨부 후 발송하세요.")
+    print("  → Gmail 임시보관함에서 셀픽 소개서 첨부 후 발송하세요.")
+    print("     (본문에 '소개서 함께 첨부드립니다'라고 적혀 있으니 첨부 필수)")
 
 
 if __name__ == "__main__":
