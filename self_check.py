@@ -201,6 +201,25 @@ def _():
     assert fixed["to"] == "right@manual.kr", (
         f"수기 이메일이 무시됨 → {fixed['to']} (자동값이 이기면 안 됨)"
     )
+
+    # 공식홈 '미발견'이어도 사람이 수기로 이메일을 넣었으면 초안을 만들어야 한다.
+    #   (미발견 게이트는 '자동 수집값'을 막으려는 것 — 사람이 확인해 넣은 주소까지
+    #    막으면 앞뒤가 안 맞는다. 진더픽 케이스, 2026-07)
+    manual_only = build_email({
+        "brand_name": "미발견브랜드",
+        "auto_email": "", "manual_email": "hand@typed.kr",
+        "category": "임산부 뷰티", "auto_biz_confidence": "미발견",
+    })
+    assert not manual_only["skip"], (
+        f"수기 이메일이 있는데 미발견으로 막힘 → {manual_only['skip_reason']}"
+    )
+    # 반대로 수기 입력이 없으면 미발견은 그대로 보류해야 한다 (원칙 유지)
+    auto_only = build_email({
+        "brand_name": "미발견브랜드2",
+        "auto_email": "auto@x.kr", "manual_email": "",
+        "category": "임산부 뷰티", "auto_biz_confidence": "미발견",
+    })
+    assert auto_only["skip"], "미발견 자동수집값이 그대로 통과함 (보류해야 함)"
     return "제품형/서비스형 분기 + 금액 미노출 + 레퍼런스/CTA + 수기이메일 우선 + skip 정상"
 
 

@@ -504,10 +504,8 @@ def build_email(row: dict) -> dict:
     # 수기 입력이 자동 수집을 항상 이긴다.
     # 사람이 대시보드에서 이메일을 고쳤다는 건 '자동 수집이 틀렸다'는 뜻이므로,
     # 자동값을 먼저 쓰면 애써 고친 주소가 조용히 무시된다. (2026-07 수정)
-    email = (
-        (row.get("manual_email") or "").strip()
-        or (row.get("auto_email") or "").strip()
-    )
+    manual = (row.get("manual_email") or "").strip()
+    email = manual or (row.get("auto_email") or "").strip()
 
     base = {"to": email, "subject": "", "html": "", "plain": "",
             "template": "", "skip": False, "skip_reason": ""}
@@ -519,9 +517,13 @@ def build_email(row: dict) -> dict:
         base.update(skip=True, skip_reason="이메일 없음 (수기 입력 필요)")
         return base
 
-    # 신뢰도 미발견이면 보류 (대원칙: 공식홈 정보만)
+    # 신뢰도 '미발견'이면 보류 — 단, 이건 '자동 수집'에만 적용되는 게이트다.
+    # (대원칙: 못 믿을 자동 수집값으로 영업메일을 보내지 않는다)
+    # 사람이 수기로 넣은 이메일은 이 게이트를 통과시킨다. 공식홈을 못 찾아서
+    # 사람이 직접 확인해 넣은 주소인데, 바로 그 이유로 막으면 앞뒤가 안 맞는다.
+    # (2026-07: 진더픽 — 수기 이메일을 넣었는데도 '미발견'으로 초안이 안 만들어짐)
     conf = (row.get("auto_biz_confidence") or "").strip()
-    if conf == "미발견":
+    if conf == "미발견" and not manual:
         base.update(skip=True, skip_reason="공식홈 미발견 — 수기 확인 필요")
         return base
 
