@@ -1655,7 +1655,16 @@ if len(filtered) > 0:
                         "도입기": "⚪", "성장기": "🟢", "확장기": "🟡",
                         "초기": "⚪", "안정기": "🟡",
                     }.get(_stage_word, "")
-                    st.caption("마케팅 활동 단계 · 주력상품 맥락에서의 브랜드 마케팅 현황")
+                    # 서비스형(상품 없음)은 브랜드명만으로 취합 → 문구 구분
+                    _is_svc = (
+                        "서비스" in str(sel_full.get("상품 카테고리", ""))
+                        or "서비스" in str(sel_full.get("발견 카테고리", ""))
+                    )
+                    _mk_note = (
+                        "브랜드명 기준 취합 (서비스형)" if _is_svc
+                        else "주력상품 맥락에서의 브랜드 마케팅 현황"
+                    )
+                    st.caption(f"마케팅 활동 단계 · {_mk_note}")
                     st.markdown(f"**{_stage_emoji} {_stage_raw}**")
                     st.markdown("")
 

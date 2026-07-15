@@ -1098,8 +1098,14 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     #   "유아러브"처럼 일반어('유아')가 든 이름은 Naver가 '유아'만 매칭해
     #   무관한 글을 잔뜩 세서 마케팅 점수가 부풀려짐 → 신생 브랜드가 확장기 오분류.
     #   따옴표로 묶으면 '유아러브'가 통째로 든 글만 카운트 → 진짜 브랜드 언급만.
+    # ⭐ 2026-07: 서비스형(상품 없음)은 주력상품이 없으니 브랜드명만으로 노출 취합.
+    #   (산후도우미·마사지 등은 '주력상품 키워드'가 존재하지 않는다)
+    is_service = "서비스" in (category or "")
     bn_q = f'"{brand_name}"' if brand_name else ""
-    if brand_name and search_keyword:
+    if is_service and brand_name:
+        # 서비스형: 브랜드명 단독 검색 (시장 컨텍스트도 안 붙임)
+        query_main = bn_q
+    elif brand_name and search_keyword:
         query_main = f"{bn_q} {search_keyword}"
         # 예: '"프라젠트라" 아토프라덤 크림'
     elif brand_name:
