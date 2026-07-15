@@ -880,6 +880,18 @@ if "메일 스레드ID" in df.columns:
             + "  · 초안 만들기: `venv\\Scripts\\python 메일_추적.py --followup`"
         )
 
+# 메일 상태가 언제 갱신되는지 한 줄 안내 (자동추적 스케줄 + 마지막 실행 시각)
+#   마지막 시각은 메일_추적_로그.txt 의 파일 수정 시각(=매 실행마다 갱신)으로 표시.
+_mail_log = os.path.join(os.path.dirname(os.path.abspath(__file__)), "메일_추적_로그.txt")
+_last_upd = ""
+try:
+    if os.path.exists(_mail_log):
+        _ts = datetime.fromtimestamp(os.path.getmtime(_mail_log))
+        _last_upd = f" · 마지막 업데이트 {_ts:%Y-%m-%d %H:%M}"
+except Exception:
+    _last_upd = ""
+st.caption(f"🕘 메일 상태는 매일 09:30 · 14:00 · 17:00 자동 업데이트됩니다{_last_upd}")
+
 
 # ─────────────────────────────────────────────────────────────────
 # 영업 후보 셀러 테이블 (메인)
