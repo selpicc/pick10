@@ -1072,6 +1072,14 @@ _BRAND_NOISE_SUFFIX = [
 ]
 # 일반 접미 — 실제 상호의 일부일 수도 있어 '풀네임이 0건일 때만' 벗긴다
 _BRAND_BARE_SUFFIX = ["스토어", "샵", "shop", "몰", "브랜드", "official"]
+# 업종/카테고리 수식어 — 상호 뒤에 붙는 제품군 표기(더마·코스메틱 등).
+#   마케팅 검색 시 이걸 붙인 정식 표기를 통째로 정확일치하면 노출이 과소집계된다.
+#   예: '닥터바이오 더마 코스메틱' 정확일치 → 74건뿐. 핵심 상호 '닥터바이오'로 줄이면
+#   +주력상품키워드와 함께 관련 글만 제대로 잡힌다. (핵심어가 2자+ 남을 때만 벗김)
+_BRAND_CATEGORY_SUFFIX = [
+    "더마코스메틱", "코스메틱스", "코스메틱", "더마", "화장품",
+    "dermacosmetic", "cosmetics", "cosmetic", "derma",
+]
 # 업종어(사진관·조리원 등) — 합성 이름을 자를 때 이 꼬리표는 살려 정확도를 높인다.
 #   예: '밀크비&포시즌김해 스튜디오' → '밀크비'(과다) 대신 '밀크비 스튜디오'(정확)
 _BRAND_BIZ_TYPE = [
@@ -1110,6 +1118,21 @@ def _clean_brand_for_search(brand_name: str) -> str:
             if core.endswith(w) and len(core) > len(w) + 1:
                 core = core[:-len(w)].strip()
                 changed = True
+    # ⭐ 2026-07 (닥터바이오 케이스): 끝에 붙은 업종/카테고리 수식어(더마·코스메틱 등)를
+    #   벗겨 핵심 상호로 줄인다. 단 벗긴 뒤 핵심어가 한글 2자(영문 4자)+ 남을 때만 —
+    #   너무 짧아지면 오히려 무관 글 과대집계 위험이 있어 원래 이름을 유지한다.
+    changed = True
+    while changed:
+        changed = False
+        for w in _BRAND_CATEGORY_SUFFIX:
+            if core.lower().endswith(w):
+                cand = core[:-len(w)].strip()
+                bare = cand.replace(" ", "")
+                has_hangul = any("가" <= ch <= "힣" for ch in bare)
+                if (has_hangul and len(bare) >= 2) or len(bare) >= 4:
+                    core = cand
+                    changed = True
+                    break
     return core or brand_name.strip()
 
 
