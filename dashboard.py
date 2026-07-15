@@ -1031,16 +1031,26 @@ def build_activity_history(row) -> list:
     if sent:
         lines.append(f"· {_fmt_md(sent)} 메일 발송")
 
-    try:
-        cnt = int(g("팔로업 횟수") or 0)
-    except Exception:
-        cnt = 0
-    last_fu = g("마지막 팔로업일")
-    if cnt >= 2:
-        lines.append("· 1차 팔로업 송부")                       # 1차 날짜는 미보관
-        lines.append(f"· {_fmt_md(last_fu)} 2차 팔로업 송부")
-    elif cnt == 1:
-        lines.append(f"· {_fmt_md(last_fu)} 1차 팔로업 송부")
+    # 팔로업 — 회차별 날짜(1차/2차)를 각각 표시. 새 컬럼이 있으면 그걸 쓰고,
+    #   없거나 옛 데이터면 '마지막 팔로업일 + 횟수'로 보완한다.
+    fu1 = g("1차 팔로업일")
+    fu2 = g("2차 팔로업일")
+    if fu1 or fu2:
+        if fu1:
+            lines.append(f"· {_fmt_md(fu1)} 1차 팔로업 송부")
+        if fu2:
+            lines.append(f"· {_fmt_md(fu2)} 2차 팔로업 송부")
+    else:
+        try:
+            cnt = int(g("팔로업 횟수") or 0)
+        except Exception:
+            cnt = 0
+        last_fu = g("마지막 팔로업일")
+        if cnt >= 2:
+            lines.append("· 1차 팔로업 송부")                   # 옛 데이터 — 1차 날짜 미보관
+            lines.append(f"· {_fmt_md(last_fu)} 2차 팔로업 송부")
+        elif cnt == 1:
+            lines.append(f"· {_fmt_md(last_fu)} 1차 팔로업 송부")
 
     rep = g("메일 회신일")
     if rep:

@@ -72,6 +72,8 @@ DB_TO_KOR = {
     "mail_replied_at":        "메일 회신일",
     "mail_followup_count":    "팔로업 횟수",
     "mail_last_followup_at":  "마지막 팔로업일",
+    "mail_followup1_at":      "1차 팔로업일",
+    "mail_followup2_at":      "2차 팔로업일",
 }
 
 # 한글 → 영문 (역매핑)

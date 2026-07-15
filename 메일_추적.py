@@ -253,11 +253,24 @@ def main():
                 (r.get("mail_thread_id") or "").strip(),
                 built["html"], built["plain"],
             )
-            sb.table(TABLE_NAME).update({
+            _now_iso = _now().isoformat()
+            _upd = {
                 "mail_draft_id": ids.get("draft_id", ""),
                 "mail_followup_count": nth,
-                "mail_last_followup_at": _now().isoformat(),
-            }).eq("brand_name", bn).execute()
+                "mail_last_followup_at": _now_iso,
+            }
+            # 회차별 날짜도 개별 보관 → 히스토리에 1차/2차 날짜가 정확히 남는다
+            if nth == 1:
+                _upd["mail_followup1_at"] = _now_iso
+            elif nth == 2:
+                _upd["mail_followup2_at"] = _now_iso
+            try:
+                sb.table(TABLE_NAME).update(_upd).eq("brand_name", bn).execute()
+            except Exception:
+                # 새 컬럼(mail_followup1_at/2_at)이 아직 DB에 없으면 그 필드 빼고 재시도
+                _upd.pop("mail_followup1_at", None)
+                _upd.pop("mail_followup2_at", None)
+                sb.table(TABLE_NAME).update(_upd).eq("brand_name", bn).execute()
             made += 1
             print(f"  ✅ {bn} → {built['to']} ({nth}차 팔로업)")
         except Exception as e:
