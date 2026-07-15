@@ -151,27 +151,72 @@ def _naver_titles(kind: str, q: str, n: int) -> list:
     return out
 
 
-def _market_signals(brand: str, category: str) -> dict:
-    """브랜드의 실제 시장 신호. 전부 실시간 검색 결과(진짜 수치)."""
+# 상품 핵심어 추출 시 버릴 단어(타겟·부가어). 상품 '유형어'만 남긴다.
+_PK_STOPWORDS = {
+    "신생아", "아기", "유아", "영유아", "베이비", "임산부", "산모", "아이", "키즈",
+    "신생", "유아용", "아기용", "아동", "남아", "여아",
+    "정품", "공식", "대용량", "세트", "기획", "증정", "사은품", "무료배송", "무배",
+    "본품", "리필", "리필용", "선물", "선물세트", "특가", "할인", "구성", "단품", "택",
+}
+
+
+def _product_keyword(brand: str, flagship: str) -> str:
+    """지저분한 스마트스토어 상품명 → '상품 유형' 핵심어(최대 2단어).
+
+    예) '베베가닉 신생아 아기 유아 바스앤샴푸 바디워시 280g 1개' → '바스앤샴푸 바디워시'
+    (브랜드·타겟어·용량/수량·부가어 제거 후 남는 유형어). 없으면 빈 문자열.
+    """
+    if not flagship:
+        return ""
+    t = re.sub(r"<[^>]+>", " ", flagship)
+    t = re.sub(r"&[a-zA-Z#0-9]+;", " ", t)
+    t = re.sub(r"[\[\]（）()\{\}·|/]", " ", t)
+    bn = brand.replace(" ", "")
+    toks = []
+    for tok in t.split():
+        tok = tok.strip(",.·")
+        if not tok or len(tok) < 2:
+            continue
+        if brand and (tok in brand or brand in tok):
+            continue
+        if bn and (tok in bn or bn in tok.replace(" ", "")):
+            continue
+        if any(ch.isdigit() for ch in tok):     # 280g, 500ml, 1개, 1+1 …
+            continue
+        if tok in _PK_STOPWORDS:
+            continue
+        toks.append(tok)
+    # 상품 유형어는 보통 제목 '뒤쪽'에 온다 (앞은 수식어) → 뒤 2단어를 핵심어로
+    return " ".join(toks[-2:])
+
+
+def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
+    """브랜드 전반 + 주력 상품 라인의 실제 시장 신호. 전부 실시간 검색(진짜 수치)."""
+    base = {"blog": 0, "cafe": 0, "prod_kw": "", "prod_count": 0, "titles": []}
     if not brand:
-        return {"blog": 0, "cafe": 0, "shop": 0, "titles": []}
+        return base
     q = f'"{brand}"'
-    sig = {
-        "blog": _naver_total("blog", q),
-        "cafe": _naver_total("cafearticle", q),
-        "shop": _naver_total("shop", category) if category else 0,
-        "titles": [],
-    }
-    titles = (_naver_titles("blog", brand, 12)
-              + _naver_titles("cafearticle", brand, 12)
-              + _naver_titles("blog", f"{brand} 후기", 8))
+    base["blog"] = _naver_total("blog", q)
+    base["cafe"] = _naver_total("cafearticle", q)
+    # 1) 브랜드 전반 (넓게)
+    titles = (_naver_titles("blog", brand, 10)
+              + _naver_titles("cafearticle", brand, 10)
+              + _naver_titles("blog", f"{brand} 후기", 6))
+    # 2) 주력 상품 라인 (좁게) — 브랜드 + 상품 핵심어
+    kw = _product_keyword(brand, flagship)
+    if kw and kw not in brand:
+        base["prod_kw"] = kw
+        pq = f'"{brand}" {kw}'
+        base["prod_count"] = _naver_total("blog", pq) + _naver_total("cafearticle", pq)
+        titles += (_naver_titles("blog", f"{brand} {kw}", 8)
+                   + _naver_titles("cafearticle", f"{brand} {kw}", 6))
     seen, uniq = set(), []
     for t in titles:
         if t not in seen:
             seen.add(t)
             uniq.append(t)
-    sig["titles"] = uniq[:28]
-    return sig
+    base["titles"] = uniq[:30]
+    return base
 
 
 # ─────────────────────────────────────────────────────────────
@@ -220,9 +265,11 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 {ctx['site_text'] or "(없음)"}
 --- 주력상품 ---
 {ctx['flagship'] or "(없음)"}
+--- 주력 상품 라인(핵심어) ---
+{signals.get('prod_kw') or "(없음)"}
 --- 카테고리 ---
 {ctx['category'] or "(없음)"}
---- 실제 시장 반응: 네이버 블로그/카페 글 제목 (사람들이 진짜 쓰는 표현) ---
+--- 실제 시장 반응: 네이버 블로그/카페 글 제목 (브랜드 전반 + 주력 라인, 사람들이 진짜 쓰는 표현) ---
 {market_titles}
 
 아래 JSON 형식으로만 답하라(설명·코드펜스 금지):
@@ -249,33 +296,37 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 - big_idea·insight는 뻔하지 않게, 관점이 담기게. offline/online 아이디어 각 3개.
 - 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만."""
 
-    try:
-        r = requests.post(
-            API_URL.format(m=MODEL),
-            headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.6, "maxOutputTokens": 4096},
-            },
-            timeout=60,
-        )
-        if r.status_code != 200:
-            return {}
-        parts = r.json()["candidates"][0]["content"]["parts"]
-        raw = "".join(p.get("text", "") for p in parts).strip()
-    except Exception:
-        return {}
+    # 간헐적 빈 응답·일시 오류 대비 최대 2회 시도 (실패해도 {} → 템플릿 폴백)
+    for _attempt in range(2):
+        try:
+            r = requests.post(
+                API_URL.format(m=MODEL),
+                headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.6, "maxOutputTokens": 4096},
+                },
+                timeout=60,
+            )
+            if r.status_code != 200:
+                continue
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            raw = "".join(p.get("text", "") for p in parts).strip()
+        except Exception:
+            continue
 
-    # 코드펜스·앞뒤 잡텍스트 제거 후 최외곽 { } 파싱
-    raw = re.sub(r"```(?:json)?", "", raw)
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if not m:
-        return {}
-    try:
-        data = json.loads(m.group(0))
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
+        # 코드펜스·앞뒤 잡텍스트 제거 후 최외곽 { } 파싱
+        raw = re.sub(r"```(?:json)?", "", raw)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            continue
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            continue
+        if isinstance(data, dict) and data:
+            return data
+    return {}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -310,7 +361,7 @@ def _fallback(ctx: dict) -> dict:
 def build_content(row: dict) -> dict:
     """브랜드 한 행 → 슬라이드에 넣을 콘텐츠 dict (항상 완성형 반환)."""
     ctx = _product_context(row)
-    signals = _market_signals(ctx["brand"], ctx["category"])
+    signals = _market_signals(ctx["brand"], ctx["category"], ctx["flagship"])
     ai = _gemini_report_json(ctx, signals)
     fb = _fallback(ctx)
 
@@ -517,14 +568,14 @@ def _page_market(prs, c):
     _eyebrow(s, "MARKET & NEEDS")
     _title(s, "시장은 이미 이렇게 말하고 있다")
     _rule(s, Inches(1.72))
-    # 실시간 시장 신호 스트립 (진짜 수치)
+    # 실시간 시장 신호 스트립 (진짜 수치) — 브랜드 전반 + 주력 라인
     parts = []
     if sig.get("blog"):
-        parts.append(f"네이버 블로그 {_fmt(sig['blog'])}건")
+        parts.append(f"브랜드 블로그 {_fmt(sig['blog'])}건")
     if sig.get("cafe"):
         parts.append(f"카페 {_fmt(sig['cafe'])}건")
-    if sig.get("shop"):
-        parts.append(f"카테고리 쇼핑 {_fmt(sig['shop'])}건")
+    if sig.get("prod_kw") and sig.get("prod_count"):
+        parts.append(f"주력 '{sig['prod_kw']}' 라인 {_fmt(sig['prod_count'])}건")
     strip = "   ·   ".join(parts) if parts else "실시간 검색 데이터 없음 (네이버 검색 키 필요)"
     bar = _rect(s, Inches(0.72), Inches(1.95), Inches(11.9), Inches(0.62), PEACH_L,
                 MSO_SHAPE.ROUNDED_RECTANGLE)
