@@ -56,3 +56,6 @@ diag_*.py
 
 # 메일 자동추적 실행 로그 (매일 쌓임 · 공유 불필요)
 메일_추적_로그.txt
+
+# Claude Code 개인 설정 (내 PC 전용 권한 목록 · 공유 불필요)
+.claude/settings.local.json
