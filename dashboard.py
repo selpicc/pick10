@@ -302,7 +302,7 @@ st.markdown(
         font-size: 1.1rem !important;
         margin-top: 2rem !important;
         margin-bottom: 0.9rem !important;
-        padding-left: 36px;
+        padding-left: 44px !important;
         border-left: 5px solid var(--gov-blue);
         line-height: 1.35;
     }
