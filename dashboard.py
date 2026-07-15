@@ -1522,6 +1522,20 @@ if len(filtered) > 0:
             columns=[c for c in CSV_EXCLUDE_COLS if c in export_source.columns],
             errors="ignore",
         )
+
+        # 활동 메모 = 대시보드에 보이는 그대로(자동 히스토리 + 수기 메모)로 채워 내보낸다.
+        #   DB엔 수기분만 저장되므로, 여기서 자동 타임라인을 합쳐 완전한 이력으로 만든다.
+        if "활동 메모 (수기)" in export_df.columns:
+            def _full_activity_memo(row):
+                hist = build_activity_history(row)          # ['· MM/DD 신규 수집', ...]
+                text = "\n".join(hist)
+                manual = str(row.get("활동 메모 (수기)", "") or "").strip()
+                if manual:
+                    text += ("\n\n" if text else "") + "[직접 메모]\n" + manual
+                return text
+            # export_source(모든 컬럼 보유)로 계산 → 같은 index 로 export_df 에 대입
+            export_df["활동 메모 (수기)"] = export_source.apply(_full_activity_memo, axis=1)
+
         # 컬럼명 통일 (디테일 라벨과 일치)
         export_df = export_df.rename(
             columns={k: v for k, v in CSV_RENAME.items() if k in export_df.columns}
