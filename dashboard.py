@@ -1659,17 +1659,20 @@ if len(filtered) > 0:
                     st.markdown(f"**{_stage_emoji} {_stage_raw}**")
                     st.markdown("")
 
-                # 마케팅 노출 — 4개 강조 메트릭 카드 (★ 강세 채널)
+                # 마케팅 노출 — 강조 메트릭 카드 (★ 강세 채널)
                 exposure = parse_marketing_exposure(
                     sel_full.get("마케팅 채널별 노출 (자동)", "")
                 )
                 if exposure:
-                    st.caption("마케팅 노출 (3채널)")
-                    max_channel = max(exposure, key=exposure.get)
-                    max_value = max(exposure.values()) or 1
+                    st.caption("마케팅 노출 (2채널)")
+                    # ⭐ 2026-07 SNS 제거 — 블로그·카페만 표시. 옛 데이터의 SNS 값은 무시.
+                    _ch_list = ["블로그", "카페"]
+                    _vals = {c: exposure.get(c, 0) for c in _ch_list}
+                    max_channel = max(_vals, key=_vals.get)
+                    max_value = max(_vals.values()) or 1
 
-                    metric_cols = st.columns(3)
-                    for i, ch in enumerate(["블로그", "카페", "SNS"]):
+                    metric_cols = st.columns(2)
+                    for i, ch in enumerate(_ch_list):
                         with metric_cols[i]:
                             value = exposure.get(ch, 0)
                             is_top = (ch == max_channel)
