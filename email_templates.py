@@ -556,7 +556,7 @@ def build_followup(row: dict, round_no: int = 1) -> dict:
 
     subject = f"{brand} 제안 관련 — 다시 한번 연락드립니다"
     if round_no > 1:
-        subject = f"{brand} 제안 관련 — 마지막으로 남깁니다"
+        subject = f"{brand} 담당자님께 — 소개서 다시 보내드립니다"
 
     inner = (
         f'안녕하세요, <b>{_esc(brand)}</b> 담당자님.<br>'
