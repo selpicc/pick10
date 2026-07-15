@@ -4,11 +4,12 @@
 대시보드 셀러 디테일의 '📊 분석 리포트 만들기' 버튼이 이 모듈을 호출한다.
 자동화(스케줄러)가 아니라 사람이 버튼을 누른 그 브랜드에 대해서만 1건 생성한다.
 
-만드는 것: 표지 없이 3페이지짜리 심플한 편집 가능 PPTX (폰트 Pretendard).
-  1) 마케팅 전략 = 획기적 슬로건 + 브랜드 알맹이 + 핵심 타겟
-  2) 니즈 · 광고 제안 = 소구/바이럴 키워드 + 셀픽 광고 상품 5종
-  3) 셀픽 마케팅 방향 = 오프라인·온라인 + 셀픽 도달 규모
-  ※ 사용자가 준 예시 PDF는 '내용/분석' 참고용이며 레이아웃은 새로 잡는다.
+만드는 것: 표지 없이 3페이지짜리 '기획서'형 편집 가능 PPTX (폰트 Pretendard).
+  1) 컨셉·전략 = 슬로건 + 빅 아이디어(컨셉) + 시장 인사이트 + 핵심 타겟
+  2) 시장·니즈 = 네이버 실시간 검색(진짜 수치) + 실제 언급 키워드 + 소구 키워드
+  3) 셀픽 실행 = 광고 상품 5종 + 오프/온 실행 아이디어 + 도달 규모
+  ※ 준 예시 PDF는 '내용/분석' 참고용이며 레이아웃은 새로 잡는다.
+  ※ 외부 시장 데이터는 네이버 검색 실측만 사용(가짜 수치 X). 빅아이디어·컨셉은 창작.
 
 핵심 원칙 — 지어내지 않기 (brand_intro.py와 동일 철학):
   · 셀픽 고정 수치(조리원 230곳·산부인과 55곳 등)는 소개서 값 그대로 '템플릿'.
@@ -110,6 +111,70 @@ def _product_context(row: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
+# 1-2) 외부 시장 데이터 (네이버 실시간 검색) — 진짜 수치만, 실패 시 0/빈값
+#   블로그·카페 노출 건수(실제) + 실제 글 제목(사람들이 진짜 쓰는 표현)을 모아
+#   AI 컨셉의 '근거'로 넣는다. 지어낸 숫자는 절대 넣지 않는다.
+# ─────────────────────────────────────────────────────────────
+def _naver_api(kind: str, query: str, display: int = 1) -> dict:
+    nid = os.getenv("NAVER_CLIENT_ID", "").strip()
+    nsc = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+    if not (nid and nsc):
+        return {}
+    try:
+        r = requests.get(
+            f"https://openapi.naver.com/v1/search/{kind}.json",
+            headers={"X-Naver-Client-Id": nid, "X-Naver-Client-Secret": nsc},
+            params={"query": query, "display": display}, timeout=8,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def _naver_total(kind: str, q: str) -> int:
+    try:
+        return int(_naver_api(kind, q, 1).get("total", 0) or 0)
+    except Exception:
+        return 0
+
+
+def _naver_titles(kind: str, q: str, n: int) -> list:
+    out = []
+    for it in (_naver_api(kind, q, n).get("items", []) or []):
+        t = re.sub(r"<[^>]+>", "", it.get("title", "") or "")
+        t = re.sub(r"&[a-zA-Z#0-9]+;", " ", t)
+        t = re.sub(r"\s+", " ", t).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def _market_signals(brand: str, category: str) -> dict:
+    """브랜드의 실제 시장 신호. 전부 실시간 검색 결과(진짜 수치)."""
+    if not brand:
+        return {"blog": 0, "cafe": 0, "shop": 0, "titles": []}
+    q = f'"{brand}"'
+    sig = {
+        "blog": _naver_total("blog", q),
+        "cafe": _naver_total("cafearticle", q),
+        "shop": _naver_total("shop", category) if category else 0,
+        "titles": [],
+    }
+    titles = (_naver_titles("blog", brand, 12)
+              + _naver_titles("cafearticle", brand, 12)
+              + _naver_titles("blog", f"{brand} 후기", 8))
+    seen, uniq = set(), []
+    for t in titles:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    sig["titles"] = uniq[:28]
+    return sig
+
+
+# ─────────────────────────────────────────────────────────────
 # 2) AI 콘텐츠 생성 (JSON) — 실패해도 {} 반환 (호출부가 템플릿 폴백)
 # ─────────────────────────────────────────────────────────────
 def _clean_line(s: str) -> str:
@@ -138,15 +203,18 @@ def _clean_list(items, max_len=60, cap=10) -> list:
     return out
 
 
-def _gemini_report_json(ctx: dict) -> dict:
+def _gemini_report_json(ctx: dict, signals: dict) -> dict:
     if not API_KEY:
         return {}
     if not ctx["site_text"] and not ctx["flagship"]:
         return {}
 
-    prompt = f"""너는 영유아·임산부 시장 전문 마케팅 전략가다.
-아래 '{ctx['brand']}' 브랜드의 실제 제품 정보를 바탕으로, B2B 미디어 제안서에 들어갈
-브랜드 맞춤 콘텐츠를 만든다.
+    market_titles = "\n".join(f"- {t}" for t in signals.get("titles", [])[:24]) or "(검색 데이터 없음)"
+
+    prompt = f"""너는 영유아·임산부 시장 전문 마케팅 기획자다. 형식적인 보고서가 아니라,
+너만의 관점·컨셉·아이디어가 살아있는 '기획서'를 쓴다.
+아래 '{ctx['brand']}' 브랜드의 실제 제품 정보 + 실제 시장 반응(네이버 글 제목)을 근거로
+기획 콘텐츠를 만든다.
 
 --- 홈페이지 텍스트 ---
 {ctx['site_text'] or "(없음)"}
@@ -154,30 +222,32 @@ def _gemini_report_json(ctx: dict) -> dict:
 {ctx['flagship'] or "(없음)"}
 --- 카테고리 ---
 {ctx['category'] or "(없음)"}
+--- 실제 시장 반응: 네이버 블로그/카페 글 제목 (사람들이 진짜 쓰는 표현) ---
+{market_titles}
 
 아래 JSON 형식으로만 답하라(설명·코드펜스 금지):
 {{
-  "slogan": "이 브랜드를 한 방에 각인시키는 획기적이고 감각적인 슬로건 한 줄 (12~24자, 카피라이터처럼)",
+  "slogan": "이 브랜드를 한 방에 각인시키는 획기적이고 감각적인 슬로건 한 줄 (12~24자)",
+  "big_idea": "이 브랜드를 셀픽 채널에서 밀 '캠페인 빅 아이디어' — 컨셉을 관통하는 한 줄 (기획자의 창작)",
+  "concept_name": "그 캠페인 컨셉을 부를 짧은 이름 (6~14자, 감각적으로)",
+  "insight": "위 실제 글 제목에서 읽어낸 소비자/시장 인사이트 한 줄 (진짜 니즈)",
   "product_summary": "이 제품이 무엇이고 어떤 가치를 주는지 1문장 (홈페이지 근거)",
-  "routines": [{{"title": "사용 상황 제목", "detail": "구체적 사용법 한 줄"}}],
-  "targets": ["이 제품에 해당하는 타겟 세그먼트(아래 목록에서만 골라라)"],
-  "usage_hashtags": ["사용 경험 해시태그 (# 없이 단어로)"],
-  "appeal_points": ["소구포인트/별칭/바이럴 키워드 후보 (# 없이)"],
-  "offline_ideas": ["산부인과/산후조리원/베이비스튜디오에서의 이 브랜드 활용 아이디어 한 줄"],
-  "online_ideas": ["맘카페에서 퍼질 만한 이 브랜드 활용법/콘텐츠 아이디어 한 줄"],
-  "lineup_ideas": [{{"axis": "용량|타입|기능", "idea": "향후 제품 확장 제안 한 줄"}}]
+  "targets": ["이 제품에 해당하는 타겟 세그먼트(아래 목록에서만)"],
+  "market_keywords": ["위 실제 글 제목에서 사람들이 실제로 쓰는 표현/니즈 6개 (지어내지 말고 제목에 실제로 드러난 것만)"],
+  "appeal_points": ["이 브랜드만의 소구포인트/별칭/바이럴 키워드 5개 (# 없이, 기획자의 창작)"],
+  "offline_ideas": ["산부인과/조리원/베이비스튜디오에서의 획기적 오프라인 활용 아이디어 한 줄"],
+  "online_ideas": ["맘카페에서 실제로 퍼질 온라인 바이럴 아이디어 한 줄"]
 }}
 
 타겟 세그먼트는 반드시 이 목록에서만 고른다: {", ".join(SEGMENT_POOL)}
 
 반드시 지킬 것:
-- 홈페이지·주력상품에 실제로 드러난 사실만 근거로 삼아라. 없는 사실을 지어내지 마라.
-- 순위·수상·인증·특허·FDA·제조사명·'1위'·'최고'·구체적 수치 같은 검증 불가 주장은
-  절대 넣지 마라. (이런 항목은 자동 폐기된다)
-- slogan은 짧고 강렬하게 한 줄. routines 3개, usage_hashtags 6개, appeal_points 5개,
-  offline_ideas 3개, online_ideas 3개, lineup_ideas 4개.
-- 각 항목은 짧고 구체적으로. 존댓말체 아니어도 됨(키워드/제목형).
-- 3페이지짜리 압축 제안서라, 군더더기 없이 '알맹이'만 뽑아라."""
+- 홈페이지·주력상품·실제 글 제목에 드러난 것만 근거로. 없는 사실·수치를 지어내지 마라.
+- 순위·수상·인증·특허·FDA·제조사명·'1위'·'최고'·구체적 수치 같은 검증 불가 주장 금지
+  (자동 폐기됨). 단 slogan·big_idea·concept_name·appeal_points는 '창작 카피'라 자유롭게.
+- market_keywords는 반드시 위 '실제 글 제목'에 근거해야 한다 (창작 X).
+- big_idea·insight는 뻔하지 않게, 관점이 담기게. offline/online 아이디어 각 3개.
+- 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만."""
 
     try:
         r = requests.post(
@@ -214,16 +284,15 @@ def _gemini_report_json(ctx: dict) -> dict:
 def _fallback(ctx: dict) -> dict:
     """AI가 비었을 때 쓰는 카테고리 기반 안전 템플릿 (지어낸 주장 없음)."""
     cat = ctx["category"] or "영유아 제품"
+    b = ctx["brand"]
     return {
-        "slogan": f"{ctx['brand']}, 엄마의 첫 순간에 함께합니다",
-        "product_summary": f"{ctx['brand']}는 영유아·임산부 타깃의 {cat} 브랜드입니다.",
-        "routines": [
-            {"title": "출산 준비", "detail": "출산가방·신생아 준비물에 함께 챙기는 제품"},
-            {"title": "매일의 육아 루틴", "detail": "아기 케어 단계에서 반복적으로 사용"},
-            {"title": "온 가족 사용", "detail": "산모·아기·가족이 함께 쓰는 생활 필수템"},
-        ],
+        "slogan": f"{b}, 엄마의 첫 순간에 함께합니다",
+        "big_idea": f"{b}를 '엄마의 첫 선택'으로 각인 — 출산의 시작점에서 브랜드를 심는다",
+        "concept_name": "첫 순간 각인",
+        "insight": "엄마는 아기에게 '가장 먼저 닿는 것'에 가장 예민하고 지갑을 아끼지 않는다.",
+        "product_summary": f"{b}는 영유아·임산부 타깃의 {cat} 브랜드입니다.",
         "targets": ["산모", "아기", "가족"],
-        "usage_hashtags": ["출산준비물", "신생아 필수템", "육아템", "맘카페 추천", "출산가방 리스트"],
+        "market_keywords": ["출산준비물", "신생아 필수템", "육아템", "맘카페 추천", "출산가방 리스트"],
         "appeal_points": ["엄마가 고른 브랜드", "믿고 쓰는 데일리템", "선물하기 좋은"],
         "offline_ideas": [
             "산후조리원 신생아실·퇴소 교육 시 실사용·권유",
@@ -235,78 +304,58 @@ def _fallback(ctx: dict) -> dict:
             "출산가방 리스트 공유글 필수템 등극",
             "육아 선배맘 후기 기반 추천 확산",
         ],
-        "lineup_ideas": [
-            {"axis": "용량", "idea": "샘플링·입문용 소용량 + B2B 대용량"},
-            {"axis": "타입", "idea": "휴대·여행용 등 사용 상황별 타입 확장"},
-            {"axis": "기능", "idea": "인접 니즈를 묶은 라인 확장 검토"},
-        ],
     }
 
 
 def build_content(row: dict) -> dict:
     """브랜드 한 행 → 슬라이드에 넣을 콘텐츠 dict (항상 완성형 반환)."""
     ctx = _product_context(row)
-    ai = _gemini_report_json(ctx)
+    signals = _market_signals(ctx["brand"], ctx["category"])
+    ai = _gemini_report_json(ctx, signals)
     fb = _fallback(ctx)
 
-    # slogan — 슬로건은 카피라 창의 허용, 단 검증 불가 주장·과한 길이는 폐기 후 폴백
-    slogan = _clean_line(ai.get("slogan", "")) if ai else ""
-    if not slogan or len(slogan) > 34 or any(b in slogan.lower() for b in _BANNED_CLAIM):
-        slogan = fb["slogan"]
+    def _copy(field, max_len):
+        """창작 카피(슬로건·빅아이디어 등): 검증불가 주장/과길이만 폐기."""
+        v = _clean_line(ai.get(field, "")) if ai else ""
+        if not v or len(v) > max_len or any(b in v.lower() for b in _BANNED_CLAIM):
+            return fb[field]
+        return v
+
+    slogan = _copy("slogan", 34)
+    big_idea = _copy("big_idea", 70)
+    concept_name = _copy("concept_name", 18)
+    insight = _copy("insight", 90)
 
     # product_summary (안전 필터 후 폴백)
     summary = _clean_line(ai.get("product_summary", "")) if ai else ""
     if not summary or any(b in summary.lower() for b in _BANNED_CLAIM):
         summary = fb["product_summary"]
 
-    # routines
-    routines = []
-    for r in (ai.get("routines") or []):
-        if isinstance(r, dict):
-            t = _safe_item(r.get("title", ""), 24)
-            d = _safe_item(r.get("detail", ""), 70)
-            if t and d:
-                routines.append({"title": t, "detail": d})
-    if len(routines) < 3:
-        routines = fb["routines"]
-    routines = routines[:6]
-
     # targets — 풀 안에 있는 것만
     targets = [t for t in (ai.get("targets") or []) if t in SEGMENT_POOL]
     if not targets:
         targets = fb["targets"]
-    # 순서를 예시 덱 순서로 정렬
     targets = [s for s in SEGMENT_POOL if s in targets][:8]
 
-    usage = _clean_list(ai.get("usage_hashtags"), 24, 10) or fb["usage_hashtags"]
+    market_kw = _clean_list(ai.get("market_keywords"), 24, 8) or fb["market_keywords"]
     appeal = _clean_list(ai.get("appeal_points"), 24, 8) or fb["appeal_points"]
     offline = _clean_list(ai.get("offline_ideas"), 80, 4) or fb["offline_ideas"]
     online = _clean_list(ai.get("online_ideas"), 80, 5) or fb["online_ideas"]
-
-    # lineup
-    lineup = []
-    for r in (ai.get("lineup_ideas") or []):
-        if isinstance(r, dict):
-            ax = _clean_line(r.get("axis", ""))[:6]
-            idea = _safe_item(r.get("idea", ""), 80)
-            if ax and idea:
-                lineup.append({"axis": ax, "idea": idea})
-    if len(lineup) < 3:
-        lineup = fb["lineup_ideas"]
-    lineup = lineup[:6]
 
     return {
         "brand": ctx["brand"],
         "category": ctx["category"],
         "slogan": slogan,
+        "big_idea": big_idea,
+        "concept_name": concept_name,
+        "insight": insight,
         "product_summary": summary,
-        "routines": routines,
         "targets": targets,
-        "usage_hashtags": usage,
+        "market_keywords": market_kw,
         "appeal_points": appeal,
         "offline_ideas": offline,
         "online_ideas": online,
-        "lineup_ideas": lineup,
+        "signals": signals,
         "ai_used": bool(ai),
     }
 
@@ -411,77 +460,113 @@ def _chip(slide, l, t, text, fill=PEACH, txt=WHITE, size=12):
     return l + w + Inches(0.14)     # 다음 칩 x
 
 
-# ── 페이지 1: 마케팅 전략 = 슬로건 + 브랜드 알맹이 + 핵심 타겟 ──
-def _page_strategy(prs, c):
+def _chips_row(slide, texts, top, x0=Inches(0.72), fill=PEACH, txt=WHITE, size=12):
+    """줄바꿈 되는 칩 배치 (폭 넘으면 다음 줄로)."""
+    x = x0
+    row_t = top
+    limit = Inches(12.6)
+    for t in texts:
+        w = Inches(0.42 + 0.155 * len(t))
+        if x + w > limit:
+            x = x0
+            row_t = row_t + Inches(0.56)
+        _chip(slide, x, row_t, t, fill, txt, size)
+        x = x + w + Inches(0.14)
+    return row_t + Inches(0.56)
+
+
+def _fmt(n):
+    try:
+        return f"{int(n):,}"
+    except Exception:
+        return str(n)
+
+
+# ── 페이지 1: 컨셉 · 전략 = 슬로건 + 빅 아이디어 + 인사이트 + 타겟 ──
+def _page_concept(prs, c):
     s = _blank(prs)
-    _eyebrow(s, f"MEDIA PROPOSAL      셀픽 × {c['brand']}")
-    # 히어로 슬로건 (알맹이의 핵심)
+    _eyebrow(s, f"CONCEPT & STRATEGY      셀픽 × {c['brand']}")
+    # 히어로 슬로건
     slogan = c["slogan"]
     sz = 40 if len(slogan) <= 16 else (34 if len(slogan) <= 24 else 28)
-    tf = _textbox(s, Inches(0.7), Inches(1.15), Inches(11.9), Inches(1.9))
+    tf = _textbox(s, Inches(0.7), Inches(1.08), Inches(11.9), Inches(1.4))
     _para(tf, slogan, sz, True, DARK, first=True, line_spacing=1.05)
     # 브랜드 한 줄 정의
-    tf2 = _textbox(s, Inches(0.72), Inches(3.0), Inches(11.9), Inches(0.9))
-    _para(tf2, c["product_summary"], 15, False, GRAY, first=True, line_spacing=1.2)
-    _rule(s, Inches(3.95))
+    tf2 = _textbox(s, Inches(0.72), Inches(2.45), Inches(11.9), Inches(0.55))
+    _para(tf2, c["product_summary"], 14, False, GRAY, first=True, line_spacing=1.2)
+    _rule(s, Inches(3.15))
+    # 빅 아이디어 (컨셉)
+    tf3 = _textbox(s, Inches(0.72), Inches(3.32), Inches(11.9), Inches(1.05))
+    _para(tf3, f"빅 아이디어   「{c['concept_name']}」", 12.5, True, ORANGE_D,
+          first=True, space_after=4)
+    _para(tf3, c["big_idea"], 16, True, DARK, line_spacing=1.15)
+    # 인사이트
+    tf4 = _textbox(s, Inches(0.72), Inches(4.75), Inches(11.9), Inches(0.85))
+    _para(tf4, "인사이트", 12.5, True, ORANGE_D, first=True, space_after=4)
+    _para(tf4, c["insight"], 14, False, GRAY, line_spacing=1.2)
     # 핵심 타겟 칩
-    tf3 = _textbox(s, Inches(0.72), Inches(4.2), Inches(4.0), Inches(0.3))
-    _para(tf3, "핵심 타겟", 12, True, ORANGE_D, first=True)
-    x = Inches(0.72)
-    for seg in c["targets"][:6]:
-        x = _chip(s, x, Inches(4.55), seg)
-    # 마케팅 전략 = 사용 알맹이 3줄
-    tf4 = _textbox(s, Inches(0.72), Inches(5.35), Inches(11.9), Inches(0.3))
-    _para(tf4, "마케팅 전략", 12, True, ORANGE_D, first=True)
-    tf5 = _textbox(s, Inches(0.72), Inches(5.72), Inches(11.9), Inches(1.2))
-    for i, r in enumerate(c["routines"][:3]):
-        _para(tf5, f"{r['title']}  —  {r['detail']}", 12.5, False, DARK,
-              first=(i == 0), space_after=5)
+    tf5 = _textbox(s, Inches(0.72), Inches(5.85), Inches(11.9), Inches(0.3))
+    _para(tf5, "핵심 타겟", 12.5, True, ORANGE_D, first=True)
+    _chips_row(s, c["targets"][:6], Inches(6.2))
 
 
-# ── 페이지 2: 니즈 · 광고 제안 (2단) ──
-def _page_proposal(prs, c):
+# ── 페이지 2: 시장 · 니즈 = 실제 검색 데이터 + 키워드 ──
+def _page_market(prs, c):
     s = _blank(prs)
-    _eyebrow(s, "NEEDS  &  PROPOSAL")
-    _title(s, "니즈에서 출발한 광고 제안")
+    sig = c.get("signals") or {}
+    _eyebrow(s, "MARKET & NEEDS")
+    _title(s, "시장은 이미 이렇게 말하고 있다")
     _rule(s, Inches(1.72))
-    # 좌: 브랜드 소구 · 바이럴 키워드
-    tfL = _textbox(s, Inches(0.72), Inches(2.0), Inches(6.0), Inches(4.6))
-    _para(tfL, "브랜드 소구 키워드", 13, True, ORANGE_D, first=True, space_after=6)
-    _para(tfL, "  ".join(f"#{a}" for a in c["appeal_points"][:5]),
-          15, True, DARK, space_after=16, line_spacing=1.3)
-    _para(tfL, "사용 경험 키워드", 13, True, ORANGE_D, space_after=6)
-    _para(tfL, "  ".join(f"#{h}" for h in c["usage_hashtags"][:6]),
-          13, False, GRAY, line_spacing=1.3)
-    # 우: 셀픽 광고 상품 제안 (고정 5종)
-    tfR = _textbox(s, Inches(7.1), Inches(2.0), Inches(5.5), Inches(4.6))
-    _para(tfR, "셀픽 광고 상품 제안", 13, True, ORANGE_D, first=True, space_after=8)
+    # 실시간 시장 신호 스트립 (진짜 수치)
+    parts = []
+    if sig.get("blog"):
+        parts.append(f"네이버 블로그 {_fmt(sig['blog'])}건")
+    if sig.get("cafe"):
+        parts.append(f"카페 {_fmt(sig['cafe'])}건")
+    if sig.get("shop"):
+        parts.append(f"카테고리 쇼핑 {_fmt(sig['shop'])}건")
+    strip = "   ·   ".join(parts) if parts else "실시간 검색 데이터 없음 (네이버 검색 키 필요)"
+    bar = _rect(s, Inches(0.72), Inches(1.95), Inches(11.9), Inches(0.62), PEACH_L,
+                MSO_SHAPE.ROUNDED_RECTANGLE)
+    btf = bar.text_frame
+    btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    bp = btf.paragraphs[0]
+    bp.alignment = PP_ALIGN.CENTER
+    _run(bp, f"실시간 시장 반응    {strip}", 12.5, True, ORANGE_D)
+    # 실제 언급 키워드 (진짜 글 제목 기반)
+    tf = _textbox(s, Inches(0.72), Inches(2.95), Inches(11.9), Inches(0.3))
+    _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+    nt = _chips_row(s, c["market_keywords"][:8], Inches(3.32),
+                    fill=RGBColor(0xEC, 0xEC, 0xEC), txt=DARK)
+    # 브랜드 소구 키워드 (기획자 창작)
+    tf2 = _textbox(s, Inches(0.72), nt + Inches(0.15), Inches(11.9), Inches(0.3))
+    _para(tf2, "이 브랜드로 밀 소구 키워드 (제안)", 12.5, True, ORANGE_D, first=True)
+    _chips_row(s, [f"#{a}" for a in c["appeal_points"][:5]], nt + Inches(0.55))
+    _note(s, "※ 상단 수치·표현은 네이버 실시간 검색 결과 기반(실측)이며, 소구 키워드는 셀픽 제안입니다.")
+
+
+# ── 페이지 3: 셀픽 실행 = 광고 상품 + 실행 아이디어 + 도달 규모 ──
+def _page_execution(prs, c):
+    s = _blank(prs)
+    _eyebrow(s, "SELPIC EXECUTION")
+    _title(s, "셀픽으로 이렇게 실행한다")
+    _rule(s, Inches(1.72))
+    # 좌: 셀픽 광고 상품 5종
+    tfL = _textbox(s, Inches(0.72), Inches(1.95), Inches(5.7), Inches(4.4))
+    _para(tfL, "셀픽 광고 상품", 12.5, True, ORANGE_D, first=True, space_after=7)
     for name, desc in SELPIC_MEDIA:
-        _para(tfR, f"● {name}", 13, True, DARK, space_after=1, space_before=3)
-        _para(tfR, f"    {desc}", 11.5, False, GRAY, space_after=2)
-    _note(s, "※ 키워드·상품 구성은 셀픽이 제안하는 마케팅 아이디어입니다 (집행 전 브랜드와 협의).")
-
-
-# ── 페이지 3: 셀픽 마케팅 방향 ──
-def _page_direction(prs, c):
-    s = _blank(prs)
-    _eyebrow(s, "DIRECTION")
-    _title(s, "셀픽 마케팅 방향")
-    _rule(s, Inches(1.72))
-    # 오프라인
-    tf = _textbox(s, Inches(0.72), Inches(2.0), Inches(11.9), Inches(1.9))
-    _para(tf, "오프라인 — 산부인과·조리원·베이비 스튜디오에서 전문가 사용·추천",
-          13.5, True, ORANGE_D, first=True, space_after=6)
+        _para(tfL, f"● {name}", 12.5, True, DARK, space_after=1, space_before=3)
+        _para(tfL, f"    {desc}", 11, False, GRAY, space_after=2)
+    # 우: 실행 아이디어 (오프+온)
+    tfR = _textbox(s, Inches(6.8), Inches(1.95), Inches(5.9), Inches(4.4))
+    _para(tfR, "오프라인 실행", 12.5, True, ORANGE_D, first=True, space_after=5)
     for idea in c["offline_ideas"][:3]:
-        _para(tf, f"● {idea}", 12.5, False, DARK, space_after=4)
-    # 온라인
-    tf2 = _textbox(s, Inches(0.72), Inches(4.05), Inches(11.9), Inches(1.7))
-    _para(tf2, "온라인 — 맘카페 체험형 바이럴", 13.5, True, ORANGE_D,
-          first=True, space_after=6)
+        _para(tfR, f"● {idea}", 11.5, False, DARK, space_after=4)
+    _para(tfR, "온라인 실행", 12.5, True, ORANGE_D, space_before=8, space_after=5)
     for idea in c["online_ideas"][:3]:
-        _para(tf2, f"● {idea}", 12.5, False, DARK, space_after=4)
+        _para(tfR, f"● {idea}", 11.5, False, DARK, space_after=4)
     # 셀픽 도달 규모 (고정 수치 스트립)
-    bar = _rect(s, Inches(0.72), Inches(5.95), Inches(11.9), Inches(0.72), PEACH_L,
+    bar = _rect(s, Inches(0.72), Inches(6.05), Inches(11.9), Inches(0.66), PEACH_L,
                 MSO_SHAPE.ROUNDED_RECTANGLE)
     btf = bar.text_frame
     btf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -490,17 +575,17 @@ def _page_direction(prs, c):
     bp.alignment = PP_ALIGN.CENTER
     _run(bp, "연 10만 신생아·부모 DB   ·   전국 460대 키오스크   ·   "
              "조리원 230곳(50% M/S)   ·   조리원 체류 14일 매일 접촉",
-         12, True, ORANGE_D)
-    _note(s, "※ 실제 집행 채널·물량은 브랜드와 협의 후 확정됩니다.")
+         11.5, True, ORANGE_D)
+    _note(s, "※ 실행 아이디어는 셀픽 제안이며, 도달 규모는 셀픽 미디어 실측치입니다. 물량은 협의 후 확정.")
 
 
 def build_pptx(content: dict) -> bytes:
     prs = Presentation()
     prs.slide_width = W
     prs.slide_height = H
-    _page_strategy(prs, content)
-    _page_proposal(prs, content)
-    _page_direction(prs, content)
+    _page_concept(prs, content)
+    _page_market(prs, content)
+    _page_execution(prs, content)
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
