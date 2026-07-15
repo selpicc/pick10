@@ -1959,6 +1959,56 @@ if len(filtered) > 0:
                 else:
                     st.caption("✉️ 이메일을 입력/확인하면 '메일 초안 만들기' 버튼이 나타나요.")
 
+                # ─── 📊 이 브랜드 분석 리포트(PPTX) 만들기 ───
+                #   메일과 달리 Gmail 열쇠가 필요 없다(Gemini 키만) → 클라우드에서도 보인다.
+                #   버튼 클릭 시 그 브랜드 1건에 대해서만 셀픽 Media Proposal 7장 PPTX 생성.
+                #   생성 결과는 session_state에 담아 '다운로드' 버튼이 rerun 후에도 유지되게 한다.
+                st.markdown("---")
+                _rk = f"report_{sel_brand}"
+                _mkr = st.button(
+                    "📊 이 브랜드 분석 리포트(PPTX) 만들기",
+                    key=f"mkreport_{sel_brand}",
+                    help="셀픽 Media Proposal 형식의 7장 PPTX를 만듭니다. "
+                         "파워포인트에서 바로 수정 가능해요.",
+                )
+                st.caption(
+                    "브랜드 홈페이지·주력상품을 읽어 맞춤 제안서(7장)를 만들어요. "
+                    "생성 후 아래 '다운로드' 버튼이 나타납니다. (발송·저장 자동화 아님)"
+                )
+                if _mkr:
+                    if not os.getenv("GEMINI_API_KEY", "").strip():
+                        st.info(
+                            "AI 키(GEMINI_API_KEY)가 없어 카테고리 기반 기본 리포트로 만들어요. "
+                            "맞춤 리포트를 원하면 클라우드 앱 Secrets에 GEMINI_API_KEY를 넣어주세요."
+                        )
+                    try:
+                        from report_generator import make_report as _mkrep
+                        _sbr = get_supabase_client()
+                        _rowr = (
+                            _sbr.table(TABLE_NAME).select("*")
+                            .eq("brand_name", sel_brand).limit(1).execute()
+                        ).data
+                        _rowr = (_rowr or [{}])[0]
+                        with st.spinner("제품 정보를 읽고 리포트를 만드는 중... (20~40초)"):
+                            _data, _fname = _mkrep(_rowr)
+                        st.session_state[_rk] = {"data": _data, "name": _fname}
+                        st.success(
+                            f"✅ 리포트 생성 완료 — 아래 버튼으로 내려받으세요 ({_fname})"
+                        )
+                    except Exception as _er:
+                        st.error(f"리포트 생성 오류: {_er}")
+                if st.session_state.get(_rk):
+                    st.download_button(
+                        "⬇ 리포트 PPTX 다운로드",
+                        data=st.session_state[_rk]["data"],
+                        file_name=st.session_state[_rk]["name"],
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument"
+                            ".presentationml.presentation"
+                        ),
+                        key=f"dl_{sel_brand}",
+                    )
+
                 # ⭐ 영업 상태 (하단 재배치) — 활동메모 바로 위
                 new_status = st.selectbox(
                     "영업 상태",
