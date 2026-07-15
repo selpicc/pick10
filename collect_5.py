@@ -1065,21 +1065,56 @@ def fetch_follower_count(store_url: str) -> int:
         return 0
 
 
-def _clean_brand_for_search(brand_name: str) -> str:
-    """마케팅 검색용 브랜드명 정규화.
+# '공식/오피셜' 계열 접미 — 실제 상호가 아니라 판매채널 표기라 항상 제거해도 안전
+_BRAND_NOISE_SUFFIX = [
+    "공식스토어", "공식 스토어", "공식몰", "공식샵", "공식 샵",
+    "오피셜스토어", "오피셜 스토어", "공식", "오피셜",
+]
+# 일반 접미 — 실제 상호의 일부일 수도 있어 '풀네임이 0건일 때만' 벗긴다
+_BRAND_BARE_SUFFIX = ["스토어", "샵", "shop", "몰", "브랜드", "official"]
 
-    '밀크비&포시즌김해 스튜디오'처럼 두 상호가 &로 붙거나 부가어가 달린 이름은
-    따옴표 정확일치가 0건을 만든다(그 문자열 그대로인 글이 없으니). 실제로는
-    '밀크비'로 검색해야 카페·블로그 노출이 잡힌다. → 구분자(& / + , |) 앞의
-    핵심 상호만 취해 검색 정확도를 살린다. 구분자가 없으면 원래 이름 그대로.
+
+def _clean_brand_for_search(brand_name: str) -> str:
+    """마케팅 검색용 브랜드명 정규화 (항상 적용되는 안전 정리).
+
+    '밀크비&포시즌김해 스튜디오'처럼 두 상호가 &로 붙거나 '(김해점)'·'공식 스토어'
+    같은 부가어가 달린 이름은 따옴표 정확일치가 0건을 만든다(그 문자열 그대로인
+    글이 없으니). 실제로는 '밀크비'로 검색해야 노출이 잡힌다. → 다음을 제거:
+      1) 괄호 부가설명  2) 구분자(& / + , | ·) 뒤 합성 상호  3) '공식/오피셜' 접미
+    멀쩡한 이름(구분자·괄호·공식표기 없음)은 그대로 둔다.
     """
     if not brand_name:
         return brand_name
     core = brand_name.strip()
+    core = re.sub(r"\s*[\(\[（【].*?[\)\]）】]", "", core).strip()   # 괄호 부가설명 제거
     for sep in ["&", "/", "+", ",", "|", "·"]:
         if sep in core:
-            core = core.split(sep)[0].strip()
+            first = core.split(sep)[0].strip()
+            if len(first) >= 2:          # 1글자로 깎이면 과도 → 원래 유지 (예: 'A&B키즈')
+                core = first
+    changed = True
+    while changed:
+        changed = False
+        for w in _BRAND_NOISE_SUFFIX:
+            if core.endswith(w) and len(core) > len(w) + 1:
+                core = core[:-len(w)].strip()
+                changed = True
     return core or brand_name.strip()
+
+
+def _brand_core_bare(brand_name: str) -> str:
+    """위 정리 후에도 남은 '스토어/샵/몰' 등 일반 접미까지 벗긴 최소 상호.
+    오탈락 위험이 있어 '풀네임이 0건일 때만' 재검색용으로 쓴다.
+    """
+    core = _clean_brand_for_search(brand_name)
+    changed = True
+    while changed:
+        changed = False
+        for w in _BRAND_BARE_SUFFIX:
+            if core.endswith(w) and len(core) > len(w) + 1:
+                core = core[:-len(w)].strip()
+                changed = True
+    return core
 
 
 def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "", follower_count: int = 0) -> dict:
@@ -1139,6 +1174,18 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     blog = search_naver("blog", query_main, 1).get("total", 0)
     cafe = search_naver("cafearticle", query_main, 1).get("total", 0)
     used_query = query_main
+
+    # ⭐ 2026-07: 그래도 0건이면 이름이 지저분한 것(스토어/샵/몰 등 접미)일 수 있으니
+    #   일반 접미까지 벗긴 최소 상호로 한 번 더 시도. (멀쩡한 이름은 0건이 아니라 안 탐)
+    if blog + cafe == 0 and brand_name:
+        _bare = _brand_core_bare(brand_name)
+        if _bare and _bare != _bn_core:
+            bare_q = f'"{_bare}"' if (is_service or not search_keyword) \
+                else f'"{_bare}" {search_keyword}'
+            blog_b = search_naver("blog", bare_q, 1).get("total", 0)
+            cafe_b = search_naver("cafearticle", bare_q, 1).get("total", 0)
+            if blog_b + cafe_b > 0:
+                blog, cafe, used_query = blog_b, cafe_b, bare_q
 
     # ⭐ Fallback: 메인 쿼리 결과가 너무 적을 시 시장 컨텍스트로 재검색
     # 작은 브랜드·신규 상품은 specific 매칭 부족할 수 있음
