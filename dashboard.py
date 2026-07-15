@@ -1024,7 +1024,8 @@ if len(filtered) > 0:
 
     # ⭐ 2026-07: 메일 상태 계산에 필요한 추적 컬럼 (표시용으로만 끌어옴)
     _mail_cols = [
-        c for c in ["메일 스레드ID", "메일 발송일", "메일 회신일", "팔로업 횟수"]
+        c for c in ["메일 스레드ID", "메일 발송일", "메일 회신일",
+                    "팔로업 횟수", "마지막 팔로업일"]
         if c in filtered.columns
     ]
 
@@ -1116,12 +1117,21 @@ if len(filtered) > 0:
             fu = int(row.get("팔로업 횟수", 0) or 0)
         except Exception:
             fu = 0
-        label = f"발송 {days}일" if days >= 0 else "발송"
-        if fu:
-            label += f" · 팔로업{fu}"
-        if days >= 7 and fu < 2:
-            label = "🔔 " + label            # 팔로업할 때가 됨
-        return label
+        # 다음 팔로업 시점은 '마지막 연락'(마지막 팔로업일, 없으면 발송일) + 7일.
+        #   → 1차는 발송 기준, 2차는 1차 팔로업 기준으로 정확히 계산 (메일_추적.py와 동일 원칙)
+        last_contact = str(row.get("마지막 팔로업일", "") or "").strip() or sent
+        try:
+            _ld = datetime.fromisoformat(last_contact.replace("Z", "+00:00"))
+            days_since_last = (datetime.now(_ld.tzinfo) - _ld).days
+        except Exception:
+            days_since_last = days
+        base = f"발송 {days}일" if days >= 0 else "발송"
+        # 팔로업 2회 미만 + 마지막 연락 후 7일 경과 → 지금 해야 할 회차를 강조
+        if fu < 2 and days_since_last >= 7:
+            return f"🔔 {fu + 1}차 팔로업 때"
+        if fu >= 1:
+            return f"{base} · {fu}차 팔로업함"   # 이미 보낸 팔로업 회차
+        return base
 
     if "메일 스레드ID" in main_df.columns:
         display_df["메일"] = main_df.apply(_mail_state, axis=1)
