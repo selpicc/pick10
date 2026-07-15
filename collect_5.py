@@ -618,7 +618,7 @@ def _process_one_candidate(
     mgrade = calculate_marketing_grade(brand_name, product_keyword, auto_cat, follower_count)
     print(f"        주력: {flagship_title[:50]}")
     print(f"        카테고리: {auto_cat}")
-    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']}/SNS{mgrade['sns']})")
+    print(f"        마케팅: {mgrade['grade']} (블{mgrade['blog']}/카{mgrade['cafe']})")
     print(f"        마케팅 활동 단계: {mgrade['size']} — {mgrade['size_note']}")
 
     # 5-5) 대기업 컷
@@ -655,8 +655,7 @@ def _process_one_candidate(
         "마케팅 점수 (자동)":   mgrade["score"],
         "마케팅 채널별 노출 (자동)": (
             f"블로그 {mgrade['blog']:,} · "
-            f"카페 {mgrade['cafe']:,} · "
-            f"SNS {mgrade['sns']:,}"
+            f"카페 {mgrade['cafe']:,}"
         ),
         "마케팅 활동 단계 (자동)": f"{mgrade['size']} — {mgrade['size_note']}",
         "관심고객수 (자동)":    follower_count,
@@ -1126,22 +1125,22 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
             cafe = cafe_fb
             used_query = fallback_query
 
-    # SNS(인스타그램) 노출 — 실제 사용된 쿼리 기준 (그대로 유지)
-    sns_blog = search_naver("blog", f"{used_query} 인스타", 1).get("total", 0)
-    sns_cafe = search_naver("cafearticle", f"{used_query} 인스타", 1).get("total", 0)
-    sns = sns_blog + sns_cafe
+    # ⭐ 2026-07: SNS(인스타 프록시) 제거.
+    #   기존 SNS = 네이버에서 "{쿼리} 인스타" 언급 수였는데, 실제 인스타그램 활동
+    #   (팔로워·게시물·해시태그)과 무관한 의미 없는 수치라 사용자 판단으로 제외.
+    #   블로그·카페 2채널만 사용. (SNS 검색 2회 제거 → 수집도 소폭 빨라짐)
+    sns = 0
 
-    # 점수 계산 — 3채널 가중치 (카페 가장 중요)
+    # 점수 계산 — 2채널 가중치 (카페 가장 중요)
     score = (
         math.log10(blog + 1) * 1.5
         + math.log10(cafe + 1) * 2.0
-        + math.log10(sns + 1) * 1.5
     )
 
-    # 마케팅 등급 (3채널이라 임계치 조정)
-    if score >= 9:
+    # 마케팅 등급 — SNS 제거분 반영해 임계치 재조정(실측으로 기존 등급 분포 유지)
+    if score >= 7:
         grade = "상"
-    elif score >= 4:
+    elif score >= 3:
         grade = "중"
     else:
         grade = "하"
@@ -1156,19 +1155,19 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
         size_note = f"관심고객 {follower_count:,}명 (영업 비효율, 자체 마케팅팀 보유)"
     else:
         # 채널별 강세/약세 분석
-        channels = {"블로그": blog, "카페": cafe, "SNS": sns}
+        channels = {"블로그": blog, "카페": cafe}
         max_channel = max(channels, key=channels.get)
         max_value = channels[max_channel]
 
-        # 단계 결정 (점수 기반)
-        if score >= 12:
+        # 단계 결정 (점수 기반 — SNS 제거분 반영해 임계치 재조정)
+        if score >= 9:
             size = "확장기"
             # 서술: 강세 채널 + 권장 영업 방향
             size_note = (
                 f"{max_channel} 노출 {max_value:,}건 등 마케팅 활발 — "
                 f"신규 매출 채널 확장 적기"
             )
-        elif score >= 5:
+        elif score >= 4.5:
             size = "성장기"
             size_note = (
                 f"{max_channel} 중심 노출 형성 중 ({max_value:,}건) — "
@@ -1178,7 +1177,7 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
             size = "도입기"
             # 가장 부족한 정보 표시
             size_note = (
-                f"전 채널 노출 미흡 (블{blog:,}/카{cafe:,}/SNS{sns:,}) — "
+                f"전 채널 노출 미흡 (블{blog:,}/카{cafe:,}) — "
                 f"마케팅 기초 도입 컨설팅 필요"
             )
 
@@ -1709,7 +1708,7 @@ def _collect_service_candidates(queries, category_label, target):
                 "마케팅 등급 (자동)":   mg["grade"],
                 "마케팅 점수 (자동)":   mg["score"],
                 "마케팅 채널별 노출 (자동)": (
-                    f"블로그 {mg['blog']:,} · 카페 {mg['cafe']:,} · SNS {mg['sns']:,}"
+                    f"블로그 {mg['blog']:,} · 카페 {mg['cafe']:,}"
                 ),
                 "마케팅 활동 단계 (자동)": f"{mg['size']} — {mg['size_note']}",
                 "관심고객수 (자동)":    0,
