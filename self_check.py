@@ -236,15 +236,18 @@ def _():
     f2 = build_followup(row, round_no=2)
     assert not f1["skip"] and not f2["skip"], "팔로업 생성 실패"
     assert f1["plain"] != f2["plain"], "1차·2차 팔로업 문구가 같음 (같은 말 반복 X)"
-    # 마지막 팔로업은 '더 안 보내겠다'고 닫아야 한다 (재촉 금지)
-    assert "더 보내드리지 않" in f2["plain"], "2차 팔로업이 문을 닫지 않음"
+    # 마지막 팔로업은 재촉하지 않고 공손하게 — 소개서 다시 첨부 + '천천히 보고 연락' 톤
+    assert "소개서" in f2["plain"], "2차 팔로업에 소개서 재첨부 안내가 없음"
+    assert "천천히" in f2["plain"], "2차 팔로업이 '천천히 보시라'는 여유 톤이 아님"
+    assert f2["plain"].rstrip().endswith("감사합니다.") or "감사합니다" in f2["plain"], \
+        "2차 팔로업이 '감사합니다'로 마무리되지 않음"
     # 팔로업에도 금액은 안 들어간다 (첫 메일과 같은 원칙)
     for m in ("만원", "150원", "vat", "VAT"):
         for t in (f1["plain"], f2["plain"]):
             assert m not in t, f"팔로업에 가격 문구('{m}')가 들어감"
     # 이메일 없으면 skip
     assert build_followup({"brand_name": "노메일"}, 1)["skip"], "이메일 없음 skip 실패"
-    return "1차/2차 분기 · 마지막은 문 닫기 · 금액 미노출 · skip 정상"
+    return "1차/2차 분기 · 마지막은 공손·소개서재첨부·천천히 · 금액 미노출 · skip 정상"
 
 
 @check("3-5c. 영업 상태 자동변경 — 사람이 정한 값 보호")

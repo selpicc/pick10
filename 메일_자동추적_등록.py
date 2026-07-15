@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """메일 자동 추적을 윈도우 작업 스케줄러에 등록 (한 번만 실행)
 ─────────────────────────────────────────────────────────────
-매일 정해진 시각에 메일_자동추적.bat 이 자동으로 돕니다.
+매일 정해진 시각(들)에 메일_자동추적.bat 이 자동으로 돕니다.
   → Gmail 확인 (발송·회신 감지) → 영업 상태 갱신 → 팔로업 초안 생성
 
-컴퓨터가 꺼져 있었으면, 켜진 뒤에 놓친 작업을 알아서 실행합니다.
+하루에 여러 번도 가능합니다 (--time 에 콤마로 여러 시간).
+추적은 그때그때 Gmail 현재 상태를 통째로 다시 읽는 방식이라, 어떤 회차를
+놓쳐도(그 시각에 컴퓨터가 꺼져 있어도) 다음 실행 때 전부 따라잡습니다.
 
 사용법:
-  venv\\Scripts\\python 메일_자동추적_등록.py           # 매일 09:00 등록
+  venv\\Scripts\\python 메일_자동추적_등록.py                     # 매일 09:00 등록
   venv\\Scripts\\python 메일_자동추적_등록.py --time 14:30
-  venv\\Scripts\\python 메일_자동추적_등록.py --remove  # 등록 해제
-  venv\\Scripts\\python 메일_자동추적_등록.py --status  # 등록됐는지 확인
+  venv\\Scripts\\python 메일_자동추적_등록.py --time "09:30,14:00,17:00"   # 하루 3번
+  venv\\Scripts\\python 메일_자동추적_등록.py --remove            # 등록 전부 해제
+  venv\\Scripts\\python 메일_자동추적_등록.py --status            # 등록됐는지 확인
 
 ⚠ 발송은 하지 않습니다. 팔로업도 '초안'까지만.
 """
@@ -26,7 +29,8 @@ try:
 except Exception:
     pass
 
-TASK_NAME = "셀픽_메일자동추적"
+TASK_NAME = "셀픽_메일자동추적"     # 레거시(단일) 이름 — 정리 대상에 포함
+MAX_SLOTS = 9                       # 하루 최대 9회까지 지원
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BAT_PATH = os.path.join(SCRIPT_DIR, "메일_자동추적.bat")
 
@@ -43,55 +47,95 @@ def _run(args):
         return False, str(e)
 
 
+def _all_task_names():
+    """정리·조회 대상 — 레거시 단일 이름 + 번호 붙은 이름들(_1.._N)"""
+    return [TASK_NAME] + [f"{TASK_NAME}_{i}" for i in range(1, MAX_SLOTS + 1)]
+
+
+def _norm_time(t: str) -> str:
+    """'9:30' / '09:30' → 'HH:MM' 로 정규화. 형식 틀리면 예외."""
+    t = t.strip()
+    parts = t.split(":")
+    h = int(parts[0])
+    m = int(parts[1]) if len(parts) > 1 else 0
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"시간 범위 벗어남: {t}")
+    return f"{h:02d}:{m:02d}"
+
+
+def _cleanup_all():
+    """기존에 등록된 셀픽 메일추적 작업들을 전부 삭제 (중복 방지)."""
+    for n in _all_task_names():
+        _run(["schtasks", "/Delete", "/TN", n, "/F"])
+
+
 def status():
-    ok, out = _run(["schtasks", "/Query", "/TN", TASK_NAME])
-    if ok:
-        print(f"✅ 등록돼 있습니다: {TASK_NAME}")
-        print(out.strip())
+    found = []
+    for n in _all_task_names():
+        ok, out = _run(["schtasks", "/Query", "/TN", n, "/FO", "LIST"])
+        if ok:
+            # '다음 실행 시간' 줄만 뽑아 보여줌
+            nxt = ""
+            for line in out.splitlines():
+                if "다음 실행 시간" in line or "Next Run Time" in line:
+                    nxt = line.split(":", 1)[-1].strip()
+                    break
+            found.append((n, nxt))
+    if found:
+        print(f"✅ 등록돼 있습니다 — 하루 {len(found)}회:")
+        for n, nxt in found:
+            print(f"   · {n}   다음 실행: {nxt or '(확인 불가)'}")
     else:
         print(f"❌ 아직 등록 안 됨 ({TASK_NAME})")
         print("   등록: venv\\Scripts\\python 메일_자동추적_등록.py")
-    return ok
+    return bool(found)
 
 
 def remove():
-    ok, out = _run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
-    if ok:
-        print(f"✅ 자동 추적을 해제했습니다 ({TASK_NAME})")
+    removed = 0
+    for n in _all_task_names():
+        ok, _ = _run(["schtasks", "/Delete", "/TN", n, "/F"])
+        if ok:
+            removed += 1
+    if removed:
+        print(f"✅ 자동 추적을 해제했습니다 ({removed}개 작업 삭제)")
         print("   이제 필요할 때 직접 돌리시면 됩니다:")
         print("     venv\\Scripts\\python 메일_추적.py")
     else:
-        print(f"⚠ 해제 실패(또는 등록된 적 없음): {out.strip()[:200]}")
-    return ok
+        print("⚠ 해제할 작업이 없습니다 (등록된 적 없음).")
+    return removed > 0
 
 
-def register(at: str):
+def register(times):
     if not os.path.exists(BAT_PATH):
         print(f"❌ {BAT_PATH} 가 없습니다.")
         sys.exit(1)
 
-    # 이미 있으면 지우고 다시 등록 (시간 변경 시)
-    _run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"])
+    # 이미 있으면 전부 지우고 다시 등록 (시간·개수 변경 시 중복 방지)
+    _cleanup_all()
 
-    ok, out = _run([
-        "schtasks", "/Create",
-        "/TN", TASK_NAME,
-        "/TR", f'"{BAT_PATH}"',
-        "/SC", "DAILY",
-        "/ST", at,
-        "/F",
-    ])
-    if not ok:
-        print(f"❌ 등록 실패:\n{out.strip()[:400]}")
-        print("\n권한 문제라면, 명령창을 '관리자 권한으로 실행'한 뒤 다시 시도하세요.")
-        sys.exit(1)
+    made = []
+    for i, at in enumerate(times, 1):
+        tn = f"{TASK_NAME}_{i}"
+        ok, out = _run([
+            "schtasks", "/Create",
+            "/TN", tn,
+            "/TR", f'"{BAT_PATH}"',
+            "/SC", "DAILY",
+            "/ST", at,
+            "/F",
+        ])
+        if not ok:
+            print(f"❌ {at} 등록 실패:\n{out.strip()[:400]}")
+            print("\n권한 문제라면, 명령창을 '관리자 권한으로 실행'한 뒤 다시 시도하세요.")
+            # 부분 등록 상태를 남기지 않게 정리
+            _cleanup_all()
+            sys.exit(1)
+        made.append(at)
 
-    # 컴퓨터가 꺼져 있어 놓친 작업은 켜진 뒤에 실행 (기본값은 그냥 건너뜀)
-    _run(["schtasks", "/Change", "/TN", TASK_NAME, "/ENABLE"])
-
-    print(f"✅ 매일 {at} 에 자동 실행되도록 등록했습니다.")
+    print(f"✅ 매일 {', '.join(made)} — 하루 {len(made)}번 자동 실행되도록 등록했습니다.")
     print()
-    print("  하는 일:")
+    print("  하는 일 (매 회차마다):")
     print("   1) Gmail 확인 → 발송·회신 감지 → 영업 상태 자동 갱신")
     print("   2) 7일 지나도 답 없는 브랜드에 팔로업 '초안' 생성 (발송 X)")
     print()
@@ -111,12 +155,27 @@ def main():
         remove()
         return
 
-    at = "09:00"
+    raw = "09:00"
     if "--time" in args:
         i = args.index("--time")
         if i + 1 < len(args):
-            at = args[i + 1].strip()
-    register(at)
+            raw = args[i + 1].strip()
+
+    try:
+        times = [_norm_time(t) for t in raw.split(",") if t.strip()]
+    except ValueError as e:
+        print(f"❌ 시간 형식이 잘못됐어요: {e}")
+        print('   예) --time "09:30,14:00,17:00"')
+        sys.exit(1)
+
+    if not times:
+        print("❌ 등록할 시간이 없습니다.")
+        sys.exit(1)
+    if len(times) > MAX_SLOTS:
+        print(f"❌ 하루 최대 {MAX_SLOTS}회까지만 됩니다 (요청: {len(times)}회).")
+        sys.exit(1)
+
+    register(times)
 
 
 if __name__ == "__main__":
