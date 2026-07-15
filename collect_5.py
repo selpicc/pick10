@@ -1072,6 +1072,12 @@ _BRAND_NOISE_SUFFIX = [
 ]
 # 일반 접미 — 실제 상호의 일부일 수도 있어 '풀네임이 0건일 때만' 벗긴다
 _BRAND_BARE_SUFFIX = ["스토어", "샵", "shop", "몰", "브랜드", "official"]
+# 업종어(사진관·조리원 등) — 합성 이름을 자를 때 이 꼬리표는 살려 정확도를 높인다.
+#   예: '밀크비&포시즌김해 스튜디오' → '밀크비'(과다) 대신 '밀크비 스튜디오'(정확)
+_BRAND_BIZ_TYPE = [
+    "산후조리원", "조리원", "산후도우미", "산후관리", "스튜디오", "사진관",
+    "포토", "마사지", "에스테틱", "클리닉", "산부인과", "케어",
+]
 
 
 def _clean_brand_for_search(brand_name: str) -> str:
@@ -1087,11 +1093,16 @@ def _clean_brand_for_search(brand_name: str) -> str:
         return brand_name
     core = brand_name.strip()
     core = re.sub(r"\s*[\(\[（【].*?[\)\]）】]", "", core).strip()   # 괄호 부가설명 제거
+    # 원래 이름 끝의 업종어(스튜디오·조리원 등) 기억 — 합성으로 잘리면 다시 붙인다
+    _biz_tail = next((w for w in _BRAND_BIZ_TYPE if core.endswith(w)), "")
     for sep in ["&", "/", "+", ",", "|", "·"]:
         if sep in core:
             first = core.split(sep)[0].strip()
             if len(first) >= 2:          # 1글자로 깎이면 과도 → 원래 유지 (예: 'A&B키즈')
                 core = first
+    # 업종어가 있었는데 잘려나갔으면 되살려 정확도 유지 ('밀크비' → '밀크비 스튜디오')
+    if _biz_tail and _biz_tail not in core:
+        core = f"{core} {_biz_tail}"
     changed = True
     while changed:
         changed = False
