@@ -4,10 +4,11 @@
 대시보드 셀러 디테일의 '📊 분석 리포트 만들기' 버튼이 이 모듈을 호출한다.
 자동화(스케줄러)가 아니라 사람이 버튼을 누른 그 브랜드에 대해서만 1건 생성한다.
 
-만드는 것: 예시(셀픽_MEDIA PROPOSAL_2026)와 같은 7장짜리 편집 가능한 PPTX.
-  1) 표지  2) 마케팅 전략(사용 루틴+타겟)  3) 니즈→사용법/바이럴 키워드
-  4) 타겟 특징(셀픽 영유아 시장)  5) 셀픽 마케팅 방향(오프+온)
-  6) Appendix 참고 레퍼런스  7) 향후 라인업 제안
+만드는 것: 표지 없이 3페이지짜리 심플한 편집 가능 PPTX (폰트 Pretendard).
+  1) 마케팅 전략 = 획기적 슬로건 + 브랜드 알맹이 + 핵심 타겟
+  2) 니즈 · 광고 제안 = 소구/바이럴 키워드 + 셀픽 광고 상품 5종
+  3) 셀픽 마케팅 방향 = 오프라인·온라인 + 셀픽 도달 규모
+  ※ 사용자가 준 예시 PDF는 '내용/분석' 참고용이며 레이아웃은 새로 잡는다.
 
 핵심 원칙 — 지어내지 않기 (brand_intro.py와 동일 철학):
   · 셀픽 고정 수치(조리원 230곳·산부인과 55곳 등)는 소개서 값 그대로 '템플릿'.
@@ -64,6 +65,15 @@ TARGET_MARKET_LINES = [
 # 타겟 세그먼트 후보 (예시 덱과 동일 풀)
 SEGMENT_POOL = ["산모", "아기", "가족", "청소년", "아토피 환우",
                 "새로운 뷰티 트렌드", "청결 강박", "미세먼지"]
+
+# 셀픽 미디어 상품 5종 (2026 가이드 — 고정, 지어내지 말 것)
+SELPIC_MEDIA = [
+    ("키오스크 DA", "인화 대기 화면 100% 노출 사이니지 광고"),
+    ("모바일 DA", "셀픽 앱·모바일 최적 배너 (자체 광고엔진)"),
+    ("조리원 MRO·샘플링", "신생아실 사용 물품 결합 오프라인 홍보"),
+    ("맘카페 체험형 바이럴", "실제 아기엄마 후기 기반 심화 바이럴"),
+    ("타겟 DB LMS", "동의 기반 산모 DB 다이렉트 메시지"),
+]
 
 # 검증 불가 주장 — 리포트 문구에 하나라도 있으면 그 항목 폐기
 _BANNED_CLAIM = (
@@ -147,6 +157,7 @@ def _gemini_report_json(ctx: dict) -> dict:
 
 아래 JSON 형식으로만 답하라(설명·코드펜스 금지):
 {{
+  "slogan": "이 브랜드를 한 방에 각인시키는 획기적이고 감각적인 슬로건 한 줄 (12~24자, 카피라이터처럼)",
   "product_summary": "이 제품이 무엇이고 어떤 가치를 주는지 1문장 (홈페이지 근거)",
   "routines": [{{"title": "사용 상황 제목", "detail": "구체적 사용법 한 줄"}}],
   "targets": ["이 제품에 해당하는 타겟 세그먼트(아래 목록에서만 골라라)"],
@@ -163,9 +174,10 @@ def _gemini_report_json(ctx: dict) -> dict:
 - 홈페이지·주력상품에 실제로 드러난 사실만 근거로 삼아라. 없는 사실을 지어내지 마라.
 - 순위·수상·인증·특허·FDA·제조사명·'1위'·'최고'·구체적 수치 같은 검증 불가 주장은
   절대 넣지 마라. (이런 항목은 자동 폐기된다)
-- routines 4~6개, usage_hashtags 6~10개, appeal_points 5~8개, offline_ideas 3개,
-  online_ideas 4~5개, lineup_ideas 4~6개.
-- 각 항목은 짧고 구체적으로. 존댓말체 아니어도 됨(키워드/제목형)."""
+- slogan은 짧고 강렬하게 한 줄. routines 3개, usage_hashtags 6개, appeal_points 5개,
+  offline_ideas 3개, online_ideas 3개, lineup_ideas 4개.
+- 각 항목은 짧고 구체적으로. 존댓말체 아니어도 됨(키워드/제목형).
+- 3페이지짜리 압축 제안서라, 군더더기 없이 '알맹이'만 뽑아라."""
 
     try:
         r = requests.post(
@@ -203,6 +215,7 @@ def _fallback(ctx: dict) -> dict:
     """AI가 비었을 때 쓰는 카테고리 기반 안전 템플릿 (지어낸 주장 없음)."""
     cat = ctx["category"] or "영유아 제품"
     return {
+        "slogan": f"{ctx['brand']}, 엄마의 첫 순간에 함께합니다",
         "product_summary": f"{ctx['brand']}는 영유아·임산부 타깃의 {cat} 브랜드입니다.",
         "routines": [
             {"title": "출산 준비", "detail": "출산가방·신생아 준비물에 함께 챙기는 제품"},
@@ -235,6 +248,11 @@ def build_content(row: dict) -> dict:
     ctx = _product_context(row)
     ai = _gemini_report_json(ctx)
     fb = _fallback(ctx)
+
+    # slogan — 슬로건은 카피라 창의 허용, 단 검증 불가 주장·과한 길이는 폐기 후 폴백
+    slogan = _clean_line(ai.get("slogan", "")) if ai else ""
+    if not slogan or len(slogan) > 34 or any(b in slogan.lower() for b in _BANNED_CLAIM):
+        slogan = fb["slogan"]
 
     # product_summary (안전 필터 후 폴백)
     summary = _clean_line(ai.get("product_summary", "")) if ai else ""
@@ -280,6 +298,7 @@ def build_content(row: dict) -> dict:
     return {
         "brand": ctx["brand"],
         "category": ctx["category"],
+        "slogan": slogan,
         "product_summary": summary,
         "routines": routines,
         "targets": targets,
@@ -293,17 +312,19 @@ def build_content(row: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# 4) PPTX 빌드
+# 4) PPTX 빌드 — 표지 없이 3페이지, 심플, Pretendard
+#    (준 예시 PDF는 '내용/분석' 참고용일 뿐 레이아웃은 새로 잡는다)
 # ─────────────────────────────────────────────────────────────
 ORANGE = RGBColor(0xF5, 0x82, 0x1F)
 ORANGE_D = RGBColor(0xD9, 0x66, 0x0A)
 PEACH = RGBColor(0xF3, 0xA9, 0x7A)
-PEACH_L = RGBColor(0xFB, 0xE7, 0xDA)
-DARK = RGBColor(0x33, 0x33, 0x33)
-GRAY = RGBColor(0x60, 0x60, 0x60)
-LGRAY = RGBColor(0xEF, 0xEF, 0xEF)
+PEACH_L = RGBColor(0xFD, 0xF1, 0xE8)
+DARK = RGBColor(0x22, 0x22, 0x22)
+GRAY = RGBColor(0x66, 0x66, 0x66)
+MUTED = RGBColor(0x9A, 0x9A, 0x9A)
+LINE = RGBColor(0xE6, 0xE6, 0xE6)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-FONT = "맑은 고딕"
+FONT = "Pretendard"          # 사용자 요청 폰트 (뷰어에 Pretendard 설치 필요)
 
 W = Inches(13.333)
 H = Inches(7.5)
@@ -342,242 +363,147 @@ def _textbox(slide, l, t, w, h, anchor=MSO_ANCHOR.TOP):
 
 
 def _para(tf, text, size=13, bold=False, color=DARK, align=PP_ALIGN.LEFT,
-          first=False, space_after=4, space_before=0):
+          first=False, space_after=4, space_before=0, line_spacing=None):
     p = tf.paragraphs[0] if first else tf.add_paragraph()
     p.alignment = align
     p.space_after = Pt(space_after)
     p.space_before = Pt(space_before)
+    if line_spacing:
+        p.line_spacing = line_spacing
     if text:
         _run(p, text, size, bold, color)
     return p
-
-
-def _header(slide, title, subtitle=""):
-    """콘텐츠 슬라이드 상단 헤더 — 좌측 오렌지 바 + 제목 + 우측 태그라인."""
-    _rect(slide, Inches(0.45), Inches(0.5), Inches(0.09), Inches(0.62), ORANGE,
-          MSO_SHAPE.ROUNDED_RECTANGLE)
-    tf = _textbox(slide, Inches(0.7), Inches(0.4), Inches(9.5), Inches(1.0))
-    _para(tf, title, 24, True, ORANGE, first=True, space_after=2)
-    if subtitle:
-        _para(tf, subtitle, 14, False, GRAY)
-    # 우측 상단 태그라인
-    tf2 = _textbox(slide, Inches(9.8), Inches(0.42), Inches(3.2), Inches(0.4))
-    _para(tf2, "당신이 사진을 찍는 이유, 셀픽", 10, True, GRAY,
-          align=PP_ALIGN.RIGHT, first=True)
-
-
-def _seg_box(slide, l, t, w, h, label):
-    sp = _rect(slide, l, t, w, h, PEACH, MSO_SHAPE.ROUNDED_RECTANGLE)
-    tf = sp.text_frame
-    tf.word_wrap = True
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    _run(p, label, 12, True, WHITE)
 
 
 def _blank(prs):
     return prs.slides.add_slide(prs.slide_layouts[6])
 
 
-def _slide_cover(prs, brand):
-    s = _blank(prs)
-    s.background.fill.solid()
-    s.background.fill.fore_color.rgb = ORANGE
-    # 좌상단 라벨
-    tf = _textbox(s, Inches(0.9), Inches(2.0), Inches(8.5), Inches(0.6))
-    _para(tf, "SELPIC  ·  Mom No.1 Platform", 16, True, WHITE, first=True)
-    # 메인 타이틀
-    tf2 = _textbox(s, Inches(0.9), Inches(2.7), Inches(9.5), Inches(2.2))
-    _para(tf2, "Mom No.1 Platform 셀픽", 40, True, WHITE, first=True, space_after=6)
-    _para(tf2, f"Media Proposal for  {brand}", 30, True, WHITE)
-    # 하단 발신 pill
-    pill = _rect(s, Inches(0.9), Inches(5.3), Inches(2.5), Inches(0.55), ORANGE_D,
-                 MSO_SHAPE.ROUNDED_RECTANGLE)
-    ptf = pill.text_frame
-    ptf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    pp = ptf.paragraphs[0]
+def _eyebrow(slide, text):
+    """페이지 상단 얇은 라벨 + 짧은 오렌지 악센트 바."""
+    _rect(slide, Inches(0.72), Inches(0.52), Inches(0.34), Inches(0.055), ORANGE)
+    tf = _textbox(slide, Inches(0.72), Inches(0.62), Inches(11.9), Inches(0.32))
+    _para(tf, text, 11.5, True, MUTED, first=True)
+
+
+def _title(slide, text, size=27):
+    tf = _textbox(slide, Inches(0.7), Inches(0.92), Inches(11.9), Inches(0.75))
+    _para(tf, text, size, True, DARK, first=True)
+
+
+def _rule(slide, t, l=Inches(0.72), w=Inches(11.9)):
+    _rect(slide, l, t, w, Pt(1.0), LINE)
+
+
+def _note(slide, text, top=Inches(6.95)):
+    tf = _textbox(slide, Inches(0.72), top, Inches(11.9), Inches(0.35))
+    _para(tf, text, 9.5, False, MUTED, first=True)
+
+
+def _chip(slide, l, t, text, fill=PEACH, txt=WHITE, size=12):
+    w = Inches(0.42 + 0.155 * len(text))
+    sp = _rect(slide, l, t, w, Inches(0.44), fill, MSO_SHAPE.ROUNDED_RECTANGLE)
+    tfr = sp.text_frame
+    tfr.vertical_anchor = MSO_ANCHOR.MIDDLE
+    pp = tfr.paragraphs[0]
     pp.alignment = PP_ALIGN.CENTER
-    _run(pp, "주식회사 에스오씨", 14, True, WHITE)
-    # 우측 대형 'S' 워터마크
-    tf3 = _textbox(s, Inches(9.3), Inches(2.4), Inches(3.6), Inches(3.6),
-                   anchor=MSO_ANCHOR.MIDDLE)
-    _para(tf3, "S", 240, True, WHITE, align=PP_ALIGN.CENTER, first=True)
+    _run(pp, text, size, True, txt)
+    return l + w + Inches(0.14)     # 다음 칩 x
 
 
-def _note(slide, text, top):
-    tf = _textbox(slide, Inches(0.7), top, Inches(12.0), Inches(0.35))
-    _para(tf, text, 10, False, GRAY, first=True)
-
-
-def _slide_strategy(prs, c):
+# ── 페이지 1: 마케팅 전략 = 슬로건 + 브랜드 알맹이 + 핵심 타겟 ──
+def _page_strategy(prs, c):
     s = _blank(prs)
-    _header(s, "마케팅 전략",
-            "필요할 때만이 아닌, 일상에 늘 함께하는 생활 필수템으로")
-    # 좌: 제품 요약 + 사용 루틴
-    tf = _textbox(s, Inches(0.7), Inches(1.7), Inches(7.4), Inches(4.6))
-    _para(tf, c["product_summary"], 14, True, ORANGE_D, first=True, space_after=10)
-    for r in c["routines"]:
-        _para(tf, f"● {r['title']}", 13, True, DARK, space_after=1, space_before=4)
-        _para(tf, f"   └ {r['detail']}", 12, False, GRAY, space_after=2)
-    # 우: 타겟 세그먼트 박스 그리드 (2행 x 최대 4열)
-    segs = c["targets"][:8]
-    tf_t = _textbox(s, Inches(8.4), Inches(1.6), Inches(4.4), Inches(0.4))
-    _para(tf_t, "타겟 세그먼트", 13, True, ORANGE_D, first=True)
-    bx, by = Inches(8.4), Inches(2.05)
-    bw, bh = Inches(1.02), Inches(0.95)
-    gap = Inches(0.12)
-    for i, seg in enumerate(segs):
-        col, rowi = i % 4, i // 4
-        l = Emu_add(bx, (bw, gap), col)
-        t = Emu_add(by, (bh, gap), rowi)
-        _seg_box(s, l, t, bw, bh, seg)
-    # 하단 오렌지 배너
-    banner = _rect(s, Inches(0.7), Inches(6.55), Inches(12.0), Inches(0.6), ORANGE)
-    btf = banner.text_frame
-    btf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    bp = btf.paragraphs[0]
-    bp.alignment = PP_ALIGN.CENTER
-    _run(bp, "매 순간 함께하는 루틴이 곧 브랜드 충성 — 셀픽이 그 접점을 만듭니다", 13, True, WHITE)
+    _eyebrow(s, f"MEDIA PROPOSAL      셀픽 × {c['brand']}")
+    # 히어로 슬로건 (알맹이의 핵심)
+    slogan = c["slogan"]
+    sz = 40 if len(slogan) <= 16 else (34 if len(slogan) <= 24 else 28)
+    tf = _textbox(s, Inches(0.7), Inches(1.15), Inches(11.9), Inches(1.9))
+    _para(tf, slogan, sz, True, DARK, first=True, line_spacing=1.05)
+    # 브랜드 한 줄 정의
+    tf2 = _textbox(s, Inches(0.72), Inches(3.0), Inches(11.9), Inches(0.9))
+    _para(tf2, c["product_summary"], 15, False, GRAY, first=True, line_spacing=1.2)
+    _rule(s, Inches(3.95))
+    # 핵심 타겟 칩
+    tf3 = _textbox(s, Inches(0.72), Inches(4.2), Inches(4.0), Inches(0.3))
+    _para(tf3, "핵심 타겟", 12, True, ORANGE_D, first=True)
+    x = Inches(0.72)
+    for seg in c["targets"][:6]:
+        x = _chip(s, x, Inches(4.55), seg)
+    # 마케팅 전략 = 사용 알맹이 3줄
+    tf4 = _textbox(s, Inches(0.72), Inches(5.35), Inches(11.9), Inches(0.3))
+    _para(tf4, "마케팅 전략", 12, True, ORANGE_D, first=True)
+    tf5 = _textbox(s, Inches(0.72), Inches(5.72), Inches(11.9), Inches(1.2))
+    for i, r in enumerate(c["routines"][:3]):
+        _para(tf5, f"{r['title']}  —  {r['detail']}", 12.5, False, DARK,
+              first=(i == 0), space_after=5)
 
 
-def _slide_needs(prs, c):
+# ── 페이지 2: 니즈 · 광고 제안 (2단) ──
+def _page_proposal(prs, c):
     s = _blank(prs)
-    _header(s, "니즈 → 사용법 → 경험 콘텐츠",
-            "타겟 니즈에 맞는 사용법 제시 → 경험 콘텐츠 생성 → 바이럴")
-    # 좌상: 사용 경험 해시태그
-    tf = _textbox(s, Inches(0.7), Inches(1.7), Inches(8.0), Inches(2.0))
-    _para(tf, "니즈에 따른 타겟 → 사용법 제시", 14, True, ORANGE_D, first=True, space_after=6)
-    _para(tf, "  ".join(f"#{h}" for h in c["usage_hashtags"][:5]), 13, False, DARK, space_after=3)
-    _para(tf, "  ".join(f"#{h}" for h in c["usage_hashtags"][5:10]), 13, False, DARK)
-    # 좌하: 경험 콘텐츠 방향
-    tf2 = _textbox(s, Inches(0.7), Inches(3.9), Inches(8.0), Inches(2.4))
-    _para(tf2, "사용법에 따른 니즈 → 타겟의 경험 콘텐츠 생성", 14, True, ORANGE_D,
-          first=True, space_after=6)
-    for idea in c["online_ideas"][:4]:
-        _para(tf2, f"● {idea}", 12, False, DARK, space_after=3)
-    # 우: 소구포인트/별칭/바이럴 키워드 박스
-    box = _rect(s, Inches(9.0), Inches(1.7), Inches(3.8), Inches(4.6), LGRAY,
-                MSO_SHAPE.ROUNDED_RECTANGLE)
-    btf = box.text_frame
-    btf.word_wrap = True
-    btf.margin_left = Inches(0.25)
-    btf.margin_top = Inches(0.25)
-    _para(btf, "소구포인트 / 별칭 / 바이럴 키워드", 13, True, DARK, first=True,
-          align=PP_ALIGN.CENTER, space_after=10)
-    for a in c["appeal_points"][:8]:
-        _para(btf, f"#{a}", 13, True, ORANGE_D, align=PP_ALIGN.CENTER, space_after=5)
-    _note(s, "※ 위 키워드·콘텐츠는 셀픽이 제안하는 마케팅 아이디어입니다 (집행 전 브랜드와 협의).",
-          Inches(6.7))
+    _eyebrow(s, "NEEDS  &  PROPOSAL")
+    _title(s, "니즈에서 출발한 광고 제안")
+    _rule(s, Inches(1.72))
+    # 좌: 브랜드 소구 · 바이럴 키워드
+    tfL = _textbox(s, Inches(0.72), Inches(2.0), Inches(6.0), Inches(4.6))
+    _para(tfL, "브랜드 소구 키워드", 13, True, ORANGE_D, first=True, space_after=6)
+    _para(tfL, "  ".join(f"#{a}" for a in c["appeal_points"][:5]),
+          15, True, DARK, space_after=16, line_spacing=1.3)
+    _para(tfL, "사용 경험 키워드", 13, True, ORANGE_D, space_after=6)
+    _para(tfL, "  ".join(f"#{h}" for h in c["usage_hashtags"][:6]),
+          13, False, GRAY, line_spacing=1.3)
+    # 우: 셀픽 광고 상품 제안 (고정 5종)
+    tfR = _textbox(s, Inches(7.1), Inches(2.0), Inches(5.5), Inches(4.6))
+    _para(tfR, "셀픽 광고 상품 제안", 13, True, ORANGE_D, first=True, space_after=8)
+    for name, desc in SELPIC_MEDIA:
+        _para(tfR, f"● {name}", 13, True, DARK, space_after=1, space_before=3)
+        _para(tfR, f"    {desc}", 11.5, False, GRAY, space_after=2)
+    _note(s, "※ 키워드·상품 구성은 셀픽이 제안하는 마케팅 아이디어입니다 (집행 전 브랜드와 협의).")
 
 
-def _slide_target(prs, c):
+# ── 페이지 3: 셀픽 마케팅 방향 ──
+def _page_direction(prs, c):
     s = _blank(prs)
-    _header(s, "1단계 · 셀픽 영유아 설치점 타겟 광고 제안",
-            "정밀 타겟팅 고객 대상 오프라인 제품경험 + 경험자 DB 수집 → 판매 연결")
-    tf = _textbox(s, Inches(0.7), Inches(1.75), Inches(7.6), Inches(4.8))
-    _para(tf, "타겟 특징", 14, True, ORANGE_D, first=True, space_after=6)
-    for line in TARGET_MARKET_LINES:
-        _para(tf, f"· {line}", 12.5, False, DARK, space_after=5)
-    # 우: 셀픽 도달 규모 박스 (고정 수치)
-    box = _rect(s, Inches(8.7), Inches(1.75), Inches(4.1), Inches(4.4), PEACH_L,
-                MSO_SHAPE.ROUNDED_RECTANGLE)
-    btf = box.text_frame
-    btf.word_wrap = True
-    btf.margin_left = Inches(0.25)
-    btf.margin_top = Inches(0.22)
-    _para(btf, "셀픽 도달 규모", 13, True, ORANGE_D, first=True,
-          align=PP_ALIGN.CENTER, space_after=8)
-    for key in ["산모DB", "누적회원", "설치점", "조리원", "산부인과", "체류", "무료인화"]:
-        _para(btf, f"● {SELPIC_FACTS[key]}", 11, False, DARK, space_after=5)
-
-
-def _slide_direction(prs, c):
-    s = _blank(prs)
-    _header(s, "셀픽 마케팅 방향",
-            "오프라인 제품경험 + 온라인 맘카페 바이럴의 결합")
+    _eyebrow(s, "DIRECTION")
+    _title(s, "셀픽 마케팅 방향")
+    _rule(s, Inches(1.72))
     # 오프라인
-    tf = _textbox(s, Inches(0.7), Inches(1.7), Inches(12.0), Inches(2.5))
-    _para(tf, "오프라인 — 산부인과·산후조리원·베이비 스튜디오에서 전문가 사용·추천",
-          14, True, ORANGE_D, first=True, space_after=6)
+    tf = _textbox(s, Inches(0.72), Inches(2.0), Inches(11.9), Inches(1.9))
+    _para(tf, "오프라인 — 산부인과·조리원·베이비 스튜디오에서 전문가 사용·추천",
+          13.5, True, ORANGE_D, first=True, space_after=6)
     for idea in c["offline_ideas"][:3]:
         _para(tf, f"● {idea}", 12.5, False, DARK, space_after=4)
-    _para(tf, f"   → {SELPIC_FACTS['조리원']}, {SELPIC_FACTS['산부인과']} 접점 활용 "
-              f"+ 경험자 DB 수집으로 온·오프 판매 연결", 12, True, GRAY, space_before=3)
     # 온라인
-    tf2 = _textbox(s, Inches(0.7), Inches(4.3), Inches(12.0), Inches(2.2))
-    _para(tf2, "온라인 — 맘카페 집중 바이럴", 14, True, ORANGE_D, first=True, space_after=6)
-    for idea in c["online_ideas"][:5]:
-        _para(tf2, f"● {idea}", 12.5, False, DARK, space_after=3)
-    _note(s, "※ 실제 집행 채널·물량은 브랜드와 협의 후 확정됩니다.", Inches(6.85))
-
-
-def _slide_appendix(prs, c):
-    s = _blank(prs)
-    _header(s, "Appendix · 참고 레퍼런스",
-            "맘카페 바이럴이 실제로 퍼지는 방식")
-    tf = _textbox(s, Inches(0.7), Inches(1.8), Inches(12.0), Inches(4.6))
-    _para(tf, "맘카페에서 자연 확산되는 콘텐츠 유형", 14, True, ORANGE_D,
-          first=True, space_after=8)
-    ref_types = [
-        "출산가방 리스트 공유글 — 매월 수백 건, 평균 조회수 높음 (필수템 등극 시 지속 노출)",
-        "산후조리원 첫 샤워·신생아 배꼽·목욕 등 '단계별 관리' 후기",
-        "육아 선배맘의 실사용 추천 — 조리원 동기·맘카페로 전파",
-        "어린이집 하원 후 케어 루틴 등 '일상 반복 사용' 콘텐츠",
-    ]
-    for r in ref_types:
-        _para(tf, f"· {r}", 12.5, False, DARK, space_after=6)
-    _para(tf, "이 브랜드에 붙일 바이럴 키워드(제안):", 13, True, ORANGE_D,
-          space_before=8, space_after=4)
-    _para(tf, "   " + "   ".join(f"#{a}" for a in c["appeal_points"][:6]),
-          13, True, GRAY)
-    _note(s, "※ 예시는 셀픽 채널에서 관찰된 일반적 확산 패턴입니다.", Inches(6.85))
-
-
-def _slide_lineup(prs, c):
-    s = _blank(prs)
-    _header(s, "추가 의견 · 향후 라인업 제안",
-            "시장 접점에서 도출한 제품 확장 아이디어")
-    # 축별 그룹핑
-    groups = {"용량": [], "타입": [], "기능": []}
-    for r in c["lineup_ideas"]:
-        ax = r["axis"]
-        key = "용량" if "용량" in ax else "타입" if "타입" in ax else "기능"
-        groups[key].append(r["idea"])
-    tf = _textbox(s, Inches(0.7), Inches(1.8), Inches(12.0), Inches(4.6))
-    first = True
-    for axis, ideas in groups.items():
-        if not ideas:
-            continue
-        _para(tf, f"{axis} 다양화", 14, True, ORANGE_D, first=first,
-              space_before=0 if first else 10, space_after=4)
-        first = False
-        for idea in ideas:
-            _para(tf, f"   - {idea}", 12.5, False, DARK, space_after=3)
-    _note(s, "※ 향후 라인업은 셀픽의 시장 관찰 기반 제안이며, 확정 계획이 아닙니다.",
-          Inches(6.85))
+    tf2 = _textbox(s, Inches(0.72), Inches(4.05), Inches(11.9), Inches(1.7))
+    _para(tf2, "온라인 — 맘카페 체험형 바이럴", 13.5, True, ORANGE_D,
+          first=True, space_after=6)
+    for idea in c["online_ideas"][:3]:
+        _para(tf2, f"● {idea}", 12.5, False, DARK, space_after=4)
+    # 셀픽 도달 규모 (고정 수치 스트립)
+    bar = _rect(s, Inches(0.72), Inches(5.95), Inches(11.9), Inches(0.72), PEACH_L,
+                MSO_SHAPE.ROUNDED_RECTANGLE)
+    btf = bar.text_frame
+    btf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    btf.word_wrap = True
+    bp = btf.paragraphs[0]
+    bp.alignment = PP_ALIGN.CENTER
+    _run(bp, "연 10만 신생아·부모 DB   ·   전국 460대 키오스크   ·   "
+             "조리원 230곳(50% M/S)   ·   조리원 체류 14일 매일 접촉",
+         12, True, ORANGE_D)
+    _note(s, "※ 실제 집행 채널·물량은 브랜드와 협의 후 확정됩니다.")
 
 
 def build_pptx(content: dict) -> bytes:
     prs = Presentation()
     prs.slide_width = W
     prs.slide_height = H
-    _slide_cover(prs, content["brand"])
-    _slide_strategy(prs, content)
-    _slide_needs(prs, content)
-    _slide_target(prs, content)
-    _slide_direction(prs, content)
-    _slide_appendix(prs, content)
-    _slide_lineup(prs, content)
+    _page_strategy(prs, content)
+    _page_proposal(prs, content)
+    _page_direction(prs, content)
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
-
-
-# 그리드 위치 계산 헬퍼 (EMU 덧셈)
-def Emu_add(base, step_gap, n):
-    step, gap = step_gap
-    return base + (step + gap) * n
 
 
 # ─────────────────────────────────────────────────────────────
