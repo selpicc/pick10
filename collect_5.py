@@ -1065,6 +1065,23 @@ def fetch_follower_count(store_url: str) -> int:
         return 0
 
 
+def _clean_brand_for_search(brand_name: str) -> str:
+    """마케팅 검색용 브랜드명 정규화.
+
+    '밀크비&포시즌김해 스튜디오'처럼 두 상호가 &로 붙거나 부가어가 달린 이름은
+    따옴표 정확일치가 0건을 만든다(그 문자열 그대로인 글이 없으니). 실제로는
+    '밀크비'로 검색해야 카페·블로그 노출이 잡힌다. → 구분자(& / + , |) 앞의
+    핵심 상호만 취해 검색 정확도를 살린다. 구분자가 없으면 원래 이름 그대로.
+    """
+    if not brand_name:
+        return brand_name
+    core = brand_name.strip()
+    for sep in ["&", "/", "+", ",", "|", "·"]:
+        if sep in core:
+            core = core.split(sep)[0].strip()
+    return core or brand_name.strip()
+
+
 def calculate_marketing_grade(brand_name: str, search_keyword: str, category: str = "", follower_count: int = 0) -> dict:
     """3채널 검색 노출량 → 상/중/하 + 규모
 
@@ -1101,7 +1118,10 @@ def calculate_marketing_grade(brand_name: str, search_keyword: str, category: st
     # ⭐ 2026-07: 서비스형(상품 없음)은 주력상품이 없으니 브랜드명만으로 노출 취합.
     #   (산후도우미·마사지 등은 '주력상품 키워드'가 존재하지 않는다)
     is_service = "서비스" in (category or "")
-    bn_q = f'"{brand_name}"' if brand_name else ""
+    # ⭐ 2026-07: 합성/부가어 붙은 이름(밀크비&포시즌김해 스튜디오)은 핵심 상호만으로
+    #   검색해야 노출이 잡힌다. (전체 이름 정확일치 → 0건 버그)
+    _bn_core = _clean_brand_for_search(brand_name)
+    bn_q = f'"{_bn_core}"' if _bn_core else ""
     if is_service and brand_name:
         # 서비스형: 브랜드명 단독 검색 (시장 컨텍스트도 안 붙임)
         query_main = bn_q
