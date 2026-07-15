@@ -1655,7 +1655,7 @@ if len(filtered) > 0:
                         "도입기": "⚪", "성장기": "🟢", "확장기": "🟡",
                         "초기": "⚪", "안정기": "🟡",
                     }.get(_stage_word, "")
-                    st.caption("마케팅 활동 단계")
+                    st.caption("마케팅 활동 단계 · 주력상품 맥락에서의 브랜드 마케팅 현황")
                     st.markdown(f"**{_stage_emoji} {_stage_raw}**")
                     st.markdown("")
 
