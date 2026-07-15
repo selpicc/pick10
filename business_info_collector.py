@@ -848,9 +848,10 @@ def find_email_from_homepage(brand_name: str, hint_url: str = "") -> Optional[st
 #   예) "앙덤스토어" → 앙덤 / "프라젠트라 공식 스토어" → 프라젠트라
 GLUED_SUFFIXES = [
     "공식스토어", "공식스토아", "공식몰", "공식샵", "스토어", "스토아",
-    "스튜디오", "코스메틱", "컴퍼니", "마켓", "공식", "몰", "샵",
-    "officialstore", "official", "cosmetic", "company",
-    "store", "studio", "market", "shop", "mall",
+    "스튜디오", "더마코스메틱", "코스메틱", "컴퍼니", "마켓", "더마",
+    "공식", "몰", "샵",
+    "officialstore", "official", "dermacosmetic", "cosmetic", "company",
+    "derma", "store", "studio", "market", "shop", "mall",
 ]
 
 
@@ -1532,6 +1533,15 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
 
         search_queries = [
             f"{sname}",                 # ⭐ 핵심어 단독 (가장 자연스러운 검색)
+        ]
+        # ⭐ 2026-07 (닥터바이오 케이스): 핵심어를 따로 뽑았다면 원래 풀네임 검색을
+        #   '맨 끝 보험'이 아니라 '2순위'로 올린다. 합성 상호(닥터바이오 더마 코스메틱)는
+        #   핵심어 축약이 어긋나 1순위 검색이 오염될 수 있는데, 코드가 후보 상위 8개만
+        #   검증하므로 풀네임 검색 결과(진짜 공식몰)가 뒤로 밀리면 검사조차 못 한다.
+        #   풀네임을 앞으로 올려 공식몰이 상위 후보에 들어오게 한다.
+        if core and brand_name not in search_queries:
+            search_queries.append(brand_name)
+        search_queries += [
             f"{sname} 공식 홈페이지",
             f"{sname} 공식몰",
             f"{sname} 쇼핑몰",
@@ -1540,9 +1550,6 @@ def find_business_info_from_homepage(brand_name: str, hint_url: str = "",
             f"{sname} 고객센터",        # footer 이메일 잡기 좋은 키워드
             f"{sname} cs",              # 영문 CS 페이지
         ]
-        # 핵심어를 따로 뽑았다면 원래 표시명 검색도 한 번은 남겨둔다 (보험)
-        if core:
-            search_queries.append(brand_name)
 
         # 무관 사이트 도메인 (Naver/Google 둘 다 사용)
         SKIP_DOMAINS = [
