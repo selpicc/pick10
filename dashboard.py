@@ -1961,18 +1961,18 @@ if len(filtered) > 0:
 
                 # ─── 📊 이 브랜드 분석 리포트(PPTX) 만들기 ───
                 #   메일과 달리 Gmail 열쇠가 필요 없다(Gemini 키만) → 클라우드에서도 보인다.
-                #   버튼 클릭 시 그 브랜드 1건에 대해서만 셀픽 Media Proposal 7장 PPTX 생성.
+                #   버튼 클릭 시 그 브랜드 1건에 대해서만 셀픽 미디어 기획서 3페이지 PPTX 생성.
                 #   생성 결과는 session_state에 담아 '다운로드' 버튼이 rerun 후에도 유지되게 한다.
                 st.markdown("---")
                 _rk = f"report_{sel_brand}"
                 _mkr = st.button(
                     "📊 이 브랜드 분석 리포트(PPTX) 만들기",
                     key=f"mkreport_{sel_brand}",
-                    help="셀픽 Media Proposal 형식의 7장 PPTX를 만듭니다. "
+                    help="주력상품 기반 셀픽 미디어 기획서 3페이지 PPTX를 만듭니다. "
                          "파워포인트에서 바로 수정 가능해요.",
                 )
                 st.caption(
-                    "브랜드 홈페이지·주력상품을 읽어 맞춤 제안서(7장)를 만들어요. "
+                    "홈페이지·주력상품·실시간 시장검색을 읽어 맞춤 기획서(3페이지)를 만들어요. "
                     "생성 후 아래 '다운로드' 버튼이 나타납니다. (발송·저장 자동화 아님)"
                 )
                 if _mkr:
