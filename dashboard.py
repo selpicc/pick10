@@ -994,6 +994,60 @@ def save_one_brand(brand: str, new_values: dict) -> bool:
         return False
 
 
+# ─────────────────────────────────────────────────────────────────
+# 활동 히스토리 (자동) — 수집·발송·팔로업·회신을 날짜순 한 줄씩.
+#   활동 메모칸 상단에 붙여 함께 보여주되, 저장할 땐 마커 아래 '수기 메모'만
+#   저장한다. → 자동분은 매번 새로 그려져 최신이고, 밍이 쓴 메모는 절대 안 덮어씀.
+# ─────────────────────────────────────────────────────────────────
+ACTIVITY_AUTO_HEADER = "📋 활동 히스토리 (자동 · 이 위쪽은 편집해도 저장 안 됨)"
+ACTIVITY_MARKER = "───────── ✏️ 아래에 직접 메모 (저장됨) ─────────"
+
+
+def _fmt_md(ts) -> str:
+    """타임스탬프 → 'MM/DD'. 실패하면 빈 문자열."""
+    try:
+        d = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        return f"{d.month:02d}/{d.day:02d}"
+    except Exception:
+        return ""
+
+
+def build_activity_history(row) -> list:
+    """브랜드 row(Series/dict) → 활동 타임라인 문자열 리스트 (오래된→최근)."""
+    def g(k):
+        try:
+            return str(row.get(k, "") or "").strip()
+        except Exception:
+            return ""
+
+    lines = []
+    c = _fmt_md(g("수집일"))
+    lines.append(f"· {c} 신규 수집" if c else "· 신규 수집")
+
+    thread = g("메일 스레드ID")
+    sent = g("메일 발송일")
+    if thread and not sent:
+        lines.append("· 메일 초안 생성 (아직 미발송)")
+    if sent:
+        lines.append(f"· {_fmt_md(sent)} 메일 발송")
+
+    try:
+        cnt = int(g("팔로업 횟수") or 0)
+    except Exception:
+        cnt = 0
+    last_fu = g("마지막 팔로업일")
+    if cnt >= 2:
+        lines.append("· 1차 팔로업 송부")                       # 1차 날짜는 미보관
+        lines.append(f"· {_fmt_md(last_fu)} 2차 팔로업 송부")
+    elif cnt == 1:
+        lines.append(f"· {_fmt_md(last_fu)} 1차 팔로업 송부")
+
+    rep = g("메일 회신일")
+    if rep:
+        lines.append(f"· {_fmt_md(rep)} 회신 받음")
+    return lines
+
+
 if len(filtered) > 0:
     filtered = filtered.copy()   # 캐시 보호용
 
@@ -1808,12 +1862,20 @@ if len(filtered) > 0:
                     key=f"status_{sel_brand}",
                 )
 
+                # 활동 메모 — 위쪽은 자동 히스토리, 구분선 아래는 수기 메모(저장 대상)
+                _hist = build_activity_history(sel_full)
+                _auto_block = ACTIVITY_AUTO_HEADER + "\n" + "\n".join(_hist)
+                _manual = str(sel_full.get("활동 메모 (수기)", "") or "")
+                _memo_value = _auto_block + "\n\n" + ACTIVITY_MARKER + "\n" + _manual
                 new_memo = st.text_area(
                     "활동 메모",
-                    value=str(sel_full.get("활동 메모 (수기)", "")),
-                    height=140,
-                    placeholder="예) 5/8 첫 메일, 5/12 답장, 5/15 미팅 예정",
+                    value=_memo_value,
+                    height=260,
                     key=f"memo_{sel_brand}",
+                )
+                st.caption(
+                    "위쪽 '활동 히스토리'는 자동으로 채워져요(편집해도 저장 안 됨). "
+                    "구분선 아래에만 직접 메모를 남기면 계속 쌓입니다."
                 )
 
                 # 저장 버튼
@@ -1831,14 +1893,22 @@ if len(filtered) > 0:
                 if save_clicked:
                     # ⭐ 2026-05-26: UI에서 제거된 필드들 (상호/대표/사업자번호/관심고객수) 저장 안 함
                     # 기존 DB 데이터는 유지 (덮어쓰지 않음)
+                    # 활동 메모: 마커 위 '자동 히스토리'는 버리고, 마커 아래 수기 메모만 저장
+                    #   → 자동분이 DB에 쌓이거나 밍이 쓴 메모를 덮어쓰는 일이 없다.
+                    if ACTIVITY_MARKER in new_memo:
+                        _manual_only = new_memo.split(ACTIVITY_MARKER, 1)[1].lstrip("\n")
+                    else:
+                        _manual_only = new_memo   # 마커가 지워졌으면 안전하게 전체를 수기로 취급
                     new_values = {
                         "영업 상태 (수기)": new_status,
                         "이메일 (수기)": new_email,
                         "전화 (수기)": new_phone,
-                        "활동 메모 (수기)": new_memo,
+                        "활동 메모 (수기)": _manual_only,
                     }
                     if save_one_brand(sel_brand, new_values):
                         st.cache_data.clear()
+                        # 위젯 상태를 비워, 다음 렌더에서 자동 히스토리가 최신으로 새로 그려지게
+                        st.session_state.pop(f"memo_{sel_brand}", None)
                         st.success(f"{sel_brand} 저장 완료")
                         st.rerun()
                     else:
