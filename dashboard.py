@@ -260,89 +260,145 @@ def delete_brands_by_name(brand_names: list) -> dict:
 st.markdown(
     """
 <style>
+    /* ── 공공 포털 스타일 (신뢰·정돈) — 2026-07 리프레시 ───────────
+       색·타이포·강조선만 교체. 레이아웃/기능/확정사항은 그대로. */
+    :root {
+        --gov-blue: #1857A8;      /* 관공서 블루 (신뢰) */
+        --gov-blue-dark: #0F3F7A; /* hover */
+        --gov-navy: #16263D;      /* 제목 진남색 */
+        --ink: #1F2937;           /* 본문 */
+        --muted: #5B6A7D;         /* 보조 텍스트 */
+        --line: #D6DEE8;          /* 쿨그레이 테두리 */
+        --tint: #F3F7FC;          /* 옅은 블루 배경 */
+    }
+
+    /* 폰트 — 공공 포털 느낌의 깔끔한 고딕 (설치 폰트 폴백) */
+    html, body, [class*="css"], .block-container, [data-testid="stMarkdownContainer"] {
+        font-family: "Pretendard", "Noto Sans KR", "Malgun Gothic", -apple-system, "Segoe UI", sans-serif;
+    }
+
     /* 페이지 여백 */
     .block-container {
-        padding-top: 2.5rem;
+        padding-top: 2.25rem;
         padding-bottom: 3rem;
         max-width: 1280px;
     }
 
     /* 헤딩 */
     h1, h2, h3 {
-        font-weight: 600 !important;
-        letter-spacing: -0.4px;
+        font-weight: 700 !important;
+        letter-spacing: -0.3px;
+        color: var(--gov-navy) !important;
     }
-    h1 { font-size: 1.75rem !important; margin-bottom: 0.25rem !important; }
-    h2 { font-size: 1.05rem !important; margin-top: 2rem !important; margin-bottom: 0.75rem !important; }
+    /* 페이지 제목 — 하단 파란 라인 (관공서 페이지 헤더 규칙) */
+    h1 {
+        font-size: 1.7rem !important;
+        margin-bottom: 0.35rem !important;
+        padding-bottom: 0.8rem;
+        border-bottom: 3px solid var(--gov-blue);
+    }
+    /* 섹션 제목 — 앞에 파란 바 (공공포털 시그니처) */
+    h2 {
+        font-size: 1.1rem !important;
+        margin-top: 2rem !important;
+        margin-bottom: 0.9rem !important;
+        padding-left: 12px;
+        border-left: 5px solid var(--gov-blue);
+        line-height: 1.35;
+    }
+    h3 { font-size: 0.98rem !important; }
 
-    /* 메트릭 카드 — 라이트 톤 */
+    /* 메트릭 카드 — 흰 카드 + 상단 파란 강조선 */
     [data-testid="stMetric"] {
-        background: #f8f9fa;
+        background: #ffffff;
         padding: 16px 20px;
-        border-radius: 10px;
-        border: 1px solid #ececec;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        border-top: 3px solid var(--gov-blue);
     }
     [data-testid="stMetricLabel"] {
         font-size: 12px !important;
-        color: #6b7280 !important;
-        font-weight: 500 !important;
+        color: var(--muted) !important;
+        font-weight: 600 !important;
     }
     [data-testid="stMetricValue"] {
-        font-size: 28px !important;
-        font-weight: 600 !important;
-        color: #111827 !important;
+        font-size: 27px !important;
+        font-weight: 700 !important;
+        color: var(--gov-navy) !important;
     }
 
-    /* 사이드바 */
-    section[data-testid="stSidebar"] > div {
-        padding-top: 2rem;
+    /* 사이드바 — 옅은 블루 배경 + 우측 구분선 */
+    section[data-testid="stSidebar"] {
+        background: var(--tint);
+        border-right: 1px solid var(--line);
     }
+    section[data-testid="stSidebar"] > div { padding-top: 1.75rem; }
     section[data-testid="stSidebar"] h2 {
-        font-size: 14px !important;
+        font-size: 13px !important;
         text-transform: uppercase;
         letter-spacing: 1px;
-        color: #6b7280 !important;
+        color: var(--gov-blue) !important;
+        border-left: none;
+        padding-left: 0;
         margin-bottom: 1rem !important;
     }
 
-    /* 차트 컨테이너 */
+    /* 차트/카드 컨테이너 */
     .chart-card {
         background: #ffffff;
         padding: 1.25rem;
-        border-radius: 10px;
-        border: 1px solid #ececec;
+        border-radius: 6px;
+        border: 1px solid var(--line);
     }
     .chart-card h3 {
         font-size: 14px !important;
-        font-weight: 500 !important;
-        color: #374151;
+        font-weight: 600 !important;
+        color: var(--gov-navy);
         margin: 0 0 1rem 0 !important;
+        border-left: none;
+        padding-left: 0;
     }
 
     /* 데이터프레임 */
     [data-testid="stDataFrame"] {
-        border-radius: 10px;
+        border-radius: 6px;
         overflow: hidden;
+        border: 1px solid var(--line);
     }
 
-    /* 다운로드 버튼 */
-    [data-testid="stDownloadButton"] button {
-        background: #111827;
-        color: white;
+    /* 채움 버튼 (다운로드·primary) — 관공서 블루 */
+    [data-testid="stDownloadButton"] button,
+    .stButton button[kind="primary"] {
+        background: var(--gov-blue);
+        color: #ffffff;
         border: none;
-        border-radius: 8px;
-        font-weight: 500;
+        border-radius: 6px;
+        font-weight: 600;
         padding: 8px 18px;
     }
-    [data-testid="stDownloadButton"] button:hover {
-        background: #374151;
+    [data-testid="stDownloadButton"] button:hover,
+    .stButton button[kind="primary"]:hover {
+        background: var(--gov-blue-dark);
+        color: #ffffff;
     }
+    /* 일반 버튼 — 블루 아웃라인 */
+    .stButton button {
+        border-radius: 6px;
+        border: 1px solid var(--gov-blue);
+        color: var(--gov-blue);
+        font-weight: 600;
+        background: #ffffff;
+    }
+    .stButton button:hover { background: var(--tint); }
+
+    /* 링크 */
+    a, a:visited { color: var(--gov-blue); }
 
     /* 캡션 */
     .subtitle {
         font-size: 13px;
-        color: #6b7280;
-        margin-bottom: 2rem;
+        color: var(--muted);
+        margin-bottom: 1.6rem;
     }
 
     /* Streamlit 기본 메뉴·푸터 숨기기 */
