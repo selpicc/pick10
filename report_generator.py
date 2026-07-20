@@ -246,26 +246,63 @@ def _product_keyword(brand: str, flagship: str) -> str:
     return " ".join(toks[-2:])
 
 
+def _market_target(category: str) -> str:
+    """'시장 전체' 검색에 붙일 타겟어. 유형어만 검색하면 우리 시장이 아니게 된다.
+
+    ('로션' 전체 708만건 = 화장품 전체 / '아기 로션' 132만건 = 우리 시장)
+    고객사에 나가는 문서라 '시장 규모'라고 적은 숫자는 실제 그 시장이어야 한다.
+    """
+    c = category or ""
+    if "임산부" in c or "산모" in c:
+        return "임산부"
+    if "출산" in c:
+        return "출산"
+    return "아기"
+
+
 def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
-    """브랜드 전반 + 주력 상품 라인의 실제 시장 신호. 전부 실시간 검색(진짜 수치)."""
-    base = {"blog": 0, "cafe": 0, "prod_kw": "", "prod_count": 0, "titles": []}
+    """이 브랜드 '이 상품 라인'의 실제 시장 신호. 전부 실시간 검색(진짜 수치).
+
+    ⭐ 2026-07-20: 기획서는 브랜드가 아니라 '브랜드의 특정 상품' 제안서다.
+       그래서 블로그·카페 수치도 브랜드명만이 아니라 '브랜드 + 상품 핵심어'로 센다.
+         blog / cafe  = "브랜드" + 유형어  (이 제품 라인이 얼마나 회자되나)
+         market       = 유형어만          (그 유형 자체의 시장 크기 — 비교 기준)
+       세 칸을 전부 브랜드+상품으로 하면 셋째가 앞 둘의 단순 합이 되어 의미가 없다.
+       그래서 셋째는 '시장 전체'로 둬서 "이만큼 오가는 시장에서 우리는 이만큼"이라는
+       대비가 생기게 했다. 주력상품이 없으면 예전처럼 브랜드 전반으로 폴백한다.
+    """
+    base = {"blog": 0, "cafe": 0, "prod_kw": "", "market": 0, "market_kw": "",
+            "brand_only": True, "titles": []}
     if not brand:
         return base
-    q = f'"{brand}"'
-    base["blog"] = _naver_total("blog", q)
-    base["cafe"] = _naver_total("cafearticle", q)
-    # 1) 브랜드 전반 (넓게)
-    titles = (_naver_titles("blog", brand, 10)
-              + _naver_titles("cafearticle", brand, 10)
-              + _naver_titles("blog", f"{brand} 후기", 6))
-    # 2) 주력 상품 라인 (좁게) — 브랜드 + 상품 핵심어
+
     kw = _product_keyword(brand, flagship)
     if kw and kw not in brand:
+        # ── 상품 라인 기준 (기본) ──
         base["prod_kw"] = kw
+        base["brand_only"] = False
         pq = f'"{brand}" {kw}'
-        base["prod_count"] = _naver_total("blog", pq) + _naver_total("cafearticle", pq)
-        titles += (_naver_titles("blog", f"{brand} {kw}", 8)
-                   + _naver_titles("cafearticle", f"{brand} {kw}", 6))
+        base["blog"] = _naver_total("blog", pq)
+        base["cafe"] = _naver_total("cafearticle", pq)
+        # 그 유형의 시장 크기 (브랜드 무관) — 대비용 기준선.
+        #   타겟어를 붙여 '우리 시장'으로 좁힌다 ('로션'이 아니라 '아기 로션')
+        mkw = f"{_market_target(category)} {kw}"
+        base["market_kw"] = mkw
+        base["market"] = _naver_total("blog", mkw) + _naver_total("cafearticle", mkw)
+        titles = (_naver_titles("blog", f"{brand} {kw}", 10)
+                  + _naver_titles("cafearticle", f"{brand} {kw}", 8)
+                  + _naver_titles("blog", f"{brand} 후기", 6)
+                  + _naver_titles("blog", brand, 6)
+                  + _naver_titles("cafearticle", brand, 6))
+    else:
+        # ── 주력상품이 없으면 브랜드 전반으로 폴백 ──
+        q = f'"{brand}"'
+        base["blog"] = _naver_total("blog", q)
+        base["cafe"] = _naver_total("cafearticle", q)
+        titles = (_naver_titles("blog", brand, 10)
+                  + _naver_titles("cafearticle", brand, 10)
+                  + _naver_titles("blog", f"{brand} 후기", 6))
+
     seen, uniq = set(), []
     for t in titles:
         if t not in seen:
@@ -625,13 +662,17 @@ def _page_market(prs, c):
     _title(s, "시장은 이미 이렇게 말하고 있다")
     _rule(s, Inches(1.72))
     # 실시간 시장 신호 스트립 (진짜 수치) — 브랜드 전반 + 주력 라인
+    # 수치는 전부 '브랜드 + 주력 상품 유형어' 기준 (기획서가 그 상품 제안서이므로).
+    #   맨 끝 '시장 전체'만 브랜드를 뺀 유형어 검색 → 규모 대비가 드러난다.
     parts = []
+    kw = sig.get("prod_kw") or ""
+    head = f"주력 '{kw}'" if kw else "브랜드"
     if sig.get("blog"):
-        parts.append(f"브랜드 블로그 {_fmt(sig['blog'])}건")
+        parts.append(f"{head} 블로그 {_fmt(sig['blog'])}건")
     if sig.get("cafe"):
         parts.append(f"카페 {_fmt(sig['cafe'])}건")
-    if sig.get("prod_kw") and sig.get("prod_count"):
-        parts.append(f"주력 '{sig['prod_kw']}' 라인 {_fmt(sig['prod_count'])}건")
+    if kw and sig.get("market"):
+        parts.append(f"'{sig.get('market_kw') or kw}' 시장 전체 {_fmt(sig['market'])}건")
     strip = "   ·   ".join(parts) if parts else "실시간 검색 데이터 없음 (네이버 검색 키 필요)"
     bar = _rect(s, Inches(0.72), Inches(1.95), Inches(11.9), Inches(0.62), PEACH_L,
                 MSO_SHAPE.ROUNDED_RECTANGLE)
