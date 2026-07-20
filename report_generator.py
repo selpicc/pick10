@@ -559,7 +559,9 @@ def build_content(row: dict) -> dict:
                 _titles, ctx["brand"], prod_kw=signals.get("prod_kw") or "")
         kw_is_real = bool(market_kw)
     if not market_kw:
-        market_kw = fb["market_keywords"]
+        # 일반 문구로 채우지 않는다 — 빈 칸이 되고, 페이지가
+        # '아직 노출이 없다'는 문장을 대신 넣는다 (거짓 표현 방지)
+        market_kw = []
         kw_is_real = False
     appeal = _clean_list(ai.get("appeal_points"), 24, 8) or fb["appeal_points"]
     offline = _clean_list(ai.get("offline_ideas"), 80, 4) or fb["offline_ideas"]
@@ -767,12 +769,21 @@ def _page_market(prs, c):
     _run(bp, _line, _sz, True, ORANGE_D)
     # 실제 언급 키워드 (진짜 글 제목 기반)
     tf = _textbox(s, Inches(0.72), Inches(2.95), Inches(11.9), Inches(0.3))
-    # 진짜 글에서 뽑았을 때만 '실제'라고 적는다 (아니면 일반 표현이라고 밝힘)
-    _kw_label = ("실제 후기·글에서 쓰는 표현" if c.get("market_keywords_real", True)
-                 else "이 카테고리에서 흔히 쓰는 표현 (일반)")
-    _para(tf, _kw_label, 12.5, True, ORANGE_D, first=True)
-    nt = _chips_row(s, c["market_keywords"][:8], Inches(3.32),
-                    fill=RGBColor(0xEC, 0xEC, 0xEC), txt=DARK)
+    _kws = [k for k in (c.get("market_keywords") or [])][:8]
+    if _kws:
+        _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+        nt = _chips_row(s, _kws, Inches(3.32),
+                        fill=RGBColor(0xEC, 0xEC, 0xEC), txt=DARK)
+    else:
+        # 후기가 거의 없는 브랜드 — 일반 문구로 칸을 채우면 거짓이 된다.
+        #   비워두고 '노출이 안 되고 있다'는 사실을 그대로 적는다.
+        #   이게 곧 셀픽이 필요한 이유이기도 하다.
+        _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+        tf0 = _textbox(s, Inches(0.72), Inches(3.32), Inches(11.9), Inches(0.5))
+        _para(tf0, "아직 온라인에 쌓인 후기가 거의 없습니다 — "
+                   "엄마들이 검색해도 이 제품을 만날 접점이 없는 상태입니다.",
+              12, False, DARK, first=True)
+        nt = Inches(3.32) + Inches(0.56)
     # 브랜드 소구 키워드 (기획자 창작)
     tf2 = _textbox(s, Inches(0.72), nt + Inches(0.15), Inches(11.9), Inches(0.3))
     _para(tf2, "이 브랜드로 밀 소구 키워드 (제안)", 12.5, True, ORANGE_D, first=True)
