@@ -378,8 +378,19 @@ def _():
                  "아토피에도 안 뒤집어짐", "향이 강하지 않음",
                  "하나로 머리까지 끝나 편함"):
         assert _drop_generic_kw([felt], "앙또미뇽") == [felt], f"'{felt}'가 버려짐"
-    return ("제목 빈출어 추출 · 브랜드/잡음어 제외 · 글 없으면 빈손 · "
-            "뻔한 제품명 제거(느낀 바만 유지)")
+    # '실제 후기 표현'은 원문에 그대로 있어야 한다 (AI 창작·요약 차단)
+    from report_generator import _verbatim_only
+    posts = ["아기바디워시 추천 :: 저는 저자극 타입, 눈에 거품이 들어가도 "
+             "아프지 않은 것을 선호하는데 하루에 두번이상은 물로 씻겨요"]
+    for quote in ("눈에 거품이 들어가도 아프지 않은", "하루에 두번이상은 물로"):
+        assert _verbatim_only([quote], posts) == [quote], f"원문 인용이 폐기됨: {quote}"
+    for made_up in ("눈에 거품 들어가도 안 아파해요",      # AI가 다듬은 것
+                    "피부과 전문의가 추천했어요",          # 지어낸 것
+                    "판매량 1위라 믿고 샀어요"):
+        assert _verbatim_only([made_up], posts) == [], f"원문에 없는데 통과: {made_up}"
+    assert _verbatim_only(["눈에 거품이 들어가도 아프지 않은"], []) == []
+    return ("제목 빈출어 추출 · 브랜드/잡음어 제외 · 뻔한 제품명 제거 · "
+            "원문에 없는 표현 폐기(창작/요약 차단)")
 
 
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")

@@ -437,16 +437,17 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 - 홈페이지·주력상품·실제 글 제목에 드러난 것만 근거로. 없는 사실·수치를 지어내지 마라.
 - 순위·수상·인증·특허·FDA·제조사명·'1위'·'최고'·구체적 수치 같은 검증 불가 주장 금지
   (자동 폐기됨). 단 slogan·big_idea·concept_name·appeal_points는 '창작 카피'라 자유롭게.
-- market_keywords는 '구매자가 느낀 바'다. 제품이 무엇인지가 아니라,
-  써 보고 무엇을 좋아했는지·무엇이 걱정이었는지·왜 샀는지를 뽑아라.
-  · 반드시 위 후기 내용에 근거 (창작 X). 후기에 없으면 개수를 줄여라.
-  · 금지: 제품 유형명·카테고리명·브랜드명 그 자체
-         (예: '바스앤샴푸', '바디워시', '로션', '아기바디워시', '육아용품')
-         — 당연한 말이라 기획서에 쓸모가 없다.
-  · 좋은 예: '눈 시림 없어 안 울어요', '거품이 금방 헹궈짐',
-             '아토피 피부에도 안 뒤집어짐', '향이 강하지 않아 좋음',
-             '하나로 머리까지 끝나 편함', '두 번 펌핑이면 충분'
-  · 각 8~20자, 후기 말투를 살려서.
+- market_keywords는 ⭐창작이 아니라 '원문 인용'이다⭐.
+  위 후기 본문에서 구매자의 체감(좋았던 점·걱정·구매 이유)이 드러난 구절을
+  **토씨 하나 바꾸지 말고 그대로 오려서** 넣어라.
+  · 요약·다듬기·맞춤법 교정 금지. 본문에 있는 글자 그대로.
+    (본문에 없는 문장은 자동 폐기되어 아무 소용이 없다)
+  · 한 구절 6~22자. 문장이 길면 체감이 드러난 부분만 잘라 인용하라.
+  · 금지: 제품 유형명·카테고리명·브랜드명만 있는 구절
+         (예: '바스앤샴푸', '아기바디워시', '육아용품') — 당연한 말이라 쓸모없다.
+  · 좋은 인용: '눈에 거품이 들어가도 아프지 않은', '땀 냄새가 스물스물 올라오더라고요',
+               '하루에 두번이상은 물로'
+  · 후기에 쓸 만한 구절이 부족하면 억지로 채우지 말고 개수를 줄여라.
 - big_idea·insight는 뻔하지 않게, 관점이 담기게. offline/online 아이디어 각 3개.
 - 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만."""
 
@@ -572,6 +573,29 @@ def _keywords_from_titles(titles, brand: str, cap: int = 8, prod_kw: str = "") -
     return out
 
 
+def _verbatim_only(words, posts) -> list:
+    """후기 본문에 '그대로' 있는 구절만 남긴다. 한 글자라도 다르면 폐기.
+
+    AI에게 문장을 쓰라고 하면 그럴싸한 말을 지어낼 수 있고, 근거가 있는지
+    흐릿하게 판정할 수밖에 없다(요약은 원문과 글자가 달라지므로).
+    → 아예 '원문 인용'만 받는다. 그러면 검증이 정확한 대조로 끝난다.
+      이 칸의 라벨이 '실제 후기'인 이상, 실제로 그 글에 있는 말이어야 한다.
+    """
+    if not posts:
+        return []
+    blob = " ".join(str(p) for p in posts)
+    blob = re.sub(r"\s+", "", blob)          # 띄어쓰기 차이는 눈감아 준다
+    out = []
+    for w in (words or []):
+        s = str(w).strip().strip('"\'“”‘’')
+        key = re.sub(r"\s+", "", s)
+        if len(key) < 4:                     # 너무 짧으면 우연히 일치한다
+            continue
+        if key in blob:
+            out.append(s)
+    return out
+
+
 def _drop_generic_kw(words, brand: str) -> list:
     """'구매자가 느낀 바'가 아니라 뻔한 제품명·브랜드명인 것을 걷어낸다.
 
@@ -672,7 +696,9 @@ def build_content(row: dict) -> dict:
         kw_empty_reason = "no_signal"     # 후기는 있는데 뚜렷한 표현이 없다
         # ① AI가 후기 본문을 읽고 뽑은 '느낀 바' — 이것만 '느낀 바'라고 부른다
         market_kw = _drop_generic_kw(
-            _clean_list(ai.get("market_keywords"), 24, 8), ctx["brand"])
+            _verbatim_only(_clean_list(ai.get("market_keywords"), 24, 8),
+                           signals.get("posts")),
+            ctx["brand"])
         if market_kw:
             kw_kind = "felt"
         else:
