@@ -159,6 +159,46 @@ def _naver_titles(kind: str, q: str, n: int) -> list:
     return out
 
 
+# 네이버 블로그 페이지에 항상 끼어드는 UI 문구 — 후기 내용이 아니라 잡음
+_BLOG_CHROME = (
+    "본문 바로가기", "블로그 카테고리 이동", "카테고리 이동", "MY메뉴 열기",
+    "이웃추가", "본문 기타 기능", "본문 폰트 크기 조정", "본문 폰트 크기 작게 보기",
+    "본문 폰트 크기 크게 보기", "가로 크기 조정", "URL 복사", "공유하기", "신고하기",
+    "네이버 블로그", "이 블로그", "전체보기", "맨위로", "댓글 쓰기", "인쇄하기",
+    "서로이웃", "구독하기", "블로그 홈", "글 목록", "이전 이미지", "다음 이미지",
+    "URL복사", "URL 복사", "네이버 메이트", "첨부파일", "지도 보기", "장소 정보",
+)
+
+
+def _naver_blog_bodies(q: str, n_posts: int = 6, per_chars: int = 700) -> list:
+    """후기 '본문'을 실제로 읽어온다. 검색 API의 요약(description)은 100자 남짓이라
+    '무엇을 느꼈는지'가 잘려 나간다 → 글을 직접 열어 본문을 가져온다.
+
+    네이버 블로그는 blog.naver.com이 프레임이라 본문이 안 잡힌다
+    → m.blog.naver.com(모바일)으로 바꿔 받는다.
+    카페는 대부분 로그인이 필요해 본문을 못 읽으므로 요약만 쓴다.
+    """
+    from brand_intro import _fetch_text
+
+    out = []
+    for it in (_naver_api("blog", q, n_posts).get("items", []) or []):
+        title = _clean_snippet(it.get("title", ""))
+        link = it.get("link", "") or ""
+        m = re.match(r"https?://blog\.naver\.com/([^/?]+)/(\d+)", link)
+        url = f"https://m.blog.naver.com/{m.group(1)}/{m.group(2)}" if m else link
+        body = _fetch_text(url, 4000)
+        if not body:
+            # 본문을 못 읽으면 검색 요약으로 대체 (없느니 낫다)
+            body = _clean_snippet(it.get("description", ""))
+        else:
+            for junk in _BLOG_CHROME:
+                body = body.replace(junk, " ")
+            body = re.sub(r"\s+", " ", body).strip()
+        if title or body:
+            out.append(f"{title} :: {body[:per_chars]}")
+    return out
+
+
 def _naver_posts(kind: str, q: str, n: int) -> list:
     """제목 + 본문 요약(description)까지. '구매자가 뭘 느꼈나'는 제목만으론 안 나온다.
 
@@ -300,9 +340,10 @@ def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
         #   주력상품 글이 없으면 표현을 비운다 — 지어내느니 라벨을 '일반'으로 바꾼다.
         titles = (_naver_titles("blog", f"{brand} {kw}", 15)
                   + _naver_titles("cafearticle", f"{brand} {kw}", 12))
-        # AI에는 본문 요약까지 준다 — 체감·감상은 제목이 아니라 본문에 있다
-        base["posts"] = (_naver_posts("blog", f"{brand} {kw}", 15)
-                         + _naver_posts("cafearticle", f"{brand} {kw}", 12))
+        # AI에는 후기 '본문'을 읽어서 준다 — 체감·감상은 제목이 아니라 본문에 있다.
+        #   블로그는 글을 직접 열어 본문을, 카페는 로그인 벽이 있어 요약만.
+        base["posts"] = (_naver_blog_bodies(f"{brand} {kw}", 6)
+                         + _naver_posts("cafearticle", f"{brand} {kw}", 10))
     else:
         # ── 주력상품이 없으면 브랜드 전반으로 폴백 ──
         q = f'"{brand}"'
@@ -373,7 +414,7 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 {signals.get('prod_kw') or "(없음)"}
 --- 카테고리 ---
 {ctx['category'] or "(없음)"}
---- 실제 시장 반응: 네이버 블로그/카페 글 제목 (브랜드 전반 + 주력 라인, 사람들이 진짜 쓰는 표현) ---
+--- 실제 후기 본문 (네이버 블로그 글을 직접 열어 읽은 내용 + 카페 글 요약) ---
 {market_titles}
 
 아래 JSON 형식으로만 답하라(설명·코드펜스 금지):
