@@ -406,6 +406,45 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 # ─────────────────────────────────────────────────────────────
 # 3) 콘텐츠 조립 (AI + 안전필터 + 템플릿 폴백)
 # ─────────────────────────────────────────────────────────────
+# 글 제목 빈출어에서 걸러낼 말 — 표현이 아니라 잡음인 것들
+_TITLE_NOISE = {
+    "추천", "후기", "리뷰", "내돈내산", "협찬", "체험단", "솔직", "사용", "사용기",
+    "정품", "구매", "최저가", "할인", "특가", "이벤트", "증정", "무료", "배송",
+    "그리고", "저는", "우리", "너무", "정말", "진짜", "이번", "요즘", "함께",
+    "가격", "비교", "정보", "포스팅", "블로그", "카페", "공유", "기록", "일상",
+}
+
+
+def _keywords_from_titles(titles, brand: str, cap: int = 8) -> list:
+    """AI 없이도 '진짜 글 제목'에서 자주 나오는 표현을 뽑는다 (AI 실패 시 2차 안전망).
+
+    빈도 상위 단어를 그대로 쓰므로 창작이 섞이지 않는다 —
+    '실제 후기·글에서 쓰는 표현'이라는 라벨을 지킬 수 있는 최소 장치.
+    """
+    if not titles:
+        return []
+    bn = (brand or "").replace(" ", "")
+    counts = {}
+    for t in titles:
+        for tok in re.split(r"[\s,./|\[\]()\-~!?·]+", str(t)):
+            tok = tok.strip()
+            if len(tok) < 2 or len(tok) > 12:
+                continue
+            if any(ch.isdigit() for ch in tok):
+                continue
+            if bn and (tok in bn or bn in tok):
+                continue
+            if tok in _TITLE_NOISE or tok in _PK_STOPWORDS:
+                continue
+            if not re.search(r"[가-힣]", tok):       # 한글이 없는 토큰(영문/기호)은 제외
+                continue
+            counts[tok] = counts.get(tok, 0) + 1
+    # 2회 이상 나온 말만 = 실제로 '반복해서 쓰이는' 표현
+    ranked = sorted((w for w, c in counts.items() if c >= 2),
+                    key=lambda w: (-counts[w], -len(w)))
+    return ranked[:cap]
+
+
 def _fallback(ctx: dict) -> dict:
     """AI가 비었을 때 쓰는 카테고리 기반 안전 템플릿 (지어낸 주장 없음)."""
     cat = ctx["category"] or "영유아 제품"
@@ -462,7 +501,17 @@ def build_content(row: dict) -> dict:
         targets = fb["targets"]
     targets = [s for s in SEGMENT_POOL if s in targets][:8]
 
-    market_kw = _clean_list(ai.get("market_keywords"), 24, 8) or fb["market_keywords"]
+    # ⭐ '실제 후기·글에서 쓰는 표현'은 진짜 글 제목에서 나와야 한다.
+    #   AI가 실패해도 조용히 일반 문구로 바꾸면, 라벨은 '실제'인데 내용은 창작이 된다.
+    #   → ① AI(제목 기반) ② 제목에서 직접 빈출어 추출 ③ 그래도 없으면 일반 템플릿
+    #   ③일 때만 kw_is_real=False → 페이지가 라벨을 '일반 표현'으로 바꿔 단다.
+    market_kw = _clean_list(ai.get("market_keywords"), 24, 8)
+    kw_is_real = bool(market_kw)
+    if not market_kw:
+        market_kw = _keywords_from_titles(signals.get("titles"), ctx["brand"])
+        kw_is_real = bool(market_kw)
+    if not market_kw:
+        market_kw = fb["market_keywords"]
     appeal = _clean_list(ai.get("appeal_points"), 24, 8) or fb["appeal_points"]
     offline = _clean_list(ai.get("offline_ideas"), 80, 4) or fb["offline_ideas"]
     online = _clean_list(ai.get("online_ideas"), 80, 5) or fb["online_ideas"]
@@ -477,6 +526,7 @@ def build_content(row: dict) -> dict:
         "product_summary": summary,
         "targets": targets,
         "market_keywords": market_kw,
+        "market_keywords_real": kw_is_real,   # 진짜 글에서 나왔나 (라벨 문구가 갈린다)
         "appeal_points": appeal,
         "offline_ideas": offline,
         "online_ideas": online,
@@ -668,7 +718,10 @@ def _page_market(prs, c):
     _run(bp, _line, _sz, True, ORANGE_D)
     # 실제 언급 키워드 (진짜 글 제목 기반)
     tf = _textbox(s, Inches(0.72), Inches(2.95), Inches(11.9), Inches(0.3))
-    _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+    # 진짜 글에서 뽑았을 때만 '실제'라고 적는다 (아니면 일반 표현이라고 밝힘)
+    _kw_label = ("실제 후기·글에서 쓰는 표현" if c.get("market_keywords_real", True)
+                 else "이 카테고리에서 흔히 쓰는 표현 (일반)")
+    _para(tf, _kw_label, 12.5, True, ORANGE_D, first=True)
     nt = _chips_row(s, c["market_keywords"][:8], Inches(3.32),
                     fill=RGBColor(0xEC, 0xEC, 0xEC), txt=DARK)
     # 브랜드 소구 키워드 (기획자 창작)

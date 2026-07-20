@@ -347,6 +347,30 @@ def _():
     return "유형어 사전 4종 정확 · 브랜드/용량/타겟어 미혼입 · 폴백 정상"
 
 
+@check("3-5f. 리포트 '실제 표현' 라벨 정직성 (AI 실패 시 안전망)")
+def _():
+    from report_generator import _keywords_from_titles
+
+    titles = [
+        "아기바디워시 추천 앙또미뇽 베리어-엠 바스 앤 샴푸",
+        "[아기바디워시] 신생아부터 사용가능한 앙또미뇽 바스앤샴푸 추천",
+        "아기바디워시 어린이샴푸 앙또미뇽 바스앤샴푸",
+        "돌 아기 코막힘 밤잠 못잘 때 앙또미뇽 무선 콧물흡입기 솔직 후기",
+        "무선 아기 콧물흡입기 앙또미뇽 사용 후기",
+    ]
+    got = _keywords_from_titles(titles, "앙또미뇽")
+    assert got, "실제 글 제목이 있는데 표현을 하나도 못 뽑음"
+    # 브랜드명·잡음어("추천"/"후기")는 '시장 표현'이 아니다
+    for bad in ("앙또미뇽", "추천", "후기", "솔직"):
+        assert bad not in got, f"'{bad}'가 표현으로 잡힘: {got}"
+    # 실제로 반복된 말은 잡혀야 한다
+    assert any("바스앤샴푸" in g or "바디워시" in g for g in got), got
+    # 글이 없으면 지어내지 말고 빈손 → 호출부가 라벨을 '일반'으로 바꾼다
+    assert _keywords_from_titles([], "앙또미뇽") == []
+    assert _keywords_from_titles(None, "앙또미뇽") == []
+    return "제목 빈출어 추출 · 브랜드/잡음어 제외 · 글 없으면 빈손(라벨 전환)"
+
+
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
 def _():
     from brand_intro import _is_safe
