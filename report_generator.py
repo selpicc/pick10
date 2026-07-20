@@ -664,6 +664,9 @@ def _page_market(prs, c):
     # 실시간 시장 신호 스트립 (진짜 수치) — 브랜드 전반 + 주력 라인
     # 수치는 전부 '브랜드 + 주력 상품 유형어' 기준 (기획서가 그 상품 제안서이므로).
     #   맨 끝 '시장 전체'만 브랜드를 뺀 유형어 검색 → 규모 대비가 드러난다.
+    #   ⚠ 셋 다 출처는 같다(네이버 블로그·카페). 예전 문구는
+    #     "블로그 · 카페 · 시장 전체"로 나열해 셋째가 다른 출처처럼 읽혔다.
+    #     → 앞머리에 출처를 한 번 밝히고, 셋째엔 '블로그+카페'를 명시한다.
     parts = []
     kw = sig.get("prod_kw") or ""
     head = f"주력 '{kw}'" if kw else "브랜드"
@@ -672,7 +675,7 @@ def _page_market(prs, c):
     if sig.get("cafe"):
         parts.append(f"카페 {_fmt(sig['cafe'])}건")
     if kw and sig.get("market"):
-        parts.append(f"'{sig.get('market_kw') or kw}' 시장 전체 {_fmt(sig['market'])}건")
+        parts.append(f"시장 전체 '{sig.get('market_kw') or kw}' {_fmt(sig['market'])}건")
     strip = "   ·   ".join(parts) if parts else "실시간 검색 데이터 없음 (네이버 검색 키 필요)"
     bar = _rect(s, Inches(0.72), Inches(1.95), Inches(11.9), Inches(0.62), PEACH_L,
                 MSO_SHAPE.ROUNDED_RECTANGLE)
@@ -680,7 +683,11 @@ def _page_market(prs, c):
     btf.vertical_anchor = MSO_ANCHOR.MIDDLE
     bp = btf.paragraphs[0]
     bp.alignment = PP_ALIGN.CENTER
-    _run(bp, f"실시간 시장 반응    {strip}", 12.5, True, ORANGE_D)
+    # 문구가 길어지면 한 줄에 안 들어간다 → 글자 크기를 살짝 줄여 넘침 방지.
+    #   기준: 폭 11.9in 바에 12.5pt 한글은 대략 100자까지 들어간다(실측 기반).
+    _line = f"네이버 블로그·카페 실측   {strip}"
+    _sz = 12.5 if len(_line) <= 100 else (11.5 if len(_line) <= 115 else 10.5)
+    _run(bp, _line, _sz, True, ORANGE_D)
     # 실제 언급 키워드 (진짜 글 제목 기반)
     tf = _textbox(s, Inches(0.72), Inches(2.95), Inches(11.9), Inches(0.3))
     _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
@@ -690,7 +697,9 @@ def _page_market(prs, c):
     tf2 = _textbox(s, Inches(0.72), nt + Inches(0.15), Inches(11.9), Inches(0.3))
     _para(tf2, "이 브랜드로 밀 소구 키워드 (제안)", 12.5, True, ORANGE_D, first=True)
     _chips_row(s, [f"#{a}" for a in c["appeal_points"][:5]], nt + Inches(0.55))
-    _note(s, "※ 상단 수치·표현은 네이버 실시간 검색 결과 기반(실측)이며, 소구 키워드는 셀픽 제안입니다.")
+    _note(s, "※ 상단 수치는 네이버 블로그·카페 실시간 검색 실측입니다. "
+             "앞의 두 수치는 브랜드명+주력상품, '시장 전체'는 브랜드명을 뺀 검색 결과이며, "
+             "소구 키워드는 셀픽 제안입니다.")
 
 
 # ── 페이지 3: 셀픽 실행 = 광고 상품 + 실행 아이디어 + 도달 규모 ──
