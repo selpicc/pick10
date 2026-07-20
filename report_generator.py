@@ -246,33 +246,19 @@ def _product_keyword(brand: str, flagship: str) -> str:
     return " ".join(toks[-2:])
 
 
-def _market_target(category: str) -> str:
-    """'시장 전체' 검색에 붙일 타겟어. 유형어만 검색하면 우리 시장이 아니게 된다.
-
-    ('로션' 전체 708만건 = 화장품 전체 / '아기 로션' 132만건 = 우리 시장)
-    고객사에 나가는 문서라 '시장 규모'라고 적은 숫자는 실제 그 시장이어야 한다.
-    """
-    c = category or ""
-    if "임산부" in c or "산모" in c:
-        return "임산부"
-    if "출산" in c:
-        return "출산"
-    return "아기"
-
-
 def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
-    """이 브랜드 '이 상품 라인'의 실제 시장 신호. 전부 실시간 검색(진짜 수치).
+    """이 브랜드 '이 주력상품'에 대한 시장 인식. 전부 실시간 검색(진짜 수치).
 
     ⭐ 2026-07-20: 기획서는 브랜드가 아니라 '브랜드의 특정 상품' 제안서다.
-       그래서 블로그·카페 수치도 브랜드명만이 아니라 '브랜드 + 상품 핵심어'로 센다.
-         blog / cafe  = "브랜드" + 유형어  (이 제품 라인이 얼마나 회자되나)
-         market       = 유형어만          (그 유형 자체의 시장 크기 — 비교 기준)
-       세 칸을 전부 브랜드+상품으로 하면 셋째가 앞 둘의 단순 합이 되어 의미가 없다.
-       그래서 셋째는 '시장 전체'로 둬서 "이만큼 오가는 시장에서 우리는 이만큼"이라는
-       대비가 생기게 했다. 주력상품이 없으면 예전처럼 브랜드 전반으로 폴백한다.
+       그래서 블로그·카페 수치를 브랜드명만이 아니라 '브랜드 + 상품 핵심어'로 센다.
+         blog / cafe = "브랜드" + 유형어  (이 제품 라인이 얼마나 회자되나)
+       주력상품이 없으면 예전처럼 브랜드 전반으로 폴백한다.
+
+    ⚠ 한때 '시장 전체'(브랜드 뺀 유형어) 칸을 뒀다가 뺐다.
+       '아기 바스앤샴푸' 같은 수치는 해당 브랜드 얘기가 아니라서,
+       "이 브랜드 주력상품의 시장 인식"을 보려는 목적에 맞지 않았다.
     """
-    base = {"blog": 0, "cafe": 0, "prod_kw": "", "market": 0, "market_kw": "",
-            "brand_only": True, "titles": []}
+    base = {"blog": 0, "cafe": 0, "prod_kw": "", "brand_only": True, "titles": []}
     if not brand:
         return base
 
@@ -284,11 +270,6 @@ def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
         pq = f'"{brand}" {kw}'
         base["blog"] = _naver_total("blog", pq)
         base["cafe"] = _naver_total("cafearticle", pq)
-        # 그 유형의 시장 크기 (브랜드 무관) — 대비용 기준선.
-        #   타겟어를 붙여 '우리 시장'으로 좁힌다 ('로션'이 아니라 '아기 로션')
-        mkw = f"{_market_target(category)} {kw}"
-        base["market_kw"] = mkw
-        base["market"] = _naver_total("blog", mkw) + _naver_total("cafearticle", mkw)
         titles = (_naver_titles("blog", f"{brand} {kw}", 10)
                   + _naver_titles("cafearticle", f"{brand} {kw}", 8)
                   + _naver_titles("blog", f"{brand} 후기", 6)
@@ -663,10 +644,7 @@ def _page_market(prs, c):
     _rule(s, Inches(1.72))
     # 실시간 시장 신호 스트립 (진짜 수치) — 브랜드 전반 + 주력 라인
     # 수치는 전부 '브랜드 + 주력 상품 유형어' 기준 (기획서가 그 상품 제안서이므로).
-    #   맨 끝 '시장 전체'만 브랜드를 뺀 유형어 검색 → 규모 대비가 드러난다.
-    #   ⚠ 셋 다 출처는 같다(네이버 블로그·카페). 예전 문구는
-    #     "블로그 · 카페 · 시장 전체"로 나열해 셋째가 다른 출처처럼 읽혔다.
-    #     → 앞머리에 출처를 한 번 밝히고, 셋째엔 '블로그+카페'를 명시한다.
+    #   출처는 네이버 블로그·카페 둘뿐 → 앞머리에 한 번 밝힌다.
     parts = []
     kw = sig.get("prod_kw") or ""
     head = f"주력 '{kw}'" if kw else "브랜드"
@@ -674,8 +652,8 @@ def _page_market(prs, c):
         parts.append(f"{head} 블로그 {_fmt(sig['blog'])}건")
     if sig.get("cafe"):
         parts.append(f"카페 {_fmt(sig['cafe'])}건")
-    if kw and sig.get("market"):
-        parts.append(f"시장 전체 '{sig.get('market_kw') or kw}' {_fmt(sig['market'])}건")
+    if sig.get("blog") and sig.get("cafe"):
+        parts.append(f"합계 {_fmt(sig['blog'] + sig['cafe'])}건")
     strip = "   ·   ".join(parts) if parts else "실시간 검색 데이터 없음 (네이버 검색 키 필요)"
     bar = _rect(s, Inches(0.72), Inches(1.95), Inches(11.9), Inches(0.62), PEACH_L,
                 MSO_SHAPE.ROUNDED_RECTANGLE)
@@ -697,9 +675,8 @@ def _page_market(prs, c):
     tf2 = _textbox(s, Inches(0.72), nt + Inches(0.15), Inches(11.9), Inches(0.3))
     _para(tf2, "이 브랜드로 밀 소구 키워드 (제안)", 12.5, True, ORANGE_D, first=True)
     _chips_row(s, [f"#{a}" for a in c["appeal_points"][:5]], nt + Inches(0.55))
-    _note(s, "※ 상단 수치는 네이버 블로그·카페 실시간 검색 실측입니다. "
-             "앞의 두 수치는 브랜드명+주력상품, '시장 전체'는 브랜드명을 뺀 검색 결과이며, "
-             "소구 키워드는 셀픽 제안입니다.")
+    _note(s, "※ 상단 수치는 브랜드명과 주력상품 키워드를 함께 넣어 "
+             "네이버 블로그·카페에서 실시간 검색한 실측값이며, 소구 키워드는 셀픽 제안입니다.")
 
 
 # ── 페이지 3: 셀픽 실행 = 광고 상품 + 실행 아이디어 + 도달 규모 ──
