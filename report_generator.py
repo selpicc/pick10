@@ -26,6 +26,10 @@ import io
 import os
 import re
 import json
+import time
+
+# AI 호출이 왜 실패했는지 기록 (실패가 조용히 넘어가면 폴백인 줄 모른다)
+_AI_FAIL = [""]
 
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -140,14 +144,33 @@ def _naver_total(kind: str, q: str) -> int:
         return 0
 
 
+def _clean_snippet(s: str) -> str:
+    s = re.sub(r"<[^>]+>", "", s or "")
+    s = re.sub(r"&[a-zA-Z#0-9]+;", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def _naver_titles(kind: str, q: str, n: int) -> list:
     out = []
     for it in (_naver_api(kind, q, n).get("items", []) or []):
-        t = re.sub(r"<[^>]+>", "", it.get("title", "") or "")
-        t = re.sub(r"&[a-zA-Z#0-9]+;", " ", t)
-        t = re.sub(r"\s+", " ", t).strip()
+        t = _clean_snippet(it.get("title", ""))
         if t:
             out.append(t)
+    return out
+
+
+def _naver_posts(kind: str, q: str, n: int) -> list:
+    """제목 + 본문 요약(description)까지. '구매자가 뭘 느꼈나'는 제목만으론 안 나온다.
+
+    제목은 '아기바디워시 추천 …' 같은 검색용 나열이 많고,
+    실제 체감('거품이 순해서 눈에 들어가도 안 울어요')은 본문 요약에 있다.
+    """
+    out = []
+    for it in (_naver_api(kind, q, n).get("items", []) or []):
+        t = _clean_snippet(it.get("title", ""))
+        d = _clean_snippet(it.get("description", ""))
+        if t or d:
+            out.append(f"{t} :: {d}" if d else t)
     return out
 
 
@@ -258,7 +281,8 @@ def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
        '아기 바스앤샴푸' 같은 수치는 해당 브랜드 얘기가 아니라서,
        "이 브랜드 주력상품의 시장 인식"을 보려는 목적에 맞지 않았다.
     """
-    base = {"blog": 0, "cafe": 0, "prod_kw": "", "brand_only": True, "titles": []}
+    base = {"blog": 0, "cafe": 0, "prod_kw": "", "brand_only": True,
+            "titles": [], "posts": []}
     if not brand:
         return base
 
@@ -276,6 +300,9 @@ def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
         #   주력상품 글이 없으면 표현을 비운다 — 지어내느니 라벨을 '일반'으로 바꾼다.
         titles = (_naver_titles("blog", f"{brand} {kw}", 15)
                   + _naver_titles("cafearticle", f"{brand} {kw}", 12))
+        # AI에는 본문 요약까지 준다 — 체감·감상은 제목이 아니라 본문에 있다
+        base["posts"] = (_naver_posts("blog", f"{brand} {kw}", 15)
+                         + _naver_posts("cafearticle", f"{brand} {kw}", 12))
     else:
         # ── 주력상품이 없으면 브랜드 전반으로 폴백 ──
         q = f'"{brand}"'
@@ -329,7 +356,9 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
     if not ctx["site_text"] and not ctx["flagship"]:
         return {}
 
-    market_titles = "\n".join(f"- {t}" for t in signals.get("titles", [])[:24]) or "(검색 데이터 없음)"
+    # 본문 요약이 있으면 그걸 준다(체감·감상이 담긴 쪽). 없으면 제목만.
+    _src = signals.get("posts") or signals.get("titles") or []
+    market_titles = "\n".join(f"- {t}" for t in _src[:24]) or "(검색 데이터 없음)"
 
     prompt = f"""너는 영유아·임산부 시장 전문 마케팅 기획자다. 형식적인 보고서가 아니라,
 너만의 관점·컨셉·아이디어가 살아있는 '기획서'를 쓴다.
@@ -355,7 +384,7 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
   "insight": "위 실제 글 제목에서 읽어낸 소비자/시장 인사이트 한 줄 (진짜 니즈)",
   "product_summary": "이 제품이 무엇이고 어떤 가치를 주는지 1문장 (홈페이지 근거)",
   "targets": ["이 제품에 해당하는 타겟 세그먼트(아래 목록에서만)"],
-  "market_keywords": ["위 실제 글 제목에서 사람들이 실제로 쓰는 표현/니즈 6개 (지어내지 말고 제목에 실제로 드러난 것만)"],
+  "market_keywords": ["위 후기에서 '구매자가 실제로 느낀 바' 6개 (아래 규칙 참조)"],
   "appeal_points": ["이 브랜드만의 소구포인트/별칭/바이럴 키워드 5개 (# 없이, 기획자의 창작)"],
   "offline_ideas": ["산부인과/조리원/베이비스튜디오에서의 획기적 오프라인 활용 아이디어 한 줄"],
   "online_ideas": ["맘카페에서 실제로 퍼질 온라인 바이럴 아이디어 한 줄"]
@@ -367,11 +396,21 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 - 홈페이지·주력상품·실제 글 제목에 드러난 것만 근거로. 없는 사실·수치를 지어내지 마라.
 - 순위·수상·인증·특허·FDA·제조사명·'1위'·'최고'·구체적 수치 같은 검증 불가 주장 금지
   (자동 폐기됨). 단 slogan·big_idea·concept_name·appeal_points는 '창작 카피'라 자유롭게.
-- market_keywords는 반드시 위 '실제 글 제목'에 근거해야 한다 (창작 X).
+- market_keywords는 '구매자가 느낀 바'다. 제품이 무엇인지가 아니라,
+  써 보고 무엇을 좋아했는지·무엇이 걱정이었는지·왜 샀는지를 뽑아라.
+  · 반드시 위 후기 내용에 근거 (창작 X). 후기에 없으면 개수를 줄여라.
+  · 금지: 제품 유형명·카테고리명·브랜드명 그 자체
+         (예: '바스앤샴푸', '바디워시', '로션', '아기바디워시', '육아용품')
+         — 당연한 말이라 기획서에 쓸모가 없다.
+  · 좋은 예: '눈 시림 없어 안 울어요', '거품이 금방 헹궈짐',
+             '아토피 피부에도 안 뒤집어짐', '향이 강하지 않아 좋음',
+             '하나로 머리까지 끝나 편함', '두 번 펌핑이면 충분'
+  · 각 8~20자, 후기 말투를 살려서.
 - big_idea·insight는 뻔하지 않게, 관점이 담기게. offline/online 아이디어 각 3개.
 - 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만."""
 
     # 간헐적 빈 응답·일시 오류 대비 최대 2회 시도 (실패해도 {} → 템플릿 폴백)
+    _AI_FAIL[0] = ""
     for _attempt in range(2):
         try:
             r = requests.post(
@@ -384,10 +423,15 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
                 timeout=60,
             )
             if r.status_code != 200:
+                # 429(할당량 초과)는 잠깐 기다리면 풀린다 — 마지막 시도 전엔 쉬어준다
+                if r.status_code == 429 and _attempt == 0:
+                    time.sleep(20)
+                _AI_FAIL[0] = f"HTTP {r.status_code}"
                 continue
             parts = r.json()["candidates"][0]["content"]["parts"]
             raw = "".join(p.get("text", "") for p in parts).strip()
-        except Exception:
+        except Exception as e:
+            _AI_FAIL[0] = f"{type(e).__name__}"
             continue
 
         # 코드펜스·앞뒤 잡텍스트 제거 후 최외곽 { } 파싱
@@ -487,6 +531,35 @@ def _keywords_from_titles(titles, brand: str, cap: int = 8, prod_kw: str = "") -
     return out
 
 
+def _drop_generic_kw(words, brand: str) -> list:
+    """'구매자가 느낀 바'가 아니라 뻔한 제품명·브랜드명인 것을 걷어낸다.
+
+    '바스앤샴푸'·'바디워시'·'육아용품' 같은 말은 그 제품이 무엇인지일 뿐,
+    구매자가 무엇을 느꼈는지가 아니다 → 기획서에 쓸모가 없다.
+    """
+    bn = (brand or "").replace(" ", "")
+    out = []
+    for w in (words or []):
+        s = str(w).strip()
+        core = s.replace(" ", "")
+        if not core:
+            continue
+        if bn and (bn in core or core in bn):
+            continue
+        # 제품 유형어'만'으로 이뤄진 말은 버린다.
+        #   '바디워시'(X) / '거품이 부드러움'(O) / '눈 시림 없는 워시'(O — 설명이 붙음)
+        stripped = core
+        for typ in _PRODUCT_TYPES_SORTED:
+            stripped = stripped.replace(typ, "")
+        for noise in ("아기", "신생아", "유아", "베이비", "임산부", "산모", "키즈",
+                      "육아", "용품", "제품", "추천", "후기"):
+            stripped = stripped.replace(noise, "")
+        if len(stripped) < 2:          # 유형어·타겟어를 빼고 나면 남는 게 없다 = 뻔한 말
+            continue
+        out.append(s)
+    return out
+
+
 def _fallback(ctx: dict) -> dict:
     """AI가 비었을 때 쓰는 카테고리 기반 안전 템플릿 (지어낸 주장 없음)."""
     cat = ctx["category"] or "영유아 제품"
@@ -552,17 +625,24 @@ def build_content(row: dict) -> dict:
     #     그런 건 '실제 시장 표현'이라고 내밀 수 없다 → 일반 문구 + 라벨 전환.
     _titles = signals.get("titles") or []
     market_kw, kw_is_real = [], False
+    kw_empty_reason = "no_posts"          # 후기 자체가 없다
+    kw_kind = ""                          # felt=AI가 읽은 체감 / frequent=빈출어
     if len(_titles) >= MIN_TITLES_FOR_REAL_KW:
-        market_kw = _clean_list(ai.get("market_keywords"), 24, 8)
-        if not market_kw:
-            market_kw = _keywords_from_titles(
-                _titles, ctx["brand"], prod_kw=signals.get("prod_kw") or "")
+        kw_empty_reason = "no_signal"     # 후기는 있는데 뚜렷한 표현이 없다
+        # ① AI가 후기 본문을 읽고 뽑은 '느낀 바' — 이것만 '느낀 바'라고 부른다
+        market_kw = _drop_generic_kw(
+            _clean_list(ai.get("market_keywords"), 24, 8), ctx["brand"])
+        if market_kw:
+            kw_kind = "felt"
+        else:
+            # ② AI 실패 시: 후기에 자주 나오는 말. 체감이 아니므로 라벨을 달리 단다
+            market_kw = _drop_generic_kw(
+                _keywords_from_titles(
+                    _titles, ctx["brand"], prod_kw=signals.get("prod_kw") or ""),
+                ctx["brand"])
+            kw_kind = "frequent" if market_kw else ""
         kw_is_real = bool(market_kw)
-    if not market_kw:
-        # 일반 문구로 채우지 않는다 — 빈 칸이 되고, 페이지가
-        # '아직 노출이 없다'는 문장을 대신 넣는다 (거짓 표현 방지)
-        market_kw = []
-        kw_is_real = False
+    # 일반 문구로 채우지 않는다 — 빈 칸이면 페이지가 상황에 맞는 문장을 대신 넣는다
     appeal = _clean_list(ai.get("appeal_points"), 24, 8) or fb["appeal_points"]
     offline = _clean_list(ai.get("offline_ideas"), 80, 4) or fb["offline_ideas"]
     online = _clean_list(ai.get("online_ideas"), 80, 5) or fb["online_ideas"]
@@ -578,6 +658,8 @@ def build_content(row: dict) -> dict:
         "targets": targets,
         "market_keywords": market_kw,
         "market_keywords_real": kw_is_real,   # 진짜 글에서 나왔나 (라벨 문구가 갈린다)
+        "market_empty_reason": kw_empty_reason,   # 비었을 때 뭐라고 적을지
+        "market_kw_kind": kw_kind,                # felt / frequent (라벨이 갈린다)
         "appeal_points": appeal,
         "offline_ideas": offline,
         "online_ideas": online,
@@ -771,18 +853,26 @@ def _page_market(prs, c):
     tf = _textbox(s, Inches(0.72), Inches(2.95), Inches(11.9), Inches(0.3))
     _kws = [k for k in (c.get("market_keywords") or [])][:8]
     if _kws:
-        _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+        # AI가 후기 본문을 읽고 뽑았을 때만 '느낀 바'라고 부른다.
+        # 빈출어는 체감이 아니라 자주 나오는 말일 뿐 → 라벨을 정직하게 구분.
+        _para(tf, ("실제 후기에서 구매자가 느낀 바"
+                   if c.get("market_kw_kind") == "felt"
+                   else "실제 후기에 자주 나오는 말"),
+              12.5, True, ORANGE_D, first=True)
         nt = _chips_row(s, _kws, Inches(3.32),
                         fill=RGBColor(0xEC, 0xEC, 0xEC), txt=DARK)
     else:
         # 후기가 거의 없는 브랜드 — 일반 문구로 칸을 채우면 거짓이 된다.
         #   비워두고 '노출이 안 되고 있다'는 사실을 그대로 적는다.
         #   이게 곧 셀픽이 필요한 이유이기도 하다.
-        _para(tf, "실제 후기·글에서 쓰는 표현", 12.5, True, ORANGE_D, first=True)
+        _para(tf, "실제 후기에서 구매자가 느낀 바", 12.5, True, ORANGE_D, first=True)
+        _msg = ("아직 온라인에 쌓인 후기가 거의 없습니다 — "
+                "엄마들이 검색해도 이 제품을 만날 접점이 없는 상태입니다."
+                if c.get("market_empty_reason") == "no_posts" else
+                "후기는 쌓이고 있지만, 반복해서 언급되는 사용 경험은 "
+                "아직 뚜렷하지 않습니다 — 이야기가 될 경험을 만들어야 하는 단계입니다.")
         tf0 = _textbox(s, Inches(0.72), Inches(3.32), Inches(11.9), Inches(0.5))
-        _para(tf0, "아직 온라인에 쌓인 후기가 거의 없습니다 — "
-                   "엄마들이 검색해도 이 제품을 만날 접점이 없는 상태입니다.",
-              12, False, DARK, first=True)
+        _para(tf0, _msg, 12, False, DARK, first=True)
         nt = Inches(3.32) + Inches(0.56)
     # 브랜드 소구 키워드 (기획자 창작)
     tf2 = _textbox(s, Inches(0.72), nt + Inches(0.15), Inches(11.9), Inches(0.3))
@@ -849,5 +939,11 @@ def _safe_filename(brand: str) -> str:
 def make_report(row: dict):
     """브랜드 행(dict) → (pptx_bytes, filename). AI 실패해도 템플릿으로 완성."""
     content = build_content(row)
+    # AI가 실패하면 조용히 폴백된다 → 왜 품질이 다른지 알 수 있게 알려준다
+    if _AI_FAIL[0]:
+        why = ("Gemini 무료 할당량 초과 (잠시 후 다시 시도하세요)"
+               if "429" in _AI_FAIL[0] else f"AI 응답 실패 ({_AI_FAIL[0]})")
+        print(f"   ⚠ {why} — 슬로건·소구키워드는 기본 문구로, "
+              f"'느낀 바'는 후기 빈출어로 대체됩니다.")
     data = build_pptx(content)
     return data, _safe_filename(content["brand"])

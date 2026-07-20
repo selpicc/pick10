@@ -368,7 +368,18 @@ def _():
     # 글이 없으면 지어내지 말고 빈손 → 호출부가 라벨을 '일반'으로 바꾼다
     assert _keywords_from_titles([], "앙또미뇽") == []
     assert _keywords_from_titles(None, "앙또미뇽") == []
-    return "제목 빈출어 추출 · 브랜드/잡음어 제외 · 글 없으면 빈손(라벨 전환)"
+
+    # '구매자가 느낀 바'여야 한다 — 뻔한 제품명/브랜드명은 걸러져야 함
+    from report_generator import _drop_generic_kw
+    for junk in ("바스앤샴푸", "바디워시", "아기바디워시", "유아바디워시",
+                 "로션", "베이비워시", "육아용품", "앙또미뇽"):
+        assert _drop_generic_kw([junk], "앙또미뇽") == [], f"'{junk}'가 안 걸러짐"
+    for felt in ("눈 시림 없어 안 울어요", "거품이 금방 헹궈짐",
+                 "아토피에도 안 뒤집어짐", "향이 강하지 않음",
+                 "하나로 머리까지 끝나 편함"):
+        assert _drop_generic_kw([felt], "앙또미뇽") == [felt], f"'{felt}'가 버려짐"
+    return ("제목 빈출어 추출 · 브랜드/잡음어 제외 · 글 없으면 빈손 · "
+            "뻔한 제품명 제거(느낀 바만 유지)")
 
 
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
