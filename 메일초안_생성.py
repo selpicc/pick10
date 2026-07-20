@@ -62,17 +62,23 @@ def _save_mail_ids(sb, brand: str, ids: dict):
     컬럼이 아직 없으면(SQL 미실행) 조용히 넘어간다 — 초안 생성은 성공했으므로
     그걸 실패로 만들지 않는다.
     """
+    base = {
+        "mail_draft_id": ids.get("draft_id", ""),
+        "mail_thread_id": ids.get("thread_id", ""),
+        "mail_sent_at": None,
+        "mail_replied_at": None,
+        "mail_followup_count": 0,
+        "mail_last_followup_at": None,
+    }
+    # 단계 표시용 컬럼도 함께 초기화 (없는 DB면 아래 except에서 빼고 재시도)
+    full = dict(base, mail_sent_count=0, mail_followup1_sent_at=None)
     try:
-        sb.table(TABLE_NAME).update({
-            "mail_draft_id": ids.get("draft_id", ""),
-            "mail_thread_id": ids.get("thread_id", ""),
-            "mail_sent_at": None,
-            "mail_replied_at": None,
-            "mail_followup_count": 0,
-            "mail_last_followup_at": None,
-        }).eq("brand_name", brand).execute()
-    except Exception as e:
-        print(f"     (추적 정보 저장 못 함 — {e})")
+        sb.table(TABLE_NAME).update(full).eq("brand_name", brand).execute()
+    except Exception:
+        try:
+            sb.table(TABLE_NAME).update(base).eq("brand_name", brand).execute()
+        except Exception as e:
+            print(f"     (추적 정보 저장 못 함 — {e})")
 
 
 def main():

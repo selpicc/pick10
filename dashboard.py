@@ -31,6 +31,8 @@ except Exception:
 
 from st_aggrid import AgGrid, GridOptionsBuilder, JsCode, GridUpdateMode
 
+import mail_stage          # 메일 단계 규칙 (표시·판단 공통 — 단일 진실의 원천)
+
 from supabase_client import (
     get_supabase_client,
     DB_TO_KOR,
@@ -933,7 +935,15 @@ if "메일 스레드ID" in df.columns:
                 _c = int(_r.get("팔로업 횟수", 0) or 0)
             except Exception:
                 _c = 0
-            if _days >= 7 and _c < 2:
+            try:
+                _sn = int(_r.get("메일 발송 수", 0) or 0)
+            except Exception:
+                _sn = 0
+            if not _sn:
+                _sn = 1 + min(_c, 2)          # 옛 데이터 보완
+            # 다음 회차 = 지금까지 나간 메일 수 · 시점은 첫 발송 + 7일*회차
+            _nth = min(_sn, 2)
+            if _sn <= 2 and _c < _nth and _days >= 7 * _nth:
                 _fu.append(str(_r.get("브랜드명", "")))
 
     if len(_replied) > 0:
@@ -1087,15 +1097,26 @@ def build_activity_history(row) -> list:
     if sent:
         lines.append(f"· {_fmt_md(sent)} 메일 발송")
 
-    # 팔로업 — 회차별 날짜(1차/2차)를 각각 표시. 새 컬럼이 있으면 그걸 쓰고,
-    #   없거나 옛 데이터면 '마지막 팔로업일 + 횟수'로 보완한다.
+    # 팔로업 — '초안 생성'과 '실제 송신'을 나눠 적는다.
+    #   1차/2차 팔로업일 = 초안을 만든 날 / 메일 발송 수 = 실제로 나간 통수
+    try:
+        sent_n = int(g("메일 발송 수") or 0)
+    except Exception:
+        sent_n = 0
     fu1 = g("1차 팔로업일")
     fu2 = g("2차 팔로업일")
+    fu1_sent = g("1차 팔로업 송신일")
     if fu1 or fu2:
         if fu1:
-            lines.append(f"· {_fmt_md(fu1)} 1차 팔로업 송부")
+            lines.append(f"· {_fmt_md(fu1)} 1차 팔로업 초안 생성")
+        if fu1_sent:
+            lines.append(f"· {_fmt_md(fu1_sent)} 1차 팔로업 송신")
+        elif sent_n >= 2:
+            lines.append("· 1차 팔로업 송신")          # 날짜 미보관(옛 데이터)
         if fu2:
-            lines.append(f"· {_fmt_md(fu2)} 2차 팔로업 송부")
+            lines.append(f"· {_fmt_md(fu2)} 2차 팔로업 초안 생성")
+        if sent_n >= 3:
+            lines.append("· 2차 팔로업 송신")
     else:
         try:
             cnt = int(g("팔로업 횟수") or 0)
@@ -1103,10 +1124,10 @@ def build_activity_history(row) -> list:
             cnt = 0
         last_fu = g("마지막 팔로업일")
         if cnt >= 2:
-            lines.append("· 1차 팔로업 송부")                   # 옛 데이터 — 1차 날짜 미보관
-            lines.append(f"· {_fmt_md(last_fu)} 2차 팔로업 송부")
+            lines.append("· 1차 팔로업 초안 생성")      # 옛 데이터 — 1차 날짜 미보관
+            lines.append(f"· {_fmt_md(last_fu)} 2차 팔로업 초안 생성")
         elif cnt == 1:
-            lines.append(f"· {_fmt_md(last_fu)} 1차 팔로업 송부")
+            lines.append(f"· {_fmt_md(last_fu)} 1차 팔로업 초안 생성")
 
     rep = g("메일 회신일")
     if rep:
@@ -1145,7 +1166,7 @@ if len(filtered) > 0:
     # ⭐ 2026-07: 메일 상태 계산에 필요한 추적 컬럼 (표시용으로만 끌어옴)
     _mail_cols = [
         c for c in ["메일 스레드ID", "메일 발송일", "메일 회신일",
-                    "팔로업 횟수", "마지막 팔로업일"]
+                    "팔로업 횟수", "마지막 팔로업일", "메일 발송 수"]
         if c in filtered.columns
     ]
 
@@ -1219,39 +1240,32 @@ if len(filtered) > 0:
     #   (클라우드 대시보드에서도 '누가 답장했나'는 볼 수 있어야 하므로 DB 기반)
     # ─────────────────────────────────────────────────────────
     def _mail_state(row) -> str:
-        thread = str(row.get("메일 스레드ID", "") or "").strip()
-        if not thread:
-            return ""                        # 초안을 만든 적 없음
-        replied = str(row.get("메일 회신일", "") or "").strip()
-        if replied:
-            return "💬 회신"                  # ← 최우선. 이걸 놓치면 안 된다
+        """메일이 지금 어느 '단계'인지 한 칸으로.
+
+        초안 → 발송 → (7일) 1차 팔로업 생성 → 1차 송신 → (14일) 2차 생성 → 2차 송신
+        중간에 답이 오면 어느 단계든 '답신 감지'가 최우선.
+
+        ⭐ N일은 언제나 '첫 메일 발송일' 기준이다 (메일_추적.py와 같은 시계).
+        ⭐ '생성'과 '송신'을 나누는 근거:
+             팔로업 횟수  = 초안을 만든 횟수 (메일_추적.py가 만들 때 +1)
+             메일 발송 수 = 실제로 나간 메일 수 (Gmail 보낸편지함에서 셈)
+           둘이 같으면 초안이 임시보관함에서 대기 중 = 밍이 아직 안 보냄.
+        """
         sent = str(row.get("메일 발송일", "") or "").strip()
-        if not sent:
-            return "📝 초안"                  # 만들었지만 아직 안 보냄
         try:
             d = datetime.fromisoformat(sent.replace("Z", "+00:00"))
             days = (datetime.now(d.tzinfo) - d).days
         except Exception:
             days = -1
-        try:
-            fu = int(row.get("팔로업 횟수", 0) or 0)
-        except Exception:
-            fu = 0
-        # 다음 팔로업 시점은 '마지막 연락'(마지막 팔로업일, 없으면 발송일) + 7일.
-        #   → 1차는 발송 기준, 2차는 1차 팔로업 기준으로 정확히 계산 (메일_추적.py와 동일 원칙)
-        last_contact = str(row.get("마지막 팔로업일", "") or "").strip() or sent
-        try:
-            _ld = datetime.fromisoformat(last_contact.replace("Z", "+00:00"))
-            days_since_last = (datetime.now(_ld.tzinfo) - _ld).days
-        except Exception:
-            days_since_last = days
-        base = f"발송 {days}일" if days >= 0 else "발송"
-        # 팔로업 2회 미만 + 마지막 연락 후 7일 경과 → 지금 해야 할 회차를 강조
-        if fu < 2 and days_since_last >= 7:
-            return f"🔔 {fu + 1}차 팔로업 때"
-        if fu >= 1:
-            return f"{base} · {fu}차 팔로업함"   # 이미 보낸 팔로업 회차
-        return base
+        sent_n = mail_stage.normalize_sent_count(
+            row.get("메일 발송 수"), row.get("팔로업 횟수"), bool(sent))
+        return mail_stage.stage(
+            sent_count=sent_n,
+            followup_count=row.get("팔로업 횟수"),
+            days_since_first_sent=days,
+            replied=bool(str(row.get("메일 회신일", "") or "").strip()),
+            has_thread=bool(str(row.get("메일 스레드ID", "") or "").strip()),
+        )
 
     if "메일 스레드ID" in main_df.columns:
         display_df["메일"] = main_df.apply(_mail_state, axis=1)
@@ -1304,17 +1318,23 @@ if len(filtered) > 0:
     if "메일" in display_df.columns:
         gb.configure_column(
             "메일",
-            headerName="메일",
-            width=130,
+            headerName="메일 단계",
+            width=175,
             cellStyle=JsCode("""
             function(params) {
                 var v = params.value || '';
-                if (v.indexOf('회신') >= 0) {
+                // 답신 = 최우선 신호 (빨강)
+                if (v.indexOf('답신') >= 0) {
                     return {'color': '#dc2626', 'fontWeight': '700',
                             'text-align': 'center'};
                 }
+                // 🔔 팔로업 때 / 📄 초안 대기 = 밍이 손대야 할 차례 (주황·파랑)
                 if (v.indexOf('🔔') >= 0) {
                     return {'color': '#e8590c', 'fontWeight': '600',
+                            'text-align': 'center'};
+                }
+                if (v.indexOf('📄') >= 0) {
+                    return {'color': '#1d4ed8', 'fontWeight': '600',
                             'text-align': 'center'};
                 }
                 return {'color': '#6b7280', 'text-align': 'center'};

@@ -134,26 +134,36 @@ def lookup_status(service, draft_id: str, thread_id: str) -> dict:
     """이 브랜드 메일이 지금 어떤 상태인지 Gmail에 물어본다.
 
     반환: {
-      "sent": bool,            # 발송됨 (초안이 사라지고 보낸편지함에 있음)
-      "sent_at": "ISO시각" or "",
+      "sent": bool,            # 한 통이라도 실제로 나갔다
+      "sent_at": "ISO시각" or "",   # 가장 이른 발송 = '첫 메일 발송일'
+      "sent_count": int,       # 이 대화에서 실제로 나간 메일 수
+                               #   0=미발송 / 1=첫메일 / 2=1차팔로업까지 / 3=2차팔로업까지
+      "sent_times": [ISO, ...],# 발송 시각 (이른 순)
+      "draft_pending": bool,   # 임시보관함에 아직 안 보낸 초안이 있다
       "replied": bool,         # 사람이 회신함 (자동응답 제외)
       "replied_at": "ISO시각" or "",
       "reply_from": "보낸사람",
     }
     조회 실패(스레드 삭제 등)는 조용히 빈 상태로 반환 — 프로그램을 멈추지 않는다.
+
+    ⚠ 2026-07 변경: 예전엔 '초안이 남아 있으면 미발송'이라 보고 바로 반환했다.
+       팔로업 초안이 생기면 draft_id가 그 초안으로 덮이므로, 그 방식으론
+       '첫 메일은 보냈지만 1차 팔로업 초안은 대기 중' 상태를 구분할 수 없었다.
+       이제 초안 유무와 무관하게 스레드의 SENT 메시지를 세어 단계를 판별한다.
     """
     from datetime import datetime, timezone
 
-    out = {"sent": False, "sent_at": "", "replied": False,
+    out = {"sent": False, "sent_at": "", "sent_count": 0, "sent_times": [],
+           "draft_pending": False, "replied": False,
            "replied_at": "", "reply_from": ""}
     if not thread_id:
         return out
 
-    # 1) 초안이 아직 남아 있으면 = 아직 안 보냄
+    # 1) 초안이 아직 남아 있으면 = 그 회차는 아직 안 보낸 것 (대기 중)
     if draft_id:
         try:
             service.users().drafts().get(userId="me", id=draft_id).execute()
-            return out          # 초안 그대로 → 미발송
+            out["draft_pending"] = True
         except Exception:
             pass                # 초안 없음 → 발송됐거나 사용자가 지웠음
 
@@ -184,10 +194,9 @@ def lookup_status(service, draft_id: str, thread_id: str) -> dict:
         sender = headers.get("from", "").lower()
 
         if "SENT" in labels:
-            # 내가 보낸 메시지 = 발송됨 (가장 이른 것을 발송 시각으로)
-            if not out["sent"]:
-                out["sent"] = True
-                out["sent_at"] = _ts(m.get("internalDate", 0))
+            # 내가 보낸 메시지 = 발송됨. 전부 모아 둔다 (첫 메일 / 1차 / 2차 구분용)
+            out["sent"] = True
+            out["sent_times"].append(_ts(m.get("internalDate", 0)))
             continue
 
         # 내가 보낸 게 아닌 메시지 = 상대방 메시지 (= 회신 후보)
@@ -200,6 +209,10 @@ def lookup_status(service, draft_id: str, thread_id: str) -> dict:
             out["replied_at"] = _ts(m.get("internalDate", 0))
             out["reply_from"] = headers.get("from", "")
 
+    # 발송 시각 정리 — 이른 순. 첫 번째가 '첫 메일 발송일'(모든 n일 계산의 기준점)
+    out["sent_times"] = sorted(t for t in out["sent_times"] if t)
+    out["sent_count"] = len(out["sent_times"])
+    out["sent_at"] = out["sent_times"][0] if out["sent_times"] else ""
     return out
 
 

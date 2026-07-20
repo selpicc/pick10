@@ -7,10 +7,13 @@
   ② 회신 왔는지 확인 — 같은 대화에 상대방 메시지가 있으면 회신 (자동응답은 제외)
   ③ 영업 상태 자동  — 발송 → '메일 발송' / 회신 → '컨택중'
                      ⚠ 사람이 바꿔놓은 값(계약 완료·거절·패싱·컨택중)은 절대 안 건드림
-  ④ 팔로업          — 보낸 지 N일 지났는데 답이 없으면 같은 대화에 리마인드 초안
+  ④ 팔로업          — 첫 발송 + 7일 → 1차 / 첫 발송 + 14일 → 2차 리마인드 초안
 
 콜드메일 회신의 상당수는 첫 메일이 아니라 팔로업에서 나온다.
-다만 재촉은 역효과다 — 최대 2회, 7일 간격이 기본값.
+다만 재촉은 역효과다 — 최대 2회.
+
+⭐ 시계는 '첫 메일 발송일'에 고정된다 (1차를 늦게 보내도 2차 시점이 안 밀림).
+   단 1차를 실제로 보낸 지 5일은 지나야 2차를 만든다 — 연달아 나가면 재촉이다.
 
 사용법:
   venv\\Scripts\\python 메일_추적.py                # 현황만 보기 (아무것도 안 만듦)
@@ -43,9 +46,22 @@ def _force_utf8_stdout():
 from supabase_client import get_supabase_client, TABLE_NAME
 from email_templates import build_followup
 import gmail_drafts
+import mail_stage           # 단계·시점 규칙 (대시보드와 공유 — 단일 진실의 원천)
 
-FOLLOWUP_WAIT_DAYS = 7      # 발송 후 이만큼 지나도 답 없으면 팔로업
-FOLLOWUP_MAX = 2            # 최대 팔로업 횟수 (그 이상은 스팸)
+FOLLOWUP_WAIT_DAYS = mail_stage.FOLLOWUP_WAIT_DAYS   # 1차 7일 / 2차 14일의 단위
+FOLLOWUP_MAX = mail_stage.FOLLOWUP_MAX               # 최대 팔로업 횟수 (그 이상은 스팸)
+
+# ─────────────────────────────────────────────────────────
+# ⭐ 2026-07 변경: 팔로업 시점은 '첫 메일 발송일' 하나로 계산한다.
+#   1차 = 첫 발송 + 7일 / 2차 = 첫 발송 + 14일
+#   예전엔 '마지막 연락' 기준이라, 1차 팔로업을 늦게 보내면 2차도 통째로 밀렸다.
+#   이제 시계는 첫 발송일에 고정 → 언제 무엇이 나갈지 예측 가능.
+#
+#   단 하나의 예외(MIN_GAP_AFTER_SEND): 밍이 1차 팔로업 초안을 늦게 보냈다면
+#   14일이 됐어도 1차를 보낸 지 5일은 지나야 2차를 만든다.
+#   (7/12에 1차를 보냈는데 7/15에 2차가 나가면 재촉으로 읽힌다)
+# ─────────────────────────────────────────────────────────
+MIN_GAP_AFTER_SEND = 5      # 직전 팔로업을 '실제로 보낸 날'로부터 최소 이만큼
 
 # 팔로업을 보내면 안 되는 상태 (사람이 이미 판단을 내린 브랜드)
 STOP_STATUSES = {"계약 완료", "거절", "기타) 패싱"}
@@ -75,6 +91,10 @@ def _auto_status(current: str, sent: bool, replied: bool) -> str:
     if sent and cur != AUTO_SET_SENT and not replied:
         return AUTO_SET_SENT
     return ""
+
+
+# 새 컬럼이 없다는 안내는 브랜드마다 반복하지 말고 한 번만
+_COL_WARNED = [False]
 
 
 def _now():
@@ -150,7 +170,7 @@ def main():
         print("   실행했는지 확인하세요 — 그 전에 만든 초안은 ID가 안 남았습니다.)")
         return
 
-    waiting, replied_list, todo, not_sent = [], [], [], []
+    waiting, replied_list, todo, not_sent, pending = [], [], [], [], []
 
     print(f"▶ {len(targets)}건 확인 중...\n")
     for r in targets:
@@ -161,16 +181,29 @@ def main():
             (r.get("mail_thread_id") or "").strip(),
         )
 
+        # 실제로 나간 메일 수 (0=미발송 / 1=첫메일 / 2=1차팔로업까지 / 3=2차까지)
+        sent_count = int(st.get("sent_count") or 0)
+        sent_times = st.get("sent_times") or []
+        # 1차 팔로업을 '실제로 보낸' 시각 = 두 번째 발송 (2차 간격 확보에 사용)
+        fu1_sent_at = sent_times[1] if len(sent_times) > 1 else ""
+
         upd = {}
         if st["sent"] and not r.get("mail_sent_at"):
             upd["mail_sent_at"] = st["sent_at"]
         if st["replied"] and not r.get("mail_replied_at"):
             upd["mail_replied_at"] = st["replied_at"]
+        # 대시보드가 '메일 단계'를 그리는 근거 — Gmail을 못 보는 클라우드에서도
+        # 단계를 알아야 하므로 DB에 남긴다
+        if sent_count and sent_count != int(r.get("mail_sent_count") or 0):
+            upd["mail_sent_count"] = sent_count
+        if fu1_sent_at and fu1_sent_at != (r.get("mail_followup1_sent_at") or ""):
+            upd["mail_followup1_sent_at"] = fu1_sent_at
 
         # 영업 상태 자동 변경 (사람이 정한 값은 보호 — _auto_status 참고)
+        #   발송(첫 메일이든 팔로업이든) → '메일 발송' / 답신 감지 → '컨택중'
         new_status = _auto_status(
             r.get("sales_status") or "",
-            bool(st["sent"] or r.get("mail_sent_at")),
+            bool(sent_count or st["sent"] or r.get("mail_sent_at")),
             bool(st["replied"] or r.get("mail_replied_at")),
         )
         if new_status:
@@ -182,51 +215,87 @@ def main():
                 r.update(upd)
                 if new_status:
                     print(f"  · {bn} — 영업 상태 → '{new_status}' (자동)")
-            except Exception as e:
-                print(f"  ⚠ {bn} DB 갱신 실패: {e}")
+            except Exception:
+                # 새 컬럼(mail_sent_count / mail_followup1_sent_at)이 아직 DB에
+                # 없으면 그 필드만 빼고 재시도 — 나머지 추적은 계속 굴러가야 한다
+                _retry = {k: v for k, v in upd.items()
+                          if k not in ("mail_sent_count", "mail_followup1_sent_at")}
+                try:
+                    if _retry:
+                        sb.table(TABLE_NAME).update(_retry).eq("brand_name", bn).execute()
+                    r.update(upd)     # 메모리 상으로는 반영 (이번 실행의 판단에 사용)
+                    if not _COL_WARNED[0]:
+                        _COL_WARNED[0] = True
+                        print("  ⚠ DB에 mail_sent_count / mail_followup1_sent_at 컬럼이"
+                              " 없습니다 → 대시보드 단계 표시가 옛 방식으로 보입니다.")
+                        print("     (Supabase SQL 편집기에서 컬럼 추가 SQL 1회 실행 필요)")
+                except Exception as e:
+                    print(f"  ⚠ {bn} DB 갱신 실패: {e}")
 
         sent_at = r.get("mail_sent_at") or st["sent_at"]
         replied_at = r.get("mail_replied_at") or st["replied_at"]
         status = (r.get("sales_status") or "").strip()
         fu = int(r.get("mail_followup_count") or 0)
 
-        if not (st["sent"] or sent_at):
+        if not (sent_count or st["sent"] or sent_at):
             not_sent.append(bn)
             continue
         if replied_at:
             replied_list.append((bn, st["reply_from"] or "", replied_at))
             continue
 
+        # ⭐ 모든 n일은 '첫 메일 발송일' 기준 — 화면 표시도 판단도 이 값 하나
         days = _days_since(sent_at)
         if status in STOP_STATUSES:
             continue
-        if fu >= FOLLOWUP_MAX:
+
+        # 다음 회차 = 지금까지 실제로 나간 메일 수
+        #   1통 나갔으면 다음은 1차 팔로업, 2통이면 2차, 3통이면 끝
+        nth = mail_stage.next_round(sent_count or 1)
+        if not nth:
+            continue                        # 2차까지 다 나감 → 종료
+
+        if fu >= nth:
+            # 이 회차 초안은 이미 만들어져 임시보관함에서 발송 대기 중
+            pending.append((bn, days, nth))
             continue
-        # 팔로업 간격은 '마지막 연락' 기준 (발송이든 이전 팔로업이든)
-        last = r.get("mail_last_followup_at") or sent_at
-        if _days_since(last) >= wait_days:
-            todo.append((bn, r, fu + 1, days))
+
+        # 1차 = 7일 / 2차 = 14일 (첫 발송 기준). --days 로 단위를 바꾸면 그에 비례
+        due = (mail_stage.due_days(nth) if wait_days == FOLLOWUP_WAIT_DAYS
+               else wait_days * nth)
+        ready = days >= due
+        # 2차는 1차를 '실제로 보낸 날'로부터 최소 5일 확보 (늦게 보냈으면 밀어준다)
+        if ready and nth == 2:
+            _fu1 = fu1_sent_at or r.get("mail_followup1_sent_at") or ""
+            if _fu1 and _days_since(_fu1) < MIN_GAP_AFTER_SEND:
+                ready = False
+        if ready:
+            todo.append((bn, r, nth, days))
         else:
-            waiting.append((bn, days, fu))
+            waiting.append((bn, days, nth, due))
 
     # ── 현황 ──
     print("=" * 60)
     if not_sent:
         print(f"📝 아직 미발송 (초안 상태): {len(not_sent)}건")
         print("   " + ", ".join(not_sent))
+    if pending:
+        print(f"\n📄 팔로업 초안 대기 중 (밍이 보내야 함): {len(pending)}건")
+        for bn, d, nth in pending:
+            print(f"   · {bn} — {nth}차 팔로업 초안 · 첫 발송 {d:.0f}일 전")
     if waiting:
         print(f"\n⏳ 발송함 · 대기 중: {len(waiting)}건")
-        for bn, d, fu in waiting:
-            print(f"   · {bn} — {d:.0f}일 전 발송"
-                  + (f" · 팔로업 {fu}회" if fu else ""))
+        for bn, d, nth, due in waiting:
+            print(f"   · {bn} — 첫 발송 {d:.0f}일 전 · "
+                  f"{nth}차 팔로업까지 {max(0, due - d):.0f}일 남음")
     if replied_list:
         print(f"\n💬 회신 옴: {len(replied_list)}건  ← 여기부터 챙기세요")
         for bn, frm, at in replied_list:
             print(f"   ★ {bn} — {frm}")
     if todo:
-        print(f"\n🔔 팔로업 대상 ({wait_days}일 경과 · 무응답): {len(todo)}건")
+        print(f"\n🔔 팔로업 대상 (첫 발송 기준 경과 · 무응답): {len(todo)}건")
         for bn, _, nth, d in todo:
-            print(f"   · {bn} — {d:.0f}일 전 발송 · {nth}차 팔로업")
+            print(f"   · {bn} — 첫 발송 {d:.0f}일 전 · {nth}차 팔로업")
     print("=" * 60)
 
     if not do_followup:

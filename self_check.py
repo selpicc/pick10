@@ -58,13 +58,14 @@ def _():
     import email_templates          # noqa  (순수 모듈)
     import gmail_drafts             # noqa  (구글 라이브러리는 함수 안에서 lazy import)
     import brand_intro              # noqa  (AI 도입부 — 키 없어도 import 는 되어야 함)
+    import mail_stage               # noqa  (메일 단계 규칙 — 순수 계산)
     import py_compile
     py_compile.compile("collect_5.py", doraise=True)
     py_compile.compile("dashboard.py", doraise=True)
     py_compile.compile("메일초안_생성.py", doraise=True)
     py_compile.compile("메일_추적.py", doraise=True)
     py_compile.compile("auth_gmail.py", doraise=True)
-    return "순수모듈 6개 import + 스크립트 5개 문법 정상"
+    return "순수모듈 7개 import + 스크립트 5개 문법 정상"
 
 
 # ─────────────────────────────────────────────────────────
@@ -270,6 +271,43 @@ def _():
     # 바꿀 이유가 없으면 그대로 둔다
     assert f("메일 발송", sent=True, replied=False) == "", "불필요한 재설정 발생"
     return "발송/회신 자동설정 · 사람이 정한 값 4종 보호 · 중복 갱신 없음"
+
+
+@check("3-5d. 메일 단계 체인 (초안→발송→팔로업 생성/송신) + 첫 발송 기준")
+def _():
+    import mail_stage as M
+
+    # 밍이 보는 단계 순서 그대로. 하나라도 어긋나면 대시보드가 거짓말을 한다.
+    #   (발송수, 팔로업초안수, 첫발송후 일수) → 화면에 나와야 할 단어
+    chain = [
+        (0, 0, -1, "초안"),               # 만들었지만 아직 안 보냄
+        (1, 0, 3,  "메일 발송"),
+        (1, 0, 7,  "1차 팔로업 때"),       # 첫 발송 + 7일
+        (1, 1, 8,  "1차 팔로업 생성"),     # 초안 대기 = 밍이 보낼 차례
+        (2, 1, 9,  "1차 팔로업 송신"),
+        (2, 1, 14, "2차 팔로업 때"),       # 첫 발송 + 14일 (1차 송신일 아님!)
+        (2, 2, 15, "2차 팔로업 생성"),
+        (3, 2, 16, "2차 팔로업 송신"),     # 끝
+    ]
+    for sc, fu, days, expect in chain:
+        got = M.stage(sc, fu, days, replied=False, has_thread=True)
+        assert expect in got, f"단계 어긋남: 발송{sc}/초안{fu}/{days}일 → '{got}' (기대: {expect})"
+
+    # 답신은 어느 단계에서든 최우선 — 이걸 놓치면 영업 기회를 놓친다
+    for sc, fu, days in [(0, 0, -1), (1, 0, 3), (2, 1, 9), (3, 2, 20)]:
+        assert M.stage(sc, fu, days, replied=True, has_thread=True) == "💬 답신 감지", \
+            "답신이 다른 단계에 가려짐"
+
+    # 초안조차 만든 적 없으면 빈칸
+    assert M.stage(0, 0, -1, replied=False, has_thread=False) == ""
+    # 2차까지 나갔으면 더 이상 팔로업 없음 (스팸 방지)
+    assert M.next_round(3) == 0, "2차 이후에도 팔로업을 만들려 함"
+    # ⭐ 시점은 둘 다 '첫 발송일' 기준 (1차를 늦게 보내도 2차가 안 밀림)
+    assert (M.due_days(1), M.due_days(2)) == (7, 14), "팔로업 시점 기준이 바뀜"
+    # 옛 데이터(발송 수 컬럼 없음) 보완
+    assert M.normalize_sent_count(None, 0, True) == 1
+    assert M.normalize_sent_count(None, 0, False) == 0
+    return "8단계 체인 · 답신 최우선 · 첫 발송 기준(7/14일) · 2차 후 종료"
 
 
 @check("3-6. AI 도입부 안전장치 (거짓 주장 차단 + 폴백)")
