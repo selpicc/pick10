@@ -270,11 +270,12 @@ def _market_signals(brand: str, category: str, flagship: str = "") -> dict:
         pq = f'"{brand}" {kw}'
         base["blog"] = _naver_total("blog", pq)
         base["cafe"] = _naver_total("cafearticle", pq)
-        titles = (_naver_titles("blog", f"{brand} {kw}", 10)
-                  + _naver_titles("cafearticle", f"{brand} {kw}", 8)
-                  + _naver_titles("blog", f"{brand} 후기", 6)
-                  + _naver_titles("blog", brand, 6)
-                  + _naver_titles("cafearticle", brand, 6))
+        # 글 제목도 '수집 때 저장된 주력상품' 기준으로만 모은다.
+        #   브랜드 전반 글을 섞으면 다른 제품 얘기가 표현에 끼어든다
+        #   (앙또미뇽 바스앤샴푸 기획서에 콧물흡입기·아토패치 표현이 뽑히던 문제)
+        #   주력상품 글이 없으면 표현을 비운다 — 지어내느니 라벨을 '일반'으로 바꾼다.
+        titles = (_naver_titles("blog", f"{brand} {kw}", 15)
+                  + _naver_titles("cafearticle", f"{brand} {kw}", 12))
     else:
         # ── 주력상품이 없으면 브랜드 전반으로 폴백 ──
         q = f'"{brand}"'
@@ -415,19 +416,45 @@ _TITLE_NOISE = {
 }
 
 
-def _keywords_from_titles(titles, brand: str, cap: int = 8) -> list:
+# 브랜드 이름에 잘 붙는 조각들. 이걸 품은 토큰은 (상품 유형어가 아닌 한)
+# 다른 브랜드명일 확률이 높다 → '시장 표현'에서 제외.
+_BRANDISH_SUFFIX = ("베베", "맘마", "키즈", "베이비", "마미", "블리", "뜰", "닷컴", "넷")
+
+
+# '실제 시장 표현'이라고 말하려면 최소 이만큼의 글은 있어야 한다.
+# 그 미만이면 표현이 아니라 몇몇 글의 단편이므로 일반 문구로 대체하고 라벨도 바꾼다.
+MIN_TITLES_FOR_REAL_KW = 6
+
+
+def _keywords_from_titles(titles, brand: str, cap: int = 8, prod_kw: str = "") -> list:
     """AI 없이도 '진짜 글 제목'에서 자주 나오는 표현을 뽑는다 (AI 실패 시 2차 안전망).
 
     빈도 상위 단어를 그대로 쓰므로 창작이 섞이지 않는다 —
     '실제 후기·글에서 쓰는 표현'이라는 라벨을 지킬 수 있는 최소 장치.
+
+    ⚠ prod_kw를 주면 '그 상품이 실제로 언급된 제목'만 센다.
+      네이버는 느슨하게 매칭해서 베이비페어·전시회 글까지 딸려오는데,
+      그걸 그대로 세면 경쟁사명(무스텔라)·장소(코엑스)가 '시장 표현'으로 올라간다.
+      고객사 제안서에 경쟁사 이름이 실리면 안 된다.
     """
     if not titles:
         return []
+    if prod_kw:
+        pk = prod_kw.replace(" ", "")
+        # 유형어 전체 또는 그 뒷부분(바스앤샴푸 → 샴푸)이 제목에 있으면 그 상품 글로 본다
+        tails = {pk} | {pk[i:] for i in range(1, max(1, len(pk) - 1))}
+        focused = [t for t in titles
+                   if any(x in str(t).replace(" ", "") for x in tails if len(x) >= 2)]
+        if len(focused) >= 3:      # 너무 적으면 원래 목록을 쓴다 (표현이 아예 없느니)
+            titles = focused
     bn = (brand or "").replace(" ", "")
     counts = {}
     for t in titles:
         for tok in re.split(r"[\s,./|\[\]()\-~!?·]+", str(t)):
             tok = tok.strip()
+            # 끝에 붙은 조사 제거 ('바스앤샴푸와' → '바스앤샴푸')
+            tok = re.sub(r"(으로|에서|에게|와의|과의|와|과|를|을|은|는|이|가|의|에|도|로)$",
+                         "", tok)
             if len(tok) < 2 or len(tok) > 12:
                 continue
             if any(ch.isdigit() for ch in tok):
@@ -436,13 +463,28 @@ def _keywords_from_titles(titles, brand: str, cap: int = 8) -> list:
                 continue
             if tok in _TITLE_NOISE or tok in _PK_STOPWORDS:
                 continue
+            # 다른 브랜드 이름으로 보이면 버린다 — 고객사 제안서에 경쟁사명이
+            # '시장 표현'으로 실리면 안 된다. (몽쉘베베·무스텔라 …)
+            #   단 상품 유형어를 품고 있으면 브랜드가 아니라 제품명이다
+            #   ('베이비워시'는 살리고 '몽쉘베베'는 버린다)
+            if (any(sfx in tok for sfx in _BRANDISH_SUFFIX)
+                    and not any(t in tok for t in _PRODUCT_TYPES)):
+                continue
             if not re.search(r"[가-힣]", tok):       # 한글이 없는 토큰(영문/기호)은 제외
                 continue
             counts[tok] = counts.get(tok, 0) + 1
     # 2회 이상 나온 말만 = 실제로 '반복해서 쓰이는' 표현
     ranked = sorted((w for w, c in counts.items() if c >= 2),
                     key=lambda w: (-counts[w], -len(w)))
-    return ranked[:cap]
+    # 조각·중복 정리: '바스앤샴푸'가 이미 있으면 '바스'·'샴푸'·'바스앤샴푸와'는 뺀다
+    out = []
+    for w in ranked:
+        if any(w in kept or kept in w for kept in out):
+            continue
+        out.append(w)
+        if len(out) >= cap:
+            break
+    return out
 
 
 def _fallback(ctx: dict) -> dict:
@@ -505,13 +547,20 @@ def build_content(row: dict) -> dict:
     #   AI가 실패해도 조용히 일반 문구로 바꾸면, 라벨은 '실제'인데 내용은 창작이 된다.
     #   → ① AI(제목 기반) ② 제목에서 직접 빈출어 추출 ③ 그래도 없으면 일반 템플릿
     #   ③일 때만 kw_is_real=False → 페이지가 라벨을 '일반 표현'으로 바꿔 단다.
-    market_kw = _clean_list(ai.get("market_keywords"), 24, 8)
-    kw_is_real = bool(market_kw)
-    if not market_kw:
-        market_kw = _keywords_from_titles(signals.get("titles"), ctx["brand"])
+    #   ⚠ 글이 서너 개뿐이면 '시장 표현'이 아니라 그 몇 글의 단편일 뿐이다.
+    #     (누엔쁘: 제목 2개 → '3가지 루틴', '족욕과 경락마사지', '추천 해주세요')
+    #     그런 건 '실제 시장 표현'이라고 내밀 수 없다 → 일반 문구 + 라벨 전환.
+    _titles = signals.get("titles") or []
+    market_kw, kw_is_real = [], False
+    if len(_titles) >= MIN_TITLES_FOR_REAL_KW:
+        market_kw = _clean_list(ai.get("market_keywords"), 24, 8)
+        if not market_kw:
+            market_kw = _keywords_from_titles(
+                _titles, ctx["brand"], prod_kw=signals.get("prod_kw") or "")
         kw_is_real = bool(market_kw)
     if not market_kw:
         market_kw = fb["market_keywords"]
+        kw_is_real = False
     appeal = _clean_list(ai.get("appeal_points"), 24, 8) or fb["appeal_points"]
     offline = _clean_list(ai.get("offline_ideas"), 80, 4) or fb["offline_ideas"]
     online = _clean_list(ai.get("online_ideas"), 80, 5) or fb["online_ideas"]
