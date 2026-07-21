@@ -418,18 +418,27 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
 --- 실제 후기 본문 (네이버 블로그 글을 직접 열어 읽은 내용 + 카페 글 요약) ---
 {market_titles}
 
+--- 셀픽이 실제로 가진 실행 채널 (offline_ideas·online_ideas는 반드시 이 채널 위에서 설계) ---
+· 산후조리원 230곳: 산모가 14일 체류하며 매일 접촉. 신생아실에서 원장·간호사가 실제로 쓰고 권한다.
+  조리원 동기끼리의 입소문 진원지 — 여기서 한 번 좋으면 맘카페로 번진다.
+· 산부인과 55곳: 임신~출산까지 반복 방문. 대기·상담 공간에서 노출.
+· 키오스크 460대: 임산부가 '무료 사진 15장'(초음파~아기 사진)을 인화하며 대기하는 화면에 100% 노출.
+· 맘카페 체험형 바이럴: 실제 아기엄마가 직접 써보고 남기는 심화 후기.
+· 산모 DB LMS: 동의 기반 신규 산모(월 8천~1만 명)에게 다이렉트 메시지.
+
 아래 JSON 형식으로만 답하라(설명·코드펜스 금지):
 {{
   "slogan": "이 브랜드를 한 방에 각인시키는 획기적이고 감각적인 슬로건 한 줄 (12~24자)",
   "big_idea": "이 브랜드를 셀픽 채널에서 밀 '캠페인 빅 아이디어' — 컨셉을 관통하는 한 줄 (기획자의 창작)",
   "concept_name": "그 캠페인 컨셉을 부를 짧은 이름 (6~14자, 감각적으로)",
-  "insight": "위 실제 글 제목에서 읽어낸 소비자/시장 인사이트 한 줄 (진짜 니즈)",
+  "insight": "이 주력상품이 '정확히 어떤 순간·어떤 엄마의 어떤 불안/니즈'를 건드리는지 한 줄 (뻔한 말 금지, 제품 특성에서 출발)",
+  "target_persona": "이 주력상품을 가장 절실히 살 핵심 타겟 한 명을 구체적으로 묘사한 한 줄 (누가·어떤 상황·왜 이 제품인지, 40자 내외)",
   "product_summary": "이 제품이 무엇이고 어떤 가치를 주는지 1문장 (홈페이지 근거)",
   "targets": ["이 제품에 해당하는 타겟 세그먼트(아래 목록에서만)"],
   "market_keywords": ["위 후기에서 '구매자가 긍정적으로 느낀 점' 6개 (아래 규칙 참조)"],
   "appeal_points": ["위 긍정 인용(market_keywords)들을 조합·분석해 발전시킨 광고 소구 키워드 5개 (# 없이)"],
-  "offline_ideas": ["산부인과/조리원/베이비스튜디오에서의 획기적 오프라인 활용 아이디어 한 줄"],
-  "online_ideas": ["맘카페에서 실제로 퍼질 온라인 바이럴 아이디어 한 줄"]
+  "offline_ideas": ["'이 주력상품'을 위 셀픽 오프라인 채널(조리원 14일 체류·산부인과·키오스크 인화 대기)에 얹어 실행하는, 이 제품만의 획기적 아이디어 3개. 각 아이디어에 '어느 채널·어떤 순간'인지 드러나게(예: 조리원 신생아실 첫 목욕에서 …). 뻔한 샘플 배포 금지"],
+  "online_ideas": ["'이 주력상품'을 맘카페 체험형 바이럴·산모 DB LMS로 퍼뜨리는, 이 제품만의 아이디어 3개. 위 후기의 긍정 강점을 후킹 포인트로 엮어서(예: '눈 안 매운 거품' 인증샷 챌린지 …)"]
 }}
 
 타겟 세그먼트는 반드시 이 목록에서만 고른다: {", ".join(SEGMENT_POOL)}
@@ -460,8 +469,11 @@ def _gemini_report_json(ctx: dict, signals: dict) -> dict:
       인용 '흡수가 빨라서 끈적임이 없어요'   → 소구 '바르고 바로 안는 산뜻함'
   · 후기와 무관한 일반 문구(‘엄마가 고른 브랜드’ 같은 말)는 쓰지 마라.
   · 이건 창작 카피라 표현은 자유지만, 출발점은 반드시 위 긍정 인용이어야 한다.
-- big_idea·insight는 뻔하지 않게, 관점이 담기게. offline/online 아이디어 각 3개.
-- 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만."""
+- big_idea·insight·target_persona는 뻔하지 않게, 이 '주력상품 고유의 특성'에서 출발하게.
+  다른 브랜드에 그대로 갖다 써도 말이 되는 일반론이면 실패다 — 이 제품이 아니면 안 나올 문장을 써라.
+- offline/online 아이디어는 각 3개. ⭐반드시 '이 주력상품' + '셀픽의 실제 채널/순간'이 한 문장 안에 같이 있어야 한다⭐.
+  ('SNS 광고 집행', '샘플 나눠주기'처럼 채널·제품이 안 드러나는 일반론은 폐기).
+- 3페이지짜리 압축 기획서다. 군더더기 없이 '알맹이'와 '한 방'만. 너는 이 브랜드 전담 기획자 겸 마케터다."""
 
     # 간헐적 빈 응답·일시 오류 대비 최대 2회 시도 (실패해도 {} → 템플릿 폴백)
     _AI_FAIL[0] = ""
@@ -646,6 +658,7 @@ def _fallback(ctx: dict) -> dict:
         "big_idea": f"{b}를 '엄마의 첫 선택'으로 각인 — 출산의 시작점에서 브랜드를 심는다",
         "concept_name": "첫 순간 각인",
         "insight": "엄마는 아기에게 '가장 먼저 닿는 것'에 가장 예민하고 지갑을 아끼지 않는다.",
+        "target_persona": "출산을 앞두고 아기에게 닿을 첫 제품을 신중히 고르는 예비·초보 엄마",
         "product_summary": f"{b}는 영유아·임산부 타깃의 {cat} 브랜드입니다.",
         "targets": ["산모", "아기", "가족"],
         "market_keywords": ["출산준비물", "신생아 필수템", "육아템", "맘카페 추천", "출산가방 리스트"],
@@ -681,6 +694,7 @@ def build_content(row: dict) -> dict:
     big_idea = _copy("big_idea", 70)
     concept_name = _copy("concept_name", 18)
     insight = _copy("insight", 90)
+    target_persona = _copy("target_persona", 60)
 
     # product_summary (안전 필터 후 폴백)
     summary = _clean_line(ai.get("product_summary", "")) if ai else ""
@@ -733,6 +747,7 @@ def build_content(row: dict) -> dict:
         "big_idea": big_idea,
         "concept_name": concept_name,
         "insight": insight,
+        "target_persona": target_persona,
         "product_summary": summary,
         "targets": targets,
         "market_keywords": market_kw,
@@ -891,10 +906,16 @@ def _page_concept(prs, c):
     tf4 = _textbox(s, Inches(0.72), Inches(4.75), Inches(11.9), Inches(0.85))
     _para(tf4, "인사이트", 12.5, True, ORANGE_D, first=True, space_after=4)
     _para(tf4, c["insight"], 14, False, GRAY, line_spacing=1.2)
-    # 핵심 타겟 칩
-    tf5 = _textbox(s, Inches(0.72), Inches(5.85), Inches(11.9), Inches(0.3))
+    # 핵심 타겟 — 이 주력상품 맞춤 페르소나 한 줄 + 세그먼트 칩
+    tf5 = _textbox(s, Inches(0.72), Inches(5.72), Inches(11.9), Inches(0.3))
     _para(tf5, "핵심 타겟", 12.5, True, ORANGE_D, first=True)
-    _chips_row(s, c["targets"][:6], Inches(6.2))
+    persona = (c.get("target_persona") or "").strip()
+    if persona:
+        tf5b = _textbox(s, Inches(0.72), Inches(6.04), Inches(11.9), Inches(0.4))
+        _para(tf5b, persona, 13.5, False, DARK, first=True, line_spacing=1.15)
+        _chips_row(s, c["targets"][:6], Inches(6.55))
+    else:
+        _chips_row(s, c["targets"][:6], Inches(6.2))
 
 
 # ── 페이지 2: 시장 · 니즈 = 실제 검색 데이터 + 키워드 ──
