@@ -89,6 +89,9 @@ BLOCK_HOSTS = (
     # 커뮤니티·블로그 플랫폼 서브도메인 (bbangtory/mompick 등)
     "bbangtory.", "mompick.", "cafe24.com", "blogspot.", "wordpress.com",
     "babylist.", "mom-mom.",
+    # 고객지원(헬프데스크) SaaS — 브랜드 공식몰 아님 (LG생활건강 zendesk 등)
+    "zendesk.", "freshdesk.", "zohodesk.", "helpshift.", "gitbook.",
+    "gitbook.io", "channel.io", "gitbooks.io",
 )
 
 # 뉴스·매거진·커뮤니티성 '이름' 컷 (도메인으로 못 거른 미디어 차단)
@@ -350,6 +353,12 @@ def main():
                 continue
             if _is_non_target_brand(name) or _is_media_name(name):
                 continue
+            # 최종 이름에 대기업이 드러나면 컷 (검색제목엔 없다가 사이트명서 드러나는 케이스)
+            if not args.allow_big:
+                tag2, reason2 = market_fit_check(name, "")
+                if tag2 == "b":
+                    print(f"   🚫 대기업 컷(최종명): {name} ({reason2})")
+                    continue
             processed.add(name)
 
             # 주력상품/카테고리 — 검색 키워드 기반
