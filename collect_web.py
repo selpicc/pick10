@@ -65,7 +65,8 @@ BLOCK_HOSTS = (
     "qoo10.", "tmall.", "musinsa.", "brandi.", "zigzag.", "ably",
     # B2B 도매·유통 플랫폼 (브랜드 아님 — 오너클랜/도매매 등)
     "ownerclan.", "domesin.", "domae", "sedok.", "sinsangmarket.",
-    "b2b", "wholesale", "vendor",
+    "b2b", "wholesale", "vendor", "domero.", "alibaba", "1688.",
+    "made-in-china", "ec21.", "tradekorea", "onnuristore.", "vitatra.",
     # 뷰티 편집샵 (멀티브랜드 — 특정 브랜드 공식몰 아님)
     "oliveyoung.", "chicor.", "lalavla", "aritaum.", "wconcept.",
     # 후기·정보 포털/미디어 (브랜드 아님)
@@ -78,13 +79,33 @@ BLOCK_HOSTS = (
     "vercel.app", "netlify.app", "web.app", "firebaseapp.",
     "github.io", "pages.dev", "notion.site", "imweb.me",
     "modoo.at", "creatorlink.net",
+    # 뉴스·매거진·언론·미디어 (브랜드 아님)
+    "abcn.", "queen.co.kr", "newsis.", "news1.", "yna.", "edaily.",
+    "asiae.", "etnews.", "zdnet.", "bloter.", "inews24.", "ohmynews.",
+    "pressian.", "newspim.", "topstarnews.", "econovill.", "mediapen.",
+    "khan.", "seoul.co.kr", "kmib.", "segye.", "munhwa.", "heraldcorp.",
+    "ilyo.", "ohfun.", "wikitree", "biz.", "fnnews.", "ajunews.",
+    "moneys.", "dailian.", "newsculture", "kukinews.", "ceoscore",
+    # 커뮤니티·블로그 플랫폼 서브도메인 (bbangtory/mompick 등)
+    "bbangtory.", "mompick.", "cafe24.com", "blogspot.", "wordpress.com",
+    "babylist.", "mom-mom.",
+)
+
+# 뉴스·매거진·커뮤니티성 '이름' 컷 (도메인으로 못 거른 미디어 차단)
+MEDIA_NAME_HINTS = (
+    "뉴스", "news", "매거진", "magazine", "기자", "신문", "미디어", "media",
+    "데일리", "daily", "일보", "타임스", "times", "이코노미", "economy",
+    "프레스", "press", "리스트", "list", "저널", "journal", "위클리",
 )
 
 # 성인/일반 대상(영유아·산모 전용 아님) 브랜드 컷 — 도메인/이름 신호
 # 아기샴푸 검색에 딸려오는 성인 헤어·두피 브랜드 제외
 NON_TARGET_BRAND_HINTS = (
+    # 성인 헤어·두피 (아기샴푸에 딸려오는)
     "kundal", "쿤달", "pyunkang", "편강", "라보에이치", "닥터포헤어",
     "tsnc", "그루밍", "탈모",
+    # 반려동물(펫) 브랜드/몰
+    "펫몰", "필펫", "pillpet", "petcare", "drpetra", "반려", "냥이", "댕댕",
 )
 
 # ─────────────────────────────────────────────────────────────────
@@ -111,11 +132,14 @@ _MALL_SUFFIX = re.compile(
 
 
 def _clean_brand_name(name: str) -> str:
-    """'닥터노아 공식몰', '궁중비책 공식몰｜GOONGBE Mall' → '닥터노아', '궁중비책'."""
+    """'닥터노아 공식몰', '큐라프록스 공식쇼핑몰입니다' → '닥터노아', '큐라프록스'."""
     if not name:
         return ""
     # 구분자(| ｜ - / :) 뒷부분 잘라내기 (부제/영문병기 제거)
     name = re.split(r"[|｜/:\-–—]", name)[0].strip()
+    # 문장형 꼬리표 제거 ('...입니다/이에요/예요/입니당')
+    name = re.sub(r"\s*(공식\s*)?(온라인\s*)?(쇼핑몰|스토어|몰|샵|숍)?\s*"
+                  r"(입니다|이에요|예요|입니당|이예요)\s*$", "", name).strip()
     # 꼬리표 반복 제거
     prev = None
     while name and name != prev:
@@ -127,6 +151,12 @@ def _clean_brand_name(name: str) -> str:
 def _is_non_target_brand(text: str) -> bool:
     t = (text or "").lower()
     return any(h.lower() in t for h in NON_TARGET_BRAND_HINTS)
+
+
+def _is_media_name(name: str) -> bool:
+    """이름에 뉴스/매거진/리스트 등 미디어·커뮤니티 신호가 있으면 True."""
+    t = (name or "").lower()
+    return any(h.lower() in t for h in MEDIA_NAME_HINTS)
 
 
 def _fetch_text(url: str, timeout: int = 8) -> str:
@@ -199,6 +229,8 @@ def main():
     ap.add_argument("--per-query", type=int, default=15, help="키워드당 후보 홈페이지 수")
     ap.add_argument("--allow-big", action="store_true", help="대기업도 포함(기본 제외)")
     ap.add_argument("--out", default="영업처_웹수집.xlsx", help="저장할 엑셀 파일명")
+    ap.add_argument("--exclude", default="", help="제외할 브랜드명(콤마 구분) — 기존 수집분 중복 방지")
+    ap.add_argument("--exclude-domains", default="", help="제외할 도메인(콤마 구분)")
     args = ap.parse_args()
 
     target = max(1, min(args.count, 30))
@@ -232,6 +264,14 @@ def main():
     else:
         print("   ⚠️ Supabase 미설정 → 엑셀만 생성\n")
 
+    # 수동 제외 목록 (기존 엑셀 등에서 넘겨받은 브랜드·도메인) — DB 죽어도 중복 방지
+    already |= {b.strip() for b in args.exclude.split(",") if b.strip()}
+    exclude_domains = {d.strip().replace("www.", "").lower()
+                       for d in args.exclude_domains.split(",") if d.strip()}
+    if args.exclude or args.exclude_domains:
+        print(f"   🚫 수동 제외: 브랜드 {len(args.exclude.split(',')) if args.exclude else 0}개 · "
+              f"도메인 {len(exclude_domains)}개\n")
+
     # [1] 검색 쿼리 구성 — 사용자 키워드 + '브랜드/공식몰' 변형으로 공식몰 노출↑
     queries = []
     for kw in user_keywords:
@@ -240,7 +280,7 @@ def main():
         queries.append(f"{kw} 공식몰")
 
     results = []
-    seen_domains = set()
+    seen_domains = set(exclude_domains)   # 기존 수집 도메인 미리 차단
     processed = set()
 
     print("🔍 [1/3] 웹문서 검색으로 브랜드 공식몰 후보 발굴...")
@@ -272,6 +312,10 @@ def main():
             if _is_non_target_brand(f"{hp_name} {dom}"):
                 print(f"   🚫 비타깃(성인/일반) 컷: {hp_name[:30]}")
                 continue
+            # 뉴스·매거진·커뮤니티 이름 컷
+            if _is_media_name(hp_name):
+                print(f"   🚫 미디어/커뮤니티 컷: {hp_name[:30]}")
+                continue
 
             # [3] 홈페이지 검증 — 상품단어 + 영유아/산모단어 동시 포함
             page_text = _fetch_text(url)
@@ -287,7 +331,10 @@ def main():
                 # 홈페이지 텍스트가 빈약(SPA)해도 검색제목에 둘 다 있으면 통과
                 continue
 
-            # 대기업 컷 (brand + 상품토큰 텍스트로 A/B/C 판정)
+            # 대기업 컷(b만) — 브랜드명+상품토큰으로 판정.
+            # ⚠️ 'c'(다른시장) 컷은 쓰지 않음: market_fit 부정키워드 'IT' 등이 영어
+            #    페이지의 'it' 부분문자열에 걸려 조르단/큐라프록스 같은 진짜 칫솔 브랜드를
+            #    오컷했음. 펫 등 다른시장은 아래 NON_TARGET_BRAND_HINTS로 정밀 차단.
             tag, reason = market_fit_check(hp_name or search_name, " ".join(prod_tokens))
             if (not args.allow_big) and tag == "b":
                 print(f"   🚫 대기업 컷: {hp_name[:30]} ({reason})")
@@ -301,7 +348,7 @@ def main():
             name = _clean_brand_name(raw_name) or domain_name
             if not name or name in processed or name in already or is_excluded_brand(name):
                 continue
-            if _is_non_target_brand(name):
+            if _is_non_target_brand(name) or _is_media_name(name):
                 continue
             processed.add(name)
 
@@ -310,6 +357,10 @@ def main():
             prod_cat = classify_category(f"{flagship} {name}")
 
             has_contact = bool(info.get("phone") or info.get("email"))
+            # 연락처(전화·이메일·사업자번호) 하나도 없으면 영업 리드로 무의미 → 제외
+            if not (has_contact or info.get("business_number")):
+                print(f"   ⏭️ 연락처 없음 → 제외: {name}")
+                continue
             print(f"   ▶ {name}  ({url})")
             print(f"       전화={info.get('phone','-') or '-'} · "
                   f"이메일={info.get('email','-') or '-'} · "
